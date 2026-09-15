@@ -50,16 +50,11 @@ CMake 3.24+, Python 3.11+, and ~15 GB free. Output lands in
 
 | Command | What it does |
 |---|---|
-| **Play** | |
 | `Launch.cmd` | Play with sound |
 | `Launch.cmd mute` | Play muted |
 | `Launch.cmd preview` | Engine preview build (muted by default) |
-| **Diagnostics** (record a log under `build_native/run/`, then close the game) | |
 | `Launch.cmd stutter` | Play with sound while recording slow-frame timings |
-| `Launch.cmd performance` | Record an engine profile log for analysis |
-| `Launch.cmd render-profile` | Record a render-thread profile log for analysis |
-| `Launch.cmd steady-60` | One run with a 60 FPS ceiling plus a smoothness log |
-| **Other** | |
+| `Launch.cmd performance` / `render-profile` / `steady-60` | Diagnostic recording runs |
 | `Launch.cmd help` | Full usage |
 
 Extra arguments reach the game untouched, e.g. `Launch.cmd play --fps 120`.
