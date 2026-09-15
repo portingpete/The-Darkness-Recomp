@@ -1,0 +1,18 @@
+﻿[main]
+file_path = "_uncrypted.xex"
+out_directory_path = "../ppc"
+switch_table_file_path = "darkness_switch_tables.toml"
+
+skip_lr = true
+skip_msr = true
+ctr_as_local = true
+xer_as_local = true
+reserved_as_local = true
+cr_as_local = true
+non_argument_as_local = true
+non_volatile_as_local = true
+
+savegprlr_14_address = 0x828999F0
+restgprlr_14_address = 0x82899A40
+savefpr_14_address = 0x8289A190
+restfpr_14_address = 0x8289A1DC

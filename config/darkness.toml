@@ -1,0 +1,66 @@
+# Correctness profile: preserve the full guest register state across calls.
+# Host compilation is still optimized; guest ABI shortcuts are disabled.
+[main]
+file_path = "../Darkness/_uncrypted.xex"
+switch_table_file_path = "../Darkness/darkness_switch_tables.toml"
+skip_lr = false
+skip_msr = false
+ctr_as_local = false
+xer_as_local = false
+reserved_as_local = false
+cr_as_local = false
+non_argument_as_local = false
+non_volatile_as_local = false
+savegprlr_14_address = 0x828999F0
+restgprlr_14_address = 0x82899A40
+savefpr_14_address = 0x8289A190
+restfpr_14_address = 0x8289A1DC
+
+
+[[midasm_hook]]
+name = "CompleteGpuFenceMidAsmHook"
+address = 0x8285DF44
+jump_address = 0x8285DF78
+
+# Observe the actual nonempty clear rectangle after original viewport/scissor
+# clipping. No original instruction is skipped or replaced.
+[[midasm_hook]]
+name = "ObserveEngineClearRegionMidAsmHook"
+address = 0x82862AE8
+registers = ["r31", "r28", "r23", "f31", "r22", "r24", "r25", "r26", "r27"]
+
+# Remember the player camera's initialized/profile FOV, before later scripted
+# base-FOV and zoom changes. Original instructions execute unchanged.
+[[midasm_hook]]
+name = "ForgetGameplayFovBaselineMidAsmHook"
+address = 0x821A1F20
+registers = ["r31"]
+
+[[midasm_hook]]
+name = "InitializeGameplayFovBaselineMidAsmHook"
+address = 0x821A3928
+registers = ["r31"]
+
+[[midasm_hook]]
+name = "ConfigureGameplayFovBaselineMidAsmHook"
+address = 0x82148CC8
+registers = ["r24", "f31"]
+
+[[midasm_hook]]
+name = "CopyGameplayFovBaselineMidAsmHook"
+address = 0x821A9584
+registers = ["r31", "r30"]
+
+# Fresh player message-36 FOV, scoped by the native 8249A030 camera-query wrapper.
+# Apply before the original FOV store and shared projection/culling dirty flag.
+[[midasm_hook]]
+name = "ApplyGameplayFovMidAsmHook"
+address = 0x82157600
+registers = ["r31", "r29", "r30", "r21", "f1"]
+
+# Native relative mouse commands: replace only scoped mouse packet angles,
+# after client input gating but before the original zero test and enqueue.
+[[midasm_hook]]
+name = "ApplyNativeMouseLookMidAsmHook"
+address = 0x823FD07C
+registers = ["r31", "r1", "f13", "f12"]

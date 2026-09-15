@@ -1,0 +1,2762 @@
+[
+  {
+    "name": "CWObject_CharDarkling",
+    "registry_address": "0x82A40708",
+    "factory_address": "0x82112FA8",
+    "category_address": "0x82A40EA8"
+  },
+  {
+    "name": "CWObject_AnimSyncer",
+    "registry_address": "0x82A40B28",
+    "factory_address": "0x821146F8",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_CharShapeshifter",
+    "registry_address": "0x82A40B98",
+    "factory_address": "0x82117560",
+    "category_address": "0x82A40708"
+  },
+  {
+    "name": "CWObject_CharPlayer_P6",
+    "registry_address": "0x82A40C08",
+    "factory_address": "0x82119580",
+    "category_address": "0x82A40F88"
+  },
+  {
+    "name": "CWObject_Spectator",
+    "registry_address": "0x82A40C78",
+    "factory_address": "0x8211AA30",
+    "category_address": "0x82A40F88"
+  },
+  {
+    "name": "CWObject_SpectatorIntermission",
+    "registry_address": "0x82A40CE8",
+    "factory_address": "0x8211AAB0",
+    "category_address": "0x82A40C78"
+  },
+  {
+    "name": "CWObject_CharNPC",
+    "registry_address": "0x82A40D58",
+    "factory_address": "0x8211AE68",
+    "category_address": "0x82A40EA8"
+  },
+  {
+    "name": "CWObject_CharNPC_P6",
+    "registry_address": "0x82A40DC8",
+    "factory_address": "0x8211B4B8",
+    "category_address": "0x82A40D58"
+  },
+  {
+    "name": "CWObject_Player",
+    "registry_address": "0x82A40E38",
+    "factory_address": "0x8211BFC8",
+    "category_address": "0x82A43470"
+  },
+  {
+    "name": "CWObject_Character",
+    "registry_address": "0x82A40EA8",
+    "factory_address": "0x82128630",
+    "category_address": "0x82A40E38"
+  },
+  {
+    "name": "CWObject_CharAngelus",
+    "registry_address": "0x82A40F18",
+    "factory_address": "0x8212E800",
+    "category_address": "0x82A40D58"
+  },
+  {
+    "name": "CWObject_CharPlayer",
+    "registry_address": "0x82A40F88",
+    "factory_address": "0x821326A0",
+    "category_address": "0x82A40EA8"
+  },
+  {
+    "name": "CWObject_GameCampaign",
+    "registry_address": "0x82A41098",
+    "factory_address": "0x822BE360",
+    "category_address": "0x82A42DE8"
+  },
+  {
+    "name": "CWObject_GameDM",
+    "registry_address": "0x82A41108",
+    "factory_address": "0x822BE3E0",
+    "category_address": "0x82A42DE8"
+  },
+  {
+    "name": "CWObject_GameTDM",
+    "registry_address": "0x82A41178",
+    "factory_address": "0x822BE448",
+    "category_address": "0x82A41108"
+  },
+  {
+    "name": "CWObject_GameCTF",
+    "registry_address": "0x82A411E8",
+    "factory_address": "0x822BE4B0",
+    "category_address": "0x82A41178"
+  },
+  {
+    "name": "CWObject_GameSurvivor",
+    "registry_address": "0x82A41258",
+    "factory_address": "0x822BE518",
+    "category_address": "0x82A41108"
+  },
+  {
+    "name": "CWObject_GameLastHuman",
+    "registry_address": "0x82A412C8",
+    "factory_address": "0x822BE580",
+    "category_address": "0x82A41258"
+  },
+  {
+    "name": "CWObject_Detector_Camera",
+    "registry_address": "0x82A41338",
+    "factory_address": "0x822C6D28",
+    "category_address": "0x82A41FE8"
+  },
+  {
+    "name": "CWObject_Detector_Camera_SecurityLow",
+    "registry_address": "0x82A413A8",
+    "factory_address": "0x822C6D90",
+    "category_address": "0x82A41338"
+  },
+  {
+    "name": "CWObject_Detector_Camera_SecurityNormal",
+    "registry_address": "0x82A41418",
+    "factory_address": "0x822C6E10",
+    "category_address": "0x82A41338"
+  },
+  {
+    "name": "CWObject_Detector_Camera_SecurityHigh",
+    "registry_address": "0x82A41488",
+    "factory_address": "0x822C6E90",
+    "category_address": "0x82A41338"
+  },
+  {
+    "name": "CWObject_Trigger_Ext",
+    "registry_address": "0x82A414F8",
+    "factory_address": "0x822CF500",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_Trigger_SoftSpot",
+    "registry_address": "0x82A41568",
+    "factory_address": "0x822CF568",
+    "category_address": "0x82A414F8"
+  },
+  {
+    "name": "CWObject_Trigger_NearChangeWorld",
+    "registry_address": "0x82A415D8",
+    "factory_address": "0x822CF5F8",
+    "category_address": "0x82A414F8"
+  },
+  {
+    "name": "CWObject_Trigger_SneakZone",
+    "registry_address": "0x82A41648",
+    "factory_address": "0x822CF678",
+    "category_address": "0x82A414F8"
+  },
+  {
+    "name": "CWObject_Trigger_RestrictedZone",
+    "registry_address": "0x82A416B8",
+    "factory_address": "0x822CF6F8",
+    "category_address": "0x82A414F8"
+  },
+  {
+    "name": "CWObject_Trigger_Damage",
+    "registry_address": "0x82A41728",
+    "factory_address": "0x822CF778",
+    "category_address": "0x82A428A8"
+  },
+  {
+    "name": "CWObject_Trigger_Checkpoint",
+    "registry_address": "0x82A41798",
+    "factory_address": "0x822CF810",
+    "category_address": "0x82A414F8"
+  },
+  {
+    "name": "CWObject_Trigger_Lamp",
+    "registry_address": "0x82A41808",
+    "factory_address": "0x822CF8C0",
+    "category_address": "0x82A414F8"
+  },
+  {
+    "name": "CWObject_Trigger_Surface",
+    "registry_address": "0x82A41878",
+    "factory_address": "0x822CF980",
+    "category_address": "0x82A414F8"
+  },
+  {
+    "name": "CWObject_Trigger_Pickup",
+    "registry_address": "0x82A418E8",
+    "factory_address": "0x822CFA00",
+    "category_address": "0x82A414F8"
+  },
+  {
+    "name": "CWObject_Trigger_AccPad",
+    "registry_address": "0x82A41958",
+    "factory_address": "0x822CFAA8",
+    "category_address": "0x82A428A8"
+  },
+  {
+    "name": "CWObject_Phys_Anim",
+    "registry_address": "0x82A419C8",
+    "factory_address": "0x822CFB40",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_MusicVolume",
+    "registry_address": "0x82A41A38",
+    "factory_address": "0x822CFCB0",
+    "category_address": "0x82A414F8"
+  },
+  {
+    "name": "CWObject_UseProxy",
+    "registry_address": "0x82A41AA8",
+    "factory_address": "0x822CFD58",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_Trigger_Look",
+    "registry_address": "0x82A41B18",
+    "factory_address": "0x822CFDD8",
+    "category_address": "0x82A414F8"
+  },
+  {
+    "name": "CWObject_Trigger_HideVolume",
+    "registry_address": "0x82A41B88",
+    "factory_address": "0x822CFE98",
+    "category_address": "0x82A414F8"
+  },
+  {
+    "name": "CWObject_TranquillizerDart",
+    "registry_address": "0x82A41BF8",
+    "factory_address": "0x822D05F8",
+    "category_address": "0x82A43088"
+  },
+  {
+    "name": "CWObject_RailMessagePoint",
+    "registry_address": "0x82A41C68",
+    "factory_address": "0x822D9F78",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_RailWagon",
+    "registry_address": "0x82A41CD8",
+    "factory_address": "0x822DA050",
+    "category_address": "0x82A43470"
+  },
+  {
+    "name": "CWObject_RailHandler",
+    "registry_address": "0x82A41D48",
+    "factory_address": "0x822DA1A8",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_Rail",
+    "registry_address": "0x82A41DB8",
+    "factory_address": "0x822DA278",
+    "category_address": "0x82A41FE8"
+  },
+  {
+    "name": "CWObject_Attach",
+    "registry_address": "0x82A41E28",
+    "factory_address": "0x822EBB68",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_Hook",
+    "registry_address": "0x82A41E98",
+    "factory_address": "0x822EBBD0",
+    "category_address": "0x82A41E28"
+  },
+  {
+    "name": "CWObject_Engine_Rotate",
+    "registry_address": "0x82A41F08",
+    "factory_address": "0x822EBC50",
+    "category_address": "0x82A41E98"
+  },
+  {
+    "name": "CWObject_Hook_To_Target",
+    "registry_address": "0x82A41F78",
+    "factory_address": "0x822EBCD0",
+    "category_address": "0x82A41E28"
+  },
+  {
+    "name": "CWObject_Engine_Path",
+    "registry_address": "0x82A41FE8",
+    "factory_address": "0x822EBD50",
+    "category_address": "0x82A41E98"
+  },
+  {
+    "name": "CWObject_MergedSolid",
+    "registry_address": "0x82A42058",
+    "factory_address": "0x822EBDB8",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_Dynamic",
+    "registry_address": "0x82A420C8",
+    "factory_address": "0x822EBE50",
+    "category_address": "0x82A41FE8"
+  },
+  {
+    "name": "CWObject_TimedMessages",
+    "registry_address": "0x82A42138",
+    "factory_address": "0x822EBED0",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_WorldLOD",
+    "registry_address": "0x82A421A8",
+    "factory_address": "0x822F74A8",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_Info_Player_Start",
+    "registry_address": "0x82A42218",
+    "factory_address": "0x822F8308",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_Model",
+    "registry_address": "0x82A42288",
+    "factory_address": "0x822F83A0",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_AnimModel",
+    "registry_address": "0x82A422F8",
+    "factory_address": "0x822F8420",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_Sound",
+    "registry_address": "0x82A42368",
+    "factory_address": "0x822F84A8",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_Static",
+    "registry_address": "0x82A423D8",
+    "factory_address": "0x822F8528",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_Ext_Static",
+    "registry_address": "0x82A42448",
+    "factory_address": "0x822F8590",
+    "category_address": "0x82A423D8"
+  },
+  {
+    "name": "CWObject_Null",
+    "registry_address": "0x82A424B8",
+    "factory_address": "0x822F8650",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_WorldSpawn",
+    "registry_address": "0x82A42528",
+    "factory_address": "0x822F86D0",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_WorldPlayerPhys",
+    "registry_address": "0x82A42598",
+    "factory_address": "0x822F87A8",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_WorldGlassSpawn",
+    "registry_address": "0x82A42608",
+    "factory_address": "0x822F8870",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_Glass_Dynamic",
+    "registry_address": "0x82A42678",
+    "factory_address": "0x822F88D8",
+    "category_address": "0x82A42608"
+  },
+  {
+    "name": "CWObject_WorldSky",
+    "registry_address": "0x82A426E8",
+    "factory_address": "0x822F89D0",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_SideScene",
+    "registry_address": "0x82A42758",
+    "factory_address": "0x822F8A38",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_Func_UserPortal",
+    "registry_address": "0x82A427C8",
+    "factory_address": "0x822F8AB8",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_Flare",
+    "registry_address": "0x82A42838",
+    "factory_address": "0x822F8BA8",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_Trigger",
+    "registry_address": "0x82A428A8",
+    "factory_address": "0x822F8C78",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_Trigger_ChangeWorld",
+    "registry_address": "0x82A42918",
+    "factory_address": "0x822F7408",
+    "category_address": "0x82A428A8"
+  },
+  {
+    "name": "CWObject_Cutscene",
+    "registry_address": "0x82A42988",
+    "factory_address": "0x822FC010",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_Ext_Model",
+    "registry_address": "0x82A429F8",
+    "factory_address": "0x822FDBE0",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_Damage",
+    "registry_address": "0x82A42A68",
+    "factory_address": "0x822FDC48",
+    "category_address": "0x82A429F8"
+  },
+  {
+    "name": "CWObject_Light",
+    "registry_address": "0x82A42AD8",
+    "factory_address": "0x823027D8",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_Light2",
+    "registry_address": "0x82A42B48",
+    "factory_address": "0x82302840",
+    "category_address": "0x82A42AD8"
+  },
+  {
+    "name": "CWObject_DynamicLight",
+    "registry_address": "0x82A42BB8",
+    "factory_address": "0x823028C0",
+    "category_address": "0x82A42AD8"
+  },
+  {
+    "name": "CWObject_DynamicLight2",
+    "registry_address": "0x82A42C28",
+    "factory_address": "0x82302940",
+    "category_address": "0x82A42BB8"
+  },
+  {
+    "name": "CWObject_Physical",
+    "registry_address": "0x82A42C98",
+    "factory_address": "0x82303840",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_Game",
+    "registry_address": "0x82A42D08",
+    "factory_address": "0x82304C18",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_Game_Settings",
+    "registry_address": "0x82A42D78",
+    "factory_address": "0x82304C80",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_GameCore",
+    "registry_address": "0x82A42DE8",
+    "factory_address": "0x82312DB8",
+    "category_address": "0x82A42D08"
+  },
+  {
+    "name": "CWObject_Rocket",
+    "registry_address": "0x82A42E58",
+    "factory_address": "0x823179F8",
+    "category_address": "0x82A44568"
+  },
+  {
+    "name": "CWObject_Throwable",
+    "registry_address": "0x82A42EC8",
+    "factory_address": "0x82317A78",
+    "category_address": "0x82A44AA8"
+  },
+  {
+    "name": "CWObject_Emitter",
+    "registry_address": "0x82A42F38",
+    "factory_address": "0x82319F58",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_Emitter_Suspendable",
+    "registry_address": "0x82A42FA8",
+    "factory_address": "0x82319FC0",
+    "category_address": "0x82A42F38"
+  },
+  {
+    "name": "CWObject_EmitterCoordinator",
+    "registry_address": "0x82A43018",
+    "factory_address": "0x8231A040",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_ProjectileCluster",
+    "registry_address": "0x82A43088",
+    "factory_address": "0x82321420",
+    "category_address": "0x82A42A68"
+  },
+  {
+    "name": "CWObject_ProjectileCluster_ImpactSpawn",
+    "registry_address": "0x82A430F8",
+    "factory_address": "0x82321488",
+    "category_address": "0x82A43088"
+  },
+  {
+    "name": "CWObject_SoundVolume",
+    "registry_address": "0x82A43168",
+    "factory_address": "0x823292F0",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_GameP6",
+    "registry_address": "0x82A431D8",
+    "factory_address": "0x82332020",
+    "category_address": "0x82A41098"
+  },
+  {
+    "name": "CWObject",
+    "registry_address": "0x82A432A0",
+    "factory_address": "0x82397998",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CWObject_Team",
+    "registry_address": "0x82A433D0",
+    "factory_address": "0x824F34E8",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_RPG",
+    "registry_address": "0x82A43470",
+    "factory_address": "0x8259B700",
+    "category_address": "0x82A42C98"
+  },
+  {
+    "name": "CWObject_Item",
+    "registry_address": "0x82A434E0",
+    "factory_address": "0x8259B768",
+    "category_address": "0x82A44648"
+  },
+  {
+    "name": "CWObject_InputEntity",
+    "registry_address": "0x82A43550",
+    "factory_address": "0x8266FF70",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_ActionCutscene",
+    "registry_address": "0x82A43890",
+    "factory_address": "0x8267B8A8",
+    "category_address": "0x82A41FE8"
+  },
+  {
+    "name": "CWObject_LeverActionCutscene",
+    "registry_address": "0x82A43900",
+    "factory_address": "0x8267B910",
+    "category_address": "0x82A43890"
+  },
+  {
+    "name": "CWObject_ValveActionCutscene",
+    "registry_address": "0x82A43970",
+    "factory_address": "0x8267B990",
+    "category_address": "0x82A43890"
+  },
+  {
+    "name": "CWObject_ActionCutsceneRiot",
+    "registry_address": "0x82A439E8",
+    "factory_address": "0x8267BA10",
+    "category_address": "0x82A43890"
+  },
+  {
+    "name": "CWObject_DCActioncutscene",
+    "registry_address": "0x82A43A58",
+    "factory_address": "0x8267BA90",
+    "category_address": "0x82A43890"
+  },
+  {
+    "name": "CWObject_ActionCutscenePeriscope",
+    "registry_address": "0x82A43AC8",
+    "factory_address": "0x8267BB30",
+    "category_address": "0x82A43890"
+  },
+  {
+    "name": "CWObject_SwingDoor",
+    "registry_address": "0x82A43B38",
+    "factory_address": "0x82684098",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_SwingDoorAttach",
+    "registry_address": "0x82A43BA8",
+    "factory_address": "0x82684160",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_Telephone",
+    "registry_address": "0x82A43C18",
+    "factory_address": "0x8268A710",
+    "category_address": "0x82A43890"
+  },
+  {
+    "name": "CWObject_TelephoneRegistry",
+    "registry_address": "0x82A43C88",
+    "factory_address": "0x8268A7B8",
+    "category_address": "0x82A40EA8"
+  },
+  {
+    "name": "CWObject_ActionCutscenePickup",
+    "registry_address": "0x82A43CF8",
+    "factory_address": "0x8268CBC8",
+    "category_address": "0x82A43890"
+  },
+  {
+    "name": "CWObject_DroppableItem",
+    "registry_address": "0x82A43D68",
+    "factory_address": "0x8268CC60",
+    "category_address": "0x82A43CF8"
+  },
+  {
+    "name": "CWObject_Model_Moth",
+    "registry_address": "0x82A43DD8",
+    "factory_address": "0x82690310",
+    "category_address": "0x82A429F8"
+  },
+  {
+    "name": "CWObject_MusicFader",
+    "registry_address": "0x82A43E48",
+    "factory_address": "0x82690B88",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_MusicTrackFader",
+    "registry_address": "0x82A43EB8",
+    "factory_address": "0x82690BF0",
+    "category_address": "0x82A43E48"
+  },
+  {
+    "name": "CWObject_GibSystem",
+    "registry_address": "0x82A43F28",
+    "factory_address": "0x82692040",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_ClientGib",
+    "registry_address": "0x82A43F98",
+    "factory_address": "0x826920D8",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_CreepingDark",
+    "registry_address": "0x82A44008",
+    "factory_address": "0x8269F9F0",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_CreepingDarkEntity",
+    "registry_address": "0x82A44078",
+    "factory_address": "0x8269FA88",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_LampSwitch",
+    "registry_address": "0x82A440E8",
+    "factory_address": "0x826A0308",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_Cloth",
+    "registry_address": "0x82A44158",
+    "factory_address": "0x826A0A60",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_AnimEventListener",
+    "registry_address": "0x82A441C8",
+    "factory_address": "0x826A1258",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_BloodEffect",
+    "registry_address": "0x82A44238",
+    "factory_address": "0x826A5300",
+    "category_address": "0x82A429F8"
+  },
+  {
+    "name": "CWObject_Wallmark",
+    "registry_address": "0x82A442A8",
+    "factory_address": "0x826A5A08",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_Television",
+    "registry_address": "0x82A44318",
+    "factory_address": "0x826A8F38",
+    "category_address": "0x82A44648"
+  },
+  {
+    "name": "CWObject_DarklingSpawn",
+    "registry_address": "0x82A44388",
+    "factory_address": "0x826B6420",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_DarklingSpawnEffect",
+    "registry_address": "0x82A444F8",
+    "factory_address": "0x826B6528",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_Explosion",
+    "registry_address": "0x82A44568",
+    "factory_address": "0x826B7DF0",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_AngelusChain",
+    "registry_address": "0x82A445D8",
+    "factory_address": "0x826BB9F8",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_Object",
+    "registry_address": "0x82A44648",
+    "factory_address": "0x826CE518",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_Object_Constraint",
+    "registry_address": "0x82A446B8",
+    "factory_address": "0x826CE670",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_Object_Constraint2",
+    "registry_address": "0x82A44728",
+    "factory_address": "0x826CE708",
+    "category_address": "0x82A446B8"
+  },
+  {
+    "name": "CWObject_EffectSystem",
+    "registry_address": "0x82A44798",
+    "factory_address": "0x826D3300",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_EffectSystem_Misc",
+    "registry_address": "0x82A44808",
+    "factory_address": "0x826D3390",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_Turret",
+    "registry_address": "0x82A44878",
+    "factory_address": "0x826DCF10",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_Critter",
+    "registry_address": "0x82A448E8",
+    "factory_address": "0x826E6A00",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_Crow",
+    "registry_address": "0x82A44958",
+    "factory_address": "0x826E6A68",
+    "category_address": "0x82A448E8"
+  },
+  {
+    "name": "CWObject_Rat",
+    "registry_address": "0x82A449C8",
+    "factory_address": "0x826E6AD0",
+    "category_address": "0x82A448E8"
+  },
+  {
+    "name": "CWObject_Follower",
+    "registry_address": "0x82A44A38",
+    "factory_address": "0x826E7D68",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_RigidBody",
+    "registry_address": "0x82A44AA8",
+    "factory_address": "0x826E8A58",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_BlackHole",
+    "registry_address": "0x82A44B18",
+    "factory_address": "0x826EBA58",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_Sync",
+    "registry_address": "0x82A44B88",
+    "factory_address": "0x826EC1E8",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_Shell",
+    "registry_address": "0x82A44BF8",
+    "factory_address": "0x826EFAF0",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_Object_Lamp",
+    "registry_address": "0x82A44C68",
+    "factory_address": "0x826F1518",
+    "category_address": "0x82A44648"
+  },
+  {
+    "name": "CWObject_ChainEffect",
+    "registry_address": "0x82A44CD8",
+    "factory_address": "0x826F5240",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_Ledge",
+    "registry_address": "0x82A44D48",
+    "factory_address": "0x826FD5C0",
+    "category_address": "0x82A43890"
+  },
+  {
+    "name": "CWObject_Phys_Ladder",
+    "registry_address": "0x82A44DB8",
+    "factory_address": "0x82702568",
+    "category_address": "0x82A43890"
+  },
+  {
+    "name": "CWObject_AutoFire",
+    "registry_address": "0x82A44E28",
+    "factory_address": "0x82703348",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_HealthStation",
+    "registry_address": "0x82A44E98",
+    "factory_address": "0x82704B78",
+    "category_address": "0x82A43890"
+  },
+  {
+    "name": "CWObject_Model_Anim",
+    "registry_address": "0x82A44F08",
+    "factory_address": "0x827085D8",
+    "category_address": "0x82A42288"
+  },
+  {
+    "name": "CWObject_Room",
+    "registry_address": "0x82A44F80",
+    "factory_address": "0x8270A9A0",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_Spawner_P6",
+    "registry_address": "0x82A44FF0",
+    "factory_address": "0x8270B0C0",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_Destructable",
+    "registry_address": "0x82A45060",
+    "factory_address": "0x8270BC28",
+    "category_address": "0x82A44568"
+  },
+  {
+    "name": "CWObject_Mine",
+    "registry_address": "0x82A450D0",
+    "factory_address": "0x8270BCA8",
+    "category_address": "0x82A45060"
+  },
+  {
+    "name": "CWObject_ScenePoint",
+    "registry_address": "0x82A45140",
+    "factory_address": "0x82713080",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_ScenePointManager",
+    "registry_address": "0x82A451B0",
+    "factory_address": "0x827130E8",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_TentacleSystem",
+    "registry_address": "0x82A45220",
+    "factory_address": "0x8271A070",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CWObject_Tentacle_PhysLink",
+    "registry_address": "0x82A45290",
+    "factory_address": "0x82733578",
+    "category_address": "0x82A432A0"
+  },
+  {
+    "name": "CXRealityApp",
+    "registry_address": "0x82A452FC",
+    "factory_address": "0x820ED0A8",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CRenderContextCapture",
+    "registry_address": "0x82A45314",
+    "factory_address": "0x820F0AF0",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CCExceptionLog",
+    "registry_address": "0x82A4532C",
+    "factory_address": "0x821FDDD8",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CLogFile",
+    "registry_address": "0x82A45344",
+    "factory_address": "0x821FEB80",
+    "category_address": "0x82A402C0"
+  },
+  {
+    "name": "CNetworkCore",
+    "registry_address": "0x82A4535C",
+    "factory_address": "0x82222D78",
+    "category_address": "0x82A40290"
+  },
+  {
+    "name": "CNetwork_Device_UDP",
+    "registry_address": "0x82A45374",
+    "factory_address": "0x82222DE0",
+    "category_address": "0x82A402A8"
+  },
+  {
+    "name": "CDisplayContextXenon",
+    "registry_address": "0x82A4538C",
+    "factory_address": "0x822432D8",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_Shader",
+    "registry_address": "0x82A453A4",
+    "factory_address": "0x82276D08",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_Model_VariationProxy",
+    "registry_address": "0x82A453BC",
+    "factory_address": "0x8227A890",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXBN_SearchResult",
+    "registry_address": "0x82A453D4",
+    "factory_address": "0x8227C668",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_BlockNav",
+    "registry_address": "0x82A453EC",
+    "factory_address": "0x82281388",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_BlockNavSearcher",
+    "registry_address": "0x82A45404",
+    "factory_address": "0x82281400",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_NavGraph_Builder",
+    "registry_address": "0x82A4541C",
+    "factory_address": "0x82286C10",
+    "category_address": "0x82A4544C"
+  },
+  {
+    "name": "CXR_NavGraph",
+    "registry_address": "0x82A45434",
+    "factory_address": "0x82289538",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_NavGraph_Writer",
+    "registry_address": "0x82A4544C",
+    "factory_address": "0x822895C8",
+    "category_address": "0x82A45434"
+  },
+  {
+    "name": "CXR_BlockNav_Grid",
+    "registry_address": "0x82A45464",
+    "factory_address": "0x8228DC68",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_BlockNav_GridBuilder",
+    "registry_address": "0x82A4547C",
+    "factory_address": "0x8228DCD0",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CRPG_Object_Item",
+    "registry_address": "0x82A45494",
+    "factory_address": "0x822C4750",
+    "category_address": "0x82A4565C"
+  },
+  {
+    "name": "CRPG_Object_Collectible",
+    "registry_address": "0x82A454AC",
+    "factory_address": "0x822C47B8",
+    "category_address": "0x82A45494"
+  },
+  {
+    "name": "CRPG_Object_MiniGun",
+    "registry_address": "0x82A454C4",
+    "factory_address": "0x822DBC70",
+    "category_address": "0x82A4562C"
+  },
+  {
+    "name": "CRPG_Object_Drill",
+    "registry_address": "0x82A454DC",
+    "factory_address": "0x822DBD10",
+    "category_address": "0x82A454C4"
+  },
+  {
+    "name": "CRPG_Object_Pickup",
+    "registry_address": "0x82A454F4",
+    "factory_address": "0x822DCA58",
+    "category_address": "0x82A45494"
+  },
+  {
+    "name": "CRPG_Object_Tutorial",
+    "registry_address": "0x82A4550C",
+    "factory_address": "0x822DCB00",
+    "category_address": "0x82A454F4"
+  },
+  {
+    "name": "CRPG_Object_Rifle",
+    "registry_address": "0x82A45524",
+    "factory_address": "0x822DD9E8",
+    "category_address": "0x82A4562C"
+  },
+  {
+    "name": "CRPG_Object_Ancient",
+    "registry_address": "0x82A4553C",
+    "factory_address": "0x822DDA70",
+    "category_address": "0x82A45524"
+  },
+  {
+    "name": "CRPG_Object_PhysControl",
+    "registry_address": "0x82A45554",
+    "factory_address": "0x822F9C08",
+    "category_address": "0x82A4562C"
+  },
+  {
+    "name": "CRPG_Object_ShotGun",
+    "registry_address": "0x82A4556C",
+    "factory_address": "0x82303558",
+    "category_address": "0x82A4562C"
+  },
+  {
+    "name": "CRPG_Object_ShotGun_Pit",
+    "registry_address": "0x82A45584",
+    "factory_address": "0x823035D8",
+    "category_address": "0x82A4556C"
+  },
+  {
+    "name": "CRPG_Object_Char",
+    "registry_address": "0x82A4559C",
+    "factory_address": "0x82324A40",
+    "category_address": "0x82A4565C"
+  },
+  {
+    "name": "CRPG_Object_Summon",
+    "registry_address": "0x82A455B4",
+    "factory_address": "0x82327920",
+    "category_address": "0x82A45494"
+  },
+  {
+    "name": "CRPG_Object_Throw",
+    "registry_address": "0x82A455CC",
+    "factory_address": "0x82327988",
+    "category_address": "0x82A455B4"
+  },
+  {
+    "name": "CRPG_Object_Gun",
+    "registry_address": "0x82A455E4",
+    "factory_address": "0x82327D80",
+    "category_address": "0x82A4562C"
+  },
+  {
+    "name": "CRPG_Object_Flashbang",
+    "registry_address": "0x82A455FC",
+    "factory_address": "0x823285A8",
+    "category_address": "0x82A4562C"
+  },
+  {
+    "name": "CRPG_Object_Inventory",
+    "registry_address": "0x82A45614",
+    "factory_address": "0x8232B690",
+    "category_address": "0x82A4565C"
+  },
+  {
+    "name": "CRPG_Object_Weapon",
+    "registry_address": "0x82A4562C",
+    "factory_address": "0x8232DAA0",
+    "category_address": "0x82A455B4"
+  },
+  {
+    "name": "CRPG_Object_Ammo",
+    "registry_address": "0x82A45644",
+    "factory_address": "0x82332550",
+    "category_address": "0x82A45494"
+  },
+  {
+    "name": "CRPG_Object",
+    "registry_address": "0x82A4565C",
+    "factory_address": "0x82334530",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CRPG_Object_CreatureAttack",
+    "registry_address": "0x82A45674",
+    "factory_address": "0x823358B0",
+    "category_address": "0x82A45494"
+  },
+  {
+    "name": "CRPG_Object_Melee",
+    "registry_address": "0x82A4568C",
+    "factory_address": "0x82335E70",
+    "category_address": "0x82A45494"
+  },
+  {
+    "name": "CRPG_Object_AngelusChain",
+    "registry_address": "0x82A456A4",
+    "factory_address": "0x82336368",
+    "category_address": "0x82A4562C"
+  },
+  {
+    "name": "CMapData",
+    "registry_address": "0x82A456BC",
+    "factory_address": "0x82346D40",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CWFrontEnd_Mod",
+    "registry_address": "0x82A458B8",
+    "factory_address": "0x82365B70",
+    "category_address": "0x82A3EF20"
+  },
+  {
+    "name": "CWRes_DLL",
+    "registry_address": "0x82A458D0",
+    "factory_address": "0x82377D60",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CWRes_Registry",
+    "registry_address": "0x82A458E8",
+    "factory_address": "0x82377E10",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CWRes_Model",
+    "registry_address": "0x82A45900",
+    "factory_address": "0x82377EE0",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CWRes_Class",
+    "registry_address": "0x82A45918",
+    "factory_address": "0x82377F88",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CWRes_Template",
+    "registry_address": "0x82A45930",
+    "factory_address": "0x82378060",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CWServer_Mod",
+    "registry_address": "0x82A45948",
+    "factory_address": "0x8237B040",
+    "category_address": "0x82A46668"
+  },
+  {
+    "name": "CWRes_Surface",
+    "registry_address": "0x82A45960",
+    "factory_address": "0x8237BA90",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CWRes_XFC",
+    "registry_address": "0x82A45978",
+    "factory_address": "0x8237BB38",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXW_SurfaceKeyFrame",
+    "registry_address": "0x82A45990",
+    "factory_address": "0x82388CD8",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXW_SurfaceSequence",
+    "registry_address": "0x82A459A8",
+    "factory_address": "0x82388D40",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXW_Surface",
+    "registry_address": "0x82A459C0",
+    "factory_address": "0x82388DD0",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CMWnd_ModButton",
+    "registry_address": "0x82A459D8",
+    "factory_address": "0x823A3DF0",
+    "category_address": "0x82A467E8"
+  },
+  {
+    "name": "CMWnd_CubeButton",
+    "registry_address": "0x82A459F0",
+    "factory_address": "0x823A3E58",
+    "category_address": "0x82A459D8"
+  },
+  {
+    "name": "CMWnd_CubeOptionButton",
+    "registry_address": "0x82A45A08",
+    "factory_address": "0x823A3EE8",
+    "category_address": "0x82A459F0"
+  },
+  {
+    "name": "CMWnd_CubeSwitchButton",
+    "registry_address": "0x82A45A20",
+    "factory_address": "0x823A3F50",
+    "category_address": "0x82A459F0"
+  },
+  {
+    "name": "CMWnd_CubeText",
+    "registry_address": "0x82A45A38",
+    "factory_address": "0x823A4018",
+    "category_address": "0x82A45A98"
+  },
+  {
+    "name": "CMWnd_CubeMeter",
+    "registry_address": "0x82A45A50",
+    "factory_address": "0x823A40A0",
+    "category_address": "0x82A45A98"
+  },
+  {
+    "name": "CMWnd_CubeOptionMeter",
+    "registry_address": "0x82A45A68",
+    "factory_address": "0x823A4110",
+    "category_address": "0x82A45A98"
+  },
+  {
+    "name": "CMWnd_CubeLayout",
+    "registry_address": "0x82A45A80",
+    "factory_address": "0x823A41A8",
+    "category_address": "0x82A45B10"
+  },
+  {
+    "name": "CMWnd_CubeRgn",
+    "registry_address": "0x82A45A98",
+    "factory_address": "0x823A4210",
+    "category_address": "0x82A46710"
+  },
+  {
+    "name": "CMWnd_CubeSecondaryRect",
+    "registry_address": "0x82A45AB0",
+    "factory_address": "0x823A4280",
+    "category_address": "0x82A45A98"
+  },
+  {
+    "name": "CMWnd_ModInfoScreen",
+    "registry_address": "0x82A45AC8",
+    "factory_address": "0x823A42F8",
+    "category_address": "0x82A46860"
+  },
+  {
+    "name": "CMWnd_ModEdit",
+    "registry_address": "0x82A45AE0",
+    "factory_address": "0x823A43C8",
+    "category_address": "0x82A46860"
+  },
+  {
+    "name": "CMWnd_ModText",
+    "registry_address": "0x82A45AF8",
+    "factory_address": "0x823A4458",
+    "category_address": "0x82A46740"
+  },
+  {
+    "name": "CMWnd_ModTexture",
+    "registry_address": "0x82A45B10",
+    "factory_address": "0x823A44D8",
+    "category_address": "0x82A46710"
+  },
+  {
+    "name": "CMWnd_ModOptionBox",
+    "registry_address": "0x82A45B28",
+    "factory_address": "0x823A4540",
+    "category_address": "0x82A46740"
+  },
+  {
+    "name": "CMWnd_ModInvSquare",
+    "registry_address": "0x82A45B40",
+    "factory_address": "0x823A45D8",
+    "category_address": "0x82A46710"
+  },
+  {
+    "name": "CMWnd_ModFrame",
+    "registry_address": "0x82A45B58",
+    "factory_address": "0x823A4648",
+    "category_address": "0x82A46710"
+  },
+  {
+    "name": "CMWnd_ModChainFrame",
+    "registry_address": "0x82A45B70",
+    "factory_address": "0x823A46B8",
+    "category_address": "0x82A46710"
+  },
+  {
+    "name": "CMWnd_ModPlaneFrame",
+    "registry_address": "0x82A45B88",
+    "factory_address": "0x823A4750",
+    "category_address": "0x82A46710"
+  },
+  {
+    "name": "CMWnd_ModBitmap",
+    "registry_address": "0x82A45BA0",
+    "factory_address": "0x823A47C0",
+    "category_address": "0x82A46710"
+  },
+  {
+    "name": "CMWnd_L2Client",
+    "registry_address": "0x82A45BB8",
+    "factory_address": "0x823A4840",
+    "category_address": "0x82A46710"
+  },
+  {
+    "name": "CMWnd_L2ClientContainer",
+    "registry_address": "0x82A45BD0",
+    "factory_address": "0x823A48B8",
+    "category_address": "0x82A46758"
+  },
+  {
+    "name": "CMWnd_List2",
+    "registry_address": "0x82A45BE8",
+    "factory_address": "0x823A4938",
+    "category_address": "0x82A46710"
+  },
+  {
+    "name": "CMWnd_ModMissionMap",
+    "registry_address": "0x82A45C00",
+    "factory_address": "0x823A5698",
+    "category_address": "0x82A45B10"
+  },
+  {
+    "name": "CWFrontEnd_P6",
+    "registry_address": "0x82A45C18",
+    "factory_address": "0x823A77B0",
+    "category_address": "0x82A458B8"
+  },
+  {
+    "name": "CMWnd_ModMenu",
+    "registry_address": "0x82A45C30",
+    "factory_address": "0x823CB378",
+    "category_address": "0x82A45B10"
+  },
+  {
+    "name": "CMWnd_Timed",
+    "registry_address": "0x82A45C48",
+    "factory_address": "0x823CB3E0",
+    "category_address": "0x82A45C30"
+  },
+  {
+    "name": "CMWnd_Random",
+    "registry_address": "0x82A45C60",
+    "factory_address": "0x823CB490",
+    "category_address": "0x82A45C30"
+  },
+  {
+    "name": "CMWnd_CenterImage",
+    "registry_address": "0x82A45C78",
+    "factory_address": "0x823CB528",
+    "category_address": "0x82A45C30"
+  },
+  {
+    "name": "CMWnd_CubeMenu",
+    "registry_address": "0x82A45C90",
+    "factory_address": "0x823CB590",
+    "category_address": "0x82A45A80"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Fork",
+    "registry_address": "0x82A45CA8",
+    "factory_address": "0x823CB5F8",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Select_Profile",
+    "registry_address": "0x82A45CC0",
+    "factory_address": "0x823CB678",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_ButtonConfig",
+    "registry_address": "0x82A45CD8",
+    "factory_address": "0x823CB710",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_VideoSelection",
+    "registry_address": "0x82A45CF0",
+    "factory_address": "0x823CB7C0",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_TextInput",
+    "registry_address": "0x82A45D08",
+    "factory_address": "0x823CB828",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Select_SaveGame",
+    "registry_address": "0x82A45D20",
+    "factory_address": "0x823CB8C8",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Extra_Content",
+    "registry_address": "0x82A45D38",
+    "factory_address": "0x823CB968",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Extra_Content_View2",
+    "registry_address": "0x82A45D50",
+    "factory_address": "0x823CB9E8",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_View_Texture",
+    "registry_address": "0x82A45D68",
+    "factory_address": "0x823CBA68",
+    "category_address": "0x82A45C78"
+  },
+  {
+    "name": "CMWnd_View_Slideshow",
+    "registry_address": "0x82A45D80",
+    "factory_address": "0x823CBB00",
+    "category_address": "0x82A45C78"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Extra_Content_ViewText",
+    "registry_address": "0x82A45D98",
+    "factory_address": "0x823CBBA8",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Extra_Content_TextScroller",
+    "registry_address": "0x82A45DB0",
+    "factory_address": "0x823CBC58",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_ChooserBuilder",
+    "registry_address": "0x82A45DC8",
+    "factory_address": "0x823CBD18",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Chooser",
+    "registry_address": "0x82A45DE0",
+    "factory_address": "0x823CBD98",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_NewGame",
+    "registry_address": "0x82A45DF8",
+    "factory_address": "0x823CBE18",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_ReselectDifficulty",
+    "registry_address": "0x82A45E10",
+    "factory_address": "0x823CBE98",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Controller",
+    "registry_address": "0x82A45E28",
+    "factory_address": "0x823CBF18",
+    "category_address": "0x82A45C78"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Controller2",
+    "registry_address": "0x82A45E40",
+    "factory_address": "0x823CBFD0",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_ModGameMenu",
+    "registry_address": "0x82A45E58",
+    "factory_address": "0x823CC090",
+    "category_address": "0x82A46710"
+  },
+  {
+    "name": "CMWnd_CubeMenu_PuffTris",
+    "registry_address": "0x82A45E70",
+    "factory_address": "0x823CC0F8",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_LoadMap",
+    "registry_address": "0x82A45E88",
+    "factory_address": "0x823CC188",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_LoadScriptLayer",
+    "registry_address": "0x82A45EA0",
+    "factory_address": "0x823CC1F0",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Achievements",
+    "registry_address": "0x82A45EB8",
+    "factory_address": "0x823CC288",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Multiplayer_ChangeMap",
+    "registry_address": "0x82A45ED0",
+    "factory_address": "0x823CC320",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Multiplayer_SelectMap",
+    "registry_address": "0x82A45EE8",
+    "factory_address": "0x823CC3B8",
+    "category_address": "0x82A45ED0"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Multiplayer_SetupCharacter",
+    "registry_address": "0x82A45F00",
+    "factory_address": "0x823CC450",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Multiplayer_SelectServerList",
+    "registry_address": "0x82A45F18",
+    "factory_address": "0x823CC4F8",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Multiplayer_SelectServerListLink",
+    "registry_address": "0x82A45F30",
+    "factory_address": "0x823CC560",
+    "category_address": "0x82A45F18"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Multiplayer_StartGame",
+    "registry_address": "0x82A45F48",
+    "factory_address": "0x823CC5E0",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Multiplayer_StartGameTeam",
+    "registry_address": "0x82A45F60",
+    "factory_address": "0x823CC648",
+    "category_address": "0x82A45F48"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Multiplayer_PostGameLobby",
+    "registry_address": "0x82A45F78",
+    "factory_address": "0x823CC6C8",
+    "category_address": "0x82A45F48"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Multiplayer_PostGameLobbyTeam",
+    "registry_address": "0x82A45F90",
+    "factory_address": "0x823CC748",
+    "category_address": "0x82A45F60"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Multiplayer_DroppedPlayers",
+    "registry_address": "0x82A45FA8",
+    "factory_address": "0x823CC7C8",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Multiplayer_ChangeGameMode",
+    "registry_address": "0x82A45FC0",
+    "factory_address": "0x823CC860",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Multiplayer_SelectGameMode",
+    "registry_address": "0x82A45FD8",
+    "factory_address": "0x823CC8C8",
+    "category_address": "0x82A45FC0"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Multiplayer_Search",
+    "registry_address": "0x82A45FF0",
+    "factory_address": "0x823CC948",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Multiplayer_DetailedInformation",
+    "registry_address": "0x82A46008",
+    "factory_address": "0x823CC9E0",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Multiplayer_AdvancedSettings",
+    "registry_address": "0x82A46020",
+    "factory_address": "0x823CCA78",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Multiplayer_Leaderboard",
+    "registry_address": "0x82A46038",
+    "factory_address": "0x823CCAF8",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Demos",
+    "registry_address": "0x82A46050",
+    "factory_address": "0x823CCB90",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_SelectServer",
+    "registry_address": "0x82A46068",
+    "factory_address": "0x823CCC38",
+    "category_address": "0x82A45D08"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Mission_Items",
+    "registry_address": "0x82A46080",
+    "factory_address": "0x823CCCD8",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Map",
+    "registry_address": "0x82A46098",
+    "factory_address": "0x823CCD78",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Darklings",
+    "registry_address": "0x82A460B0",
+    "factory_address": "0x823CCE20",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_HeaderImage",
+    "registry_address": "0x82A460C8",
+    "factory_address": "0x823CCEC8",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Timed",
+    "registry_address": "0x82A460E0",
+    "factory_address": "0x823CCF58",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_ImageList",
+    "registry_address": "0x82A460F8",
+    "factory_address": "0x823CD008",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_VideoSettings",
+    "registry_address": "0x82A46110",
+    "factory_address": "0x823CD070",
+    "category_address": "0x82A460F8"
+  },
+  {
+    "name": "CWRes_XWIndex",
+    "registry_address": "0x82A46128",
+    "factory_address": "0x823D13D0",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CWRes_Model_XW",
+    "registry_address": "0x82A46140",
+    "factory_address": "0x823D1488",
+    "category_address": "0x82A45900"
+  },
+  {
+    "name": "CWRes_Model_XW2",
+    "registry_address": "0x82A46158",
+    "factory_address": "0x823D1530",
+    "category_address": "0x82A46140"
+  },
+  {
+    "name": "CWRes_Model_XW3",
+    "registry_address": "0x82A46170",
+    "factory_address": "0x823D15D8",
+    "category_address": "0x82A46140"
+  },
+  {
+    "name": "CWRes_Model_XW4",
+    "registry_address": "0x82A46188",
+    "factory_address": "0x823D1680",
+    "category_address": "0x82A46140"
+  },
+  {
+    "name": "CWRes_Model_Glass",
+    "registry_address": "0x82A461A0",
+    "factory_address": "0x823D1728",
+    "category_address": "0x82A46140"
+  },
+  {
+    "name": "CWRes_XWResource",
+    "registry_address": "0x82A461B8",
+    "factory_address": "0x823D17D0",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CWRes_XWNavGrid",
+    "registry_address": "0x82A461D0",
+    "factory_address": "0x823D1888",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CWRes_XWNavGraph",
+    "registry_address": "0x82A461E8",
+    "factory_address": "0x823D1930",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CWRes_XW",
+    "registry_address": "0x82A46200",
+    "factory_address": "0x823D19D8",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CWRes_ObjectAttribs",
+    "registry_address": "0x82A46218",
+    "factory_address": "0x823D1A80",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_BlockNav_Grid_GameWorld",
+    "registry_address": "0x82A46230",
+    "factory_address": "0x823D4200",
+    "category_address": "0x82A45464"
+  },
+  {
+    "name": "CXR_BlockNavSearcher_VPUDispatcher",
+    "registry_address": "0x82A46248",
+    "factory_address": "0x823D42A0",
+    "category_address": "0x82A45404"
+  },
+  {
+    "name": "CXR_BlockNavSearcher_Plain",
+    "registry_address": "0x82A46260",
+    "factory_address": "0x823D4308",
+    "category_address": "0x82A45404"
+  },
+  {
+    "name": "CWRes_Sound",
+    "registry_address": "0x82A46278",
+    "factory_address": "0x823DC760",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CWRes_Wave",
+    "registry_address": "0x82A46290",
+    "factory_address": "0x823DC810",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CWRes_Dialogue",
+    "registry_address": "0x82A462A8",
+    "factory_address": "0x823DC930",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CWorld_Navgraph_Pathfinder_AStar",
+    "registry_address": "0x82A462C0",
+    "factory_address": "0x823DFDD8",
+    "category_address": "0x82A3EE3C"
+  },
+  {
+    "name": "CWorld_NavGraph_Path",
+    "registry_address": "0x82A462D8",
+    "factory_address": "0x823DFE50",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Main_P6",
+    "registry_address": "0x82A462F0",
+    "factory_address": "0x823E3598",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Journal_P6",
+    "registry_address": "0x82A46308",
+    "factory_address": "0x823E3648",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Inventory",
+    "registry_address": "0x82A46320",
+    "factory_address": "0x823E36F8",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_WeaponMod",
+    "registry_address": "0x82A46338",
+    "factory_address": "0x823E37D0",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeMenu_Multiplayer_SelectServerList_P6",
+    "registry_address": "0x82A46350",
+    "factory_address": "0x823E38A8",
+    "category_address": "0x82A45C90"
+  },
+  {
+    "name": "CMWnd_CubeIngameScreen",
+    "registry_address": "0x82A46368",
+    "factory_address": "0x823E51A8",
+    "category_address": "0x82A45A80"
+  },
+  {
+    "name": "CMWnd_CubeCommonLayout",
+    "registry_address": "0x82A46380",
+    "factory_address": "0x823E5210",
+    "category_address": "0x82A46368"
+  },
+  {
+    "name": "CMWnd_Mission_Objectives",
+    "registry_address": "0x82A46398",
+    "factory_address": "0x823E5290",
+    "category_address": "0x82A46380"
+  },
+  {
+    "name": "CMWnd_Mission_Inventory",
+    "registry_address": "0x82A463B0",
+    "factory_address": "0x823E5310",
+    "category_address": "0x82A46380"
+  },
+  {
+    "name": "CMWnd_Mission_PhoneBook",
+    "registry_address": "0x82A463C8",
+    "factory_address": "0x823E5390",
+    "category_address": "0x82A46380"
+  },
+  {
+    "name": "CMWnd_Mission_Collectibles",
+    "registry_address": "0x82A463E0",
+    "factory_address": "0x823E5410",
+    "category_address": "0x82A46380"
+  },
+  {
+    "name": "CMWnd_Mission_Map",
+    "registry_address": "0x82A463F8",
+    "factory_address": "0x823E54A8",
+    "category_address": "0x82A46368"
+  },
+  {
+    "name": "CWRes_Model_XMD",
+    "registry_address": "0x82A46410",
+    "factory_address": "0x823E6518",
+    "category_address": "0x82A45900"
+  },
+  {
+    "name": "CWRes_Model_Custom",
+    "registry_address": "0x82A46428",
+    "factory_address": "0x823E65D0",
+    "category_address": "0x82A45900"
+  },
+  {
+    "name": "CWRes_Model_Custom_File",
+    "registry_address": "0x82A46440",
+    "factory_address": "0x823E6678",
+    "category_address": "0x82A46428"
+  },
+  {
+    "name": "CMWnd_ModSelectClass",
+    "registry_address": "0x82A46458",
+    "factory_address": "0x823E8388",
+    "category_address": "0x82A46710"
+  },
+  {
+    "name": "CMWnd_ModSelectTeam",
+    "registry_address": "0x82A46470",
+    "factory_address": "0x823E8450",
+    "category_address": "0x82A46710"
+  },
+  {
+    "name": "CMWnd_ModSelectWeapon",
+    "registry_address": "0x82A46488",
+    "factory_address": "0x823E84D8",
+    "category_address": "0x82A46710"
+  },
+  {
+    "name": "CMWnd_CharacterList",
+    "registry_address": "0x82A464A0",
+    "factory_address": "0x823E8560",
+    "category_address": "0x82A45BE8"
+  },
+  {
+    "name": "CMWnd_TeamList",
+    "registry_address": "0x82A464B8",
+    "factory_address": "0x823E85F0",
+    "category_address": "0x82A45BE8"
+  },
+  {
+    "name": "CMWnd_WeaponList",
+    "registry_address": "0x82A464D0",
+    "factory_address": "0x823E8680",
+    "category_address": "0x82A45BE8"
+  },
+  {
+    "name": "CWireContainer",
+    "registry_address": "0x82A464E8",
+    "factory_address": "0x823EA830",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CDebugRenderContainer",
+    "registry_address": "0x82A46500",
+    "factory_address": "0x823EA910",
+    "category_address": "0x82A464E8"
+  },
+  {
+    "name": "CMWnd_ModDialogue",
+    "registry_address": "0x82A46518",
+    "factory_address": "0x823EB998",
+    "category_address": "0x82A46710"
+  },
+  {
+    "name": "CMWnd_ModTelephone",
+    "registry_address": "0x82A46530",
+    "factory_address": "0x823EBA20",
+    "category_address": "0x82A46710"
+  },
+  {
+    "name": "CWorld_ClientCore",
+    "registry_address": "0x82A46548",
+    "factory_address": "0x823F0EC8",
+    "category_address": "0x82A3EC40"
+  },
+  {
+    "name": "CMWnd_LootList",
+    "registry_address": "0x82A46560",
+    "factory_address": "0x823F5978",
+    "category_address": "0x82A45BE8"
+  },
+  {
+    "name": "CMWnd_ModLoot_P6",
+    "registry_address": "0x82A46578",
+    "factory_address": "0x823F5A08",
+    "category_address": "0x82A46710"
+  },
+  {
+    "name": "CMWnd_ModTrading_P6",
+    "registry_address": "0x82A46590",
+    "factory_address": "0x823F5AA0",
+    "category_address": "0x82A46710"
+  },
+  {
+    "name": "CWRes_Anim",
+    "registry_address": "0x82A465A8",
+    "factory_address": "0x823F6CC8",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CWClient_Mod",
+    "registry_address": "0x82A465C0",
+    "factory_address": "0x82400DF0",
+    "category_address": "0x82A46548"
+  },
+  {
+    "name": "CWRes_AnimGraph2",
+    "registry_address": "0x82A465D8",
+    "factory_address": "0x82401F20",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CWRes_FacialSetup",
+    "registry_address": "0x82A465F0",
+    "factory_address": "0x82404030",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CMWnd_ModBriefing",
+    "registry_address": "0x82A46608",
+    "factory_address": "0x824042C8",
+    "category_address": "0x82A46710"
+  },
+  {
+    "name": "CWServer_P6",
+    "registry_address": "0x82A46620",
+    "factory_address": "0x82404368",
+    "category_address": "0x82A45948"
+  },
+  {
+    "name": "CWorldDataCore",
+    "registry_address": "0x82A46638",
+    "factory_address": "0x8240EBA0",
+    "category_address": "0x82A3EE04"
+  },
+  {
+    "name": "CWClient_P6",
+    "registry_address": "0x82A46650",
+    "factory_address": "0x82410050",
+    "category_address": "0x82A465C0"
+  },
+  {
+    "name": "CWorld_ServerCore",
+    "registry_address": "0x82A46668",
+    "factory_address": "0x824143D8",
+    "category_address": "0x82A3EC20"
+  },
+  {
+    "name": "CXR_Anim_Keyframe",
+    "registry_address": "0x82A46680",
+    "factory_address": "0x8241DA60",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_Anim_Sequence",
+    "registry_address": "0x82A46698",
+    "factory_address": "0x8241DAD8",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_Anim_SequenceTracks",
+    "registry_address": "0x82A466B0",
+    "factory_address": "0x8241DBC0",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_Anim_Base",
+    "registry_address": "0x82A466C8",
+    "factory_address": "0x8241DCA8",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_SkeletonInstance",
+    "registry_address": "0x82A466E0",
+    "factory_address": "0x82423350",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_Skeleton",
+    "registry_address": "0x82A466F8",
+    "factory_address": "0x82423420",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CMWnd",
+    "registry_address": "0x82A46710",
+    "factory_address": "0x8245BDA0",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CMWnd_Caption",
+    "registry_address": "0x82A46728",
+    "factory_address": "0x8245BE08",
+    "category_address": "0x82A46710"
+  },
+  {
+    "name": "CMWnd_Text",
+    "registry_address": "0x82A46740",
+    "factory_address": "0x8245BE98",
+    "category_address": "0x82A46710"
+  },
+  {
+    "name": "CMWnd_Client",
+    "registry_address": "0x82A46758",
+    "factory_address": "0x8245BF00",
+    "category_address": "0x82A46710"
+  },
+  {
+    "name": "CMWnd_SplitWnd",
+    "registry_address": "0x82A46770",
+    "factory_address": "0x8245BF68",
+    "category_address": "0x82A46710"
+  },
+  {
+    "name": "CMWnd_Border",
+    "registry_address": "0x82A46788",
+    "factory_address": "0x8245C008",
+    "category_address": "0x82A46710"
+  },
+  {
+    "name": "CMWnd_ResizePad",
+    "registry_address": "0x82A467A0",
+    "factory_address": "0x8245C088",
+    "category_address": "0x82A46710"
+  },
+  {
+    "name": "CMWnd_Window",
+    "registry_address": "0x82A467B8",
+    "factory_address": "0x8245C0F8",
+    "category_address": "0x82A46710"
+  },
+  {
+    "name": "CMWnd_Desktop",
+    "registry_address": "0x82A467D0",
+    "factory_address": "0x8245C1B8",
+    "category_address": "0x82A46710"
+  },
+  {
+    "name": "CMWnd_Button",
+    "registry_address": "0x82A467E8",
+    "factory_address": "0x8245C228",
+    "category_address": "0x82A46710"
+  },
+  {
+    "name": "CMWnd_DragbarX",
+    "registry_address": "0x82A46800",
+    "factory_address": "0x8245C290",
+    "category_address": "0x82A46710"
+  },
+  {
+    "name": "CMWnd_DragbarY",
+    "registry_address": "0x82A46818",
+    "factory_address": "0x8245C2F8",
+    "category_address": "0x82A46800"
+  },
+  {
+    "name": "CMWnd_List",
+    "registry_address": "0x82A46830",
+    "factory_address": "0x8245C380",
+    "category_address": "0x82A46758"
+  },
+  {
+    "name": "CMWnd_Starview",
+    "registry_address": "0x82A46848",
+    "factory_address": "0x8245C460",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CMWnd_Edit",
+    "registry_address": "0x82A46860",
+    "factory_address": "0x8248B778",
+    "category_address": "0x82A46710"
+  },
+  {
+    "name": "CXR_Model_Debris",
+    "registry_address": "0x82A46878",
+    "factory_address": "0x824BEC30",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXR_Model_Impact",
+    "registry_address": "0x82A46890",
+    "factory_address": "0x824BED10",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXR_Model_ExplosionDebris",
+    "registry_address": "0x82A468A8",
+    "factory_address": "0x824BEDB0",
+    "category_address": "0x82A46878"
+  },
+  {
+    "name": "CXR_Model_RocketTrail",
+    "registry_address": "0x82A468C0",
+    "factory_address": "0x824BEE98",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXR_Model_FocusFrame",
+    "registry_address": "0x82A468D8",
+    "factory_address": "0x824C0BB8",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXR_Model_PhysicsPrim",
+    "registry_address": "0x82A468F0",
+    "factory_address": "0x824C1440",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXR_Model_Line",
+    "registry_address": "0x82A46908",
+    "factory_address": "0x824C14F0",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXR_Model_WaterTile",
+    "registry_address": "0x82A46920",
+    "factory_address": "0x824C5418",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXR_Model_WaterTile2",
+    "registry_address": "0x82A46938",
+    "factory_address": "0x824C5480",
+    "category_address": "0x82A46920"
+  },
+  {
+    "name": "CXR_Model_InstantTrail2",
+    "registry_address": "0x82A46950",
+    "factory_address": "0x824C77B8",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXR_Model_TrailStrip",
+    "registry_address": "0x82A46968",
+    "factory_address": "0x824C7868",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXR_Model_MuzzleFlame",
+    "registry_address": "0x82A46980",
+    "factory_address": "0x824C7918",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXR_Model_MuzzleRiot",
+    "registry_address": "0x82A46998",
+    "factory_address": "0x824C79C8",
+    "category_address": "0x82A46980"
+  },
+  {
+    "name": "CXR_Model_MuzzleRiotSingle",
+    "registry_address": "0x82A469B0",
+    "factory_address": "0x824C7A78",
+    "category_address": "0x82A46980"
+  },
+  {
+    "name": "CXR_Model_MuzzleAttackDroid",
+    "registry_address": "0x82A469C8",
+    "factory_address": "0x824C7B28",
+    "category_address": "0x82A46980"
+  },
+  {
+    "name": "CXR_Model_MuzzleShotgun",
+    "registry_address": "0x82A469E0",
+    "factory_address": "0x824C7BD8",
+    "category_address": "0x82A46980"
+  },
+  {
+    "name": "CXR_Model_None",
+    "registry_address": "0x82A469F8",
+    "factory_address": "0x824C7C88",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXR_Model_EffectSystem",
+    "registry_address": "0x82A46A10",
+    "factory_address": "0x824E1128",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXR_Model_Particles",
+    "registry_address": "0x82A46A28",
+    "factory_address": "0x824F1B68",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXR_Model_Sprite2",
+    "registry_address": "0x82A46A40",
+    "factory_address": "0x824F2010",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXR_Model_LaserBeam",
+    "registry_address": "0x82A46A58",
+    "factory_address": "0x824F42B8",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXR_Model_GlassSystem",
+    "registry_address": "0x82A46A70",
+    "factory_address": "0x824F8A08",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXR_Model_BloodEffect",
+    "registry_address": "0x82A46A88",
+    "factory_address": "0x824FA4F8",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXR_Model_ExplosionSystem",
+    "registry_address": "0x82A46AA0",
+    "factory_address": "0x824FBF88",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXR_Model_Chain",
+    "registry_address": "0x82A46AB8",
+    "factory_address": "0x824FC960",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXR_Model_Drain",
+    "registry_address": "0x82A46AD0",
+    "factory_address": "0x824FDC38",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXR_VBManager",
+    "registry_address": "0x82A46AE8",
+    "factory_address": "0x825A4BD0",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_VBMContainer",
+    "registry_address": "0x82A46B00",
+    "factory_address": "0x825A4C38",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_SurfaceContext",
+    "registry_address": "0x82A46B18",
+    "factory_address": "0x825A7608",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_Model_BSP4Glass",
+    "registry_address": "0x82A46B30",
+    "factory_address": "0x825B1830",
+    "category_address": "0x82A46F38"
+  },
+  {
+    "name": "CXR_VBOperator_TextureAnim",
+    "registry_address": "0x82A46B48",
+    "factory_address": "0x825B6B18",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_VBOperator_Offset",
+    "registry_address": "0x82A46B60",
+    "factory_address": "0x825B6B88",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_VBOperator_Scroll",
+    "registry_address": "0x82A46B78",
+    "factory_address": "0x825B6BF8",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_VBOperator_RowScroller",
+    "registry_address": "0x82A46B90",
+    "factory_address": "0x825B6C68",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_VBOperator_Scale",
+    "registry_address": "0x82A46BA8",
+    "factory_address": "0x825B6CD8",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_VBOperator_Rotate",
+    "registry_address": "0x82A46BC0",
+    "factory_address": "0x825B6D48",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_VBOperator_GenReflection",
+    "registry_address": "0x82A46BD8",
+    "factory_address": "0x825B6DB8",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_VBOperator_GenEnv",
+    "registry_address": "0x82A46BF0",
+    "factory_address": "0x825B6E28",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_VBOperator_GenEnv2",
+    "registry_address": "0x82A46C08",
+    "factory_address": "0x825B6E98",
+    "category_address": "0x82A46BF0"
+  },
+  {
+    "name": "CXR_VBOperator_Wave",
+    "registry_address": "0x82A46C20",
+    "factory_address": "0x825B6F08",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_VBOperator_GenColorViewN",
+    "registry_address": "0x82A46C38",
+    "factory_address": "0x825B6F78",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_VBOperator_Particles",
+    "registry_address": "0x82A46C50",
+    "factory_address": "0x825B6FE8",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_VBOperator_Debug_Normals",
+    "registry_address": "0x82A46C68",
+    "factory_address": "0x825B7058",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_VBOperator_Debug_Tangents",
+    "registry_address": "0x82A46C80",
+    "factory_address": "0x825B70C8",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_VBOperator_MulDecalBlend",
+    "registry_address": "0x82A46C98",
+    "factory_address": "0x825B7138",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_VBOperator_UseShader",
+    "registry_address": "0x82A46CB0",
+    "factory_address": "0x825B71B0",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_VBOperator_DepthOffset",
+    "registry_address": "0x82A46CC8",
+    "factory_address": "0x825B7220",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_VBOperator_DrawOrder",
+    "registry_address": "0x82A46CE0",
+    "factory_address": "0x825B7290",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_VBOperator_NormalTransform",
+    "registry_address": "0x82A46CF8",
+    "factory_address": "0x825B7300",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_VBOperator_FP20_Water",
+    "registry_address": "0x82A46D10",
+    "factory_address": "0x825B7370",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_VBOperator_FP20_CubeWater",
+    "registry_address": "0x82A46D28",
+    "factory_address": "0x825B73E0",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_VBOperator_FP20_Distort",
+    "registry_address": "0x82A46D40",
+    "factory_address": "0x825B7450",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_VBOperator_TexEnvProj1",
+    "registry_address": "0x82A46D58",
+    "factory_address": "0x825B74C0",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_AnimContext",
+    "registry_address": "0x82A46D70",
+    "factory_address": "0x825B7FF0",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_Model_TriangleMesh",
+    "registry_address": "0x82A46D88",
+    "factory_address": "0x825CB940",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXR_Model_BSP2",
+    "registry_address": "0x82A46DA0",
+    "factory_address": "0x825D52D8",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXR_Model_Flare",
+    "registry_address": "0x82A46DB8",
+    "factory_address": "0x825D76C8",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXR_Model_Sprite",
+    "registry_address": "0x82A46DD0",
+    "factory_address": "0x825D77D0",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXR_Model_SphereSprite",
+    "registry_address": "0x82A46DE8",
+    "factory_address": "0x825D7838",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXR_Model_ConcaveSprite",
+    "registry_address": "0x82A46E00",
+    "factory_address": "0x825D78B8",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXR_Model_SpotLightVolume",
+    "registry_address": "0x82A46E18",
+    "factory_address": "0x825D7938",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXR_ParticleContainer",
+    "registry_address": "0x82A46E30",
+    "factory_address": "0x825D8030",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXR_VBOperator_NV20_GenEnv",
+    "registry_address": "0x82A46E48",
+    "factory_address": "0x825D9E50",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_VBOperator_NV20_RMBM2D",
+    "registry_address": "0x82A46E60",
+    "factory_address": "0x825D9EC0",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_VBOperator_MultiTxt",
+    "registry_address": "0x82A46E78",
+    "factory_address": "0x825D9F30",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_VBOperator_NV20_Fresnel",
+    "registry_address": "0x82A46E90",
+    "factory_address": "0x825D9FA0",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_VBOperator_NV20_YUV2RGB",
+    "registry_address": "0x82A46EA8",
+    "factory_address": "0x825DA018",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_TriangleMeshDecalContainer",
+    "registry_address": "0x82A46EC0",
+    "factory_address": "0x825DA8B0",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_Model_MultiTriMesh",
+    "registry_address": "0x82A46ED8",
+    "factory_address": "0x825DD890",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CTextureContainer_Screen",
+    "registry_address": "0x82A46EF0",
+    "factory_address": "0x825ED5B8",
+    "category_address": "0x82A3D8C0"
+  },
+  {
+    "name": "CXR_EngineImpl",
+    "registry_address": "0x82A46F08",
+    "factory_address": "0x825ED668",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXR_Model_FogVolume",
+    "registry_address": "0x82A46F20",
+    "factory_address": "0x825F0E60",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXR_Model_BSP4",
+    "registry_address": "0x82A46F38",
+    "factory_address": "0x825F1300",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXR_Model_Sky",
+    "registry_address": "0x82A46F50",
+    "factory_address": "0x825F5B60",
+    "category_address": "0x82A3FEE8"
+  },
+  {
+    "name": "CXR_VBContext",
+    "registry_address": "0x82A46F68",
+    "factory_address": "0x825F6F08",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CRPG_Object_Pager",
+    "registry_address": "0x82A46F80",
+    "factory_address": "0x8268A858",
+    "category_address": "0x82A45494"
+  },
+  {
+    "name": "CRPG_Object_Telephone_Receiver",
+    "registry_address": "0x82A46F98",
+    "factory_address": "0x8268A8F0",
+    "category_address": "0x82A45494"
+  },
+  {
+    "name": "CTextureContext",
+    "registry_address": "0x82A46FB0",
+    "factory_address": "0x8277D618",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CScriptContext",
+    "registry_address": "0x82A46FC8",
+    "factory_address": "0x8277F608",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CConsole",
+    "registry_address": "0x82A46FE0",
+    "factory_address": "0x827857D8",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CMSound_Codec_XMA",
+    "registry_address": "0x82A46FF8",
+    "factory_address": "0x82793988",
+    "category_address": "0x82A3BE48"
+  },
+  {
+    "name": "CXenon_Device_Joystick",
+    "registry_address": "0x82A47010",
+    "factory_address": "0x827952B0",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CXenon_Device_KeyBoard",
+    "registry_address": "0x82A47028",
+    "factory_address": "0x82795340",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CInputContext_Xenon",
+    "registry_address": "0x82A47040",
+    "factory_address": "0x827953C8",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CPerfGraph",
+    "registry_address": "0x82A47058",
+    "factory_address": "0x827975F0",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CTexture",
+    "registry_address": "0x82A47070",
+    "factory_address": "0x8279B8A0",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CTextureContainer_Plain",
+    "registry_address": "0x82A47088",
+    "factory_address": "0x8279B908",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CTextureContainer_VirtualXTC",
+    "registry_address": "0x82A470A0",
+    "factory_address": "0x8279B970",
+    "category_address": "0x82A47088"
+  },
+  {
+    "name": "CTextureContainer_Video_WMV",
+    "registry_address": "0x82A470B8",
+    "factory_address": "0x8279E7E0",
+    "category_address": "0x82A3BE60"
+  },
+  {
+    "name": "CTextureContainer_Video_Theora",
+    "registry_address": "0x82A470D0",
+    "factory_address": "0x827A22C8",
+    "category_address": "0x82A3BE60"
+  },
+  {
+    "name": "CTextureContainer_VirtualXTC2",
+    "registry_address": "0x82A470E8",
+    "factory_address": "0x827A4FC8",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CSystemXenon",
+    "registry_address": "0x82A47100",
+    "factory_address": "0x827AA840",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CDisplayContextNULL",
+    "registry_address": "0x82A47118",
+    "factory_address": "0x827AA8B0",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CMSound_Codec_MPEG",
+    "registry_address": "0x82A47130",
+    "factory_address": "0x827AAB48",
+    "category_address": "0x82A3BE48"
+  },
+  {
+    "name": "CScriptLanguageCore",
+    "registry_address": "0x82A47148",
+    "factory_address": "0x827B4438",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CSoundContext_Xenon3",
+    "registry_address": "0x82A47160",
+    "factory_address": "0x827B8478",
+    "category_address": "0x82A40308"
+  },
+  {
+    "name": "CMSound_Codec_VORB",
+    "registry_address": "0x82A47178",
+    "factory_address": "0x827B91A8",
+    "category_address": "0x82A3BE48"
+  },
+  {
+    "name": "CWaveContainer_XWC2",
+    "registry_address": "0x82A47190",
+    "factory_address": "0x827BDF78",
+    "category_address": "0x82A3BDD8"
+  },
+  {
+    "name": "CWaveContainer_Plain",
+    "registry_address": "0x82A471A8",
+    "factory_address": "0x827C0F00",
+    "category_address": "0x82A3BDD8"
+  }
+]

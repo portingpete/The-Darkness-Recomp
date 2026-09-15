@@ -1,0 +1,812 @@
+{
+ "0x82007898": {
+  "confidence": "certain",
+  "name": "xapi_return_format",
+  "summary": "Guest .rdata format string checked at startup: \"[XAPI RETURN VALUE] %d\". Data, not code.",
+  "tags": [
+   "data",
+   "startup-check"
+  ],
+  "type": "data"
+ },
+ "0x82066AFC": {
+  "confidence": "certain",
+  "name": "alpha_func_map",
+  "summary": "Original alpha-function mapping table read by 0x82247FE8 for attribute97.",
+  "tags": [
+   "data",
+   "render",
+   "alpha-test"
+  ],
+  "type": "data"
+ },
+ "0x820C1100": {
+  "confidence": "hook-observed",
+  "name": "helper_820C1100",
+  "summary": "Small helper; hook-observed indirect-miss site at +0xD8.",
+  "tags": [
+   "hook-observed"
+  ],
+  "type": "function"
+ },
+ "0x820C60F8": {
+  "confidence": "certain",
+  "name": "ContinueGate",
+  "summary": "Continuation gate; per-call work is profile-gated, direct call-through otherwise.",
+  "tags": [
+   "kernel",
+   "profile-gated"
+  ],
+  "type": "function"
+ },
+ "0x820C88B0": {
+  "confidence": "certain",
+  "name": "job_wait",
+  "summary": "Job wait on a job object plus completion event (hook-observed r3=job).",
+  "tags": [
+   "threading",
+   "job-system"
+  ],
+  "type": "function"
+ },
+ "0x820CA1F8": {
+  "confidence": "hook-observed",
+  "name": "node_ctor_820CA1F8",
+  "summary": "Node constructor bypass site (hook-observed r3/r4/r5).",
+  "tags": [
+   "hook-observed",
+   "memory"
+  ],
+  "type": "function"
+ },
+ "0x820DEAE8": {
+  "confidence": "certain",
+  "name": "boot_820DEAE8",
+  "summary": "Boot-chain function calling into 0x820E4378 startup work.",
+  "tags": [
+   "startup"
+  ],
+  "type": "function"
+ },
+ "0x820E4378": {
+  "confidence": "certain",
+  "name": "boot_820E4378",
+  "summary": "Boot-chain function under 0x820DEAE8.",
+  "tags": [
+   "startup"
+  ],
+  "type": "function"
+ },
+ "0x820E8A10": {
+  "confidence": "certain",
+  "name": "boot_820E8A10",
+  "summary": "Boot-chain function in the _xstart startup path.",
+  "tags": [
+   "startup"
+  ],
+  "type": "function"
+ },
+ "0x82104DC8": {
+  "confidence": "certain",
+  "name": "startup_orchestrator",
+  "summary": "Startup orchestrator; deep stacks through 0x827A5E30/0x82777BF0 during boot.",
+  "tags": [
+   "startup"
+  ],
+  "type": "function"
+ },
+ "0x82107EA0": {
+  "confidence": "certain",
+  "name": "guest_heap_alloc",
+  "summary": "Guest heap allocator (r3=size class, r4=key).",
+  "tags": [
+   "memory"
+  ],
+  "type": "function"
+ },
+ "0x8210A738": {
+  "confidence": "hook-observed",
+  "name": "bypass_8210A738",
+  "summary": "Hook bypass site (r3/r4 observed).",
+  "tags": [
+   "hook-observed"
+  ],
+  "type": "function"
+ },
+ "0x8210C138": {
+  "confidence": "hook-observed",
+  "name": "bypass_8210C138",
+  "summary": "Hook bypass site (obj=8).",
+  "tags": [
+   "hook-observed"
+  ],
+  "type": "function"
+ },
+ "0x821EFDA8": {
+  "confidence": "certain",
+  "name": "guest_small_alloc",
+  "summary": "Small guest allocator taking byte size in r3.",
+  "tags": [
+   "memory"
+  ],
+  "type": "function"
+ },
+ "0x821EFC78": {
+  "confidence": "hook-observed",
+  "name": "node_alloc_821EFC78",
+  "summary": "Node allocation bypass site.",
+  "tags": [
+   "hook-observed",
+   "memory"
+  ],
+  "type": "function"
+ },
+ "0x821F07E8": {
+  "confidence": "stack-observed",
+  "name": "worker_wait_A",
+  "summary": "Worker wait primitive seen in guest worker stacks.",
+  "tags": [
+   "threading"
+  ],
+  "type": "function"
+ },
+ "0x821F0B20": {
+  "confidence": "hook-observed",
+  "name": "passthrough_821F0B20",
+  "summary": "Passthrough hook site.",
+  "tags": [
+   "hook-observed"
+  ],
+  "type": "function"
+ },
+ "0x821F11A0": {
+  "confidence": "stack-observed",
+  "name": "worker_wait_B",
+  "summary": "Worker wait on NtWaitForSingleObjectEx seen in guest worker stacks.",
+  "tags": [
+   "threading"
+  ],
+  "type": "function"
+ },
+ "0x821F1548": {
+  "confidence": "certain",
+  "name": "job_wait_execute",
+  "summary": "Original job-wait routine; also executes queued work, so it must never be replaced with a sleep.",
+  "tags": [
+   "threading",
+   "job-system",
+   "hot"
+  ],
+  "type": "function"
+ },
+ "0x821F27D0": {
+  "confidence": "hook-observed",
+  "name": "bypass_821F27D0",
+  "summary": "Hook bypass site.",
+  "tags": [
+   "hook-observed"
+  ],
+  "type": "function"
+ },
+ "0x821F35F8": {
+  "confidence": "certain",
+  "name": "indirect_dispatch",
+  "summary": "Indirect-dispatch site with repeated dispatch-table misses during boot.",
+  "tags": [
+   "dispatch"
+  ],
+  "type": "function"
+ },
+ "0x821FBB00": {
+  "confidence": "certain",
+  "name": "guest_worker_entry",
+  "summary": "Guest worker thread entry used for every ExCreateThread worker.",
+  "tags": [
+   "threading"
+  ],
+  "type": "function"
+ },
+ "0x82107620": {
+  "confidence": "stack-observed",
+  "name": "worker_wait_C",
+  "summary": "Worker wait variant seen in guest worker stacks.",
+  "tags": [
+   "threading"
+  ],
+  "type": "function"
+ },
+ "0x821FC540": {
+  "confidence": "stack-observed",
+  "name": "worker_wait_D",
+  "summary": "Worker wait variant seen in throttled-worker stacks.",
+  "tags": [
+   "threading"
+  ],
+  "type": "function"
+ },
+ "0x821FC5F0": {
+  "confidence": "stack-observed",
+  "name": "worker_wait_E",
+  "summary": "Worker wait variant seen in guest worker stacks.",
+  "tags": [
+   "threading"
+  ],
+  "type": "function"
+ },
+ "0x821FCBD0": {
+  "confidence": "certain",
+  "name": "guest_calloc",
+  "summary": "Guest calloc (count in r3, element size in r4). Zero-initialized guest allocation.",
+  "tags": [
+   "memory"
+  ],
+  "type": "function"
+ },
+ "0x821FD6D8": {
+  "confidence": "certain",
+  "name": "queue_drain_check",
+  "summary": "Queue drain check; reports empty queues without blocking.",
+  "tags": [
+   "threading",
+   "job-system"
+  ],
+  "type": "function"
+ },
+ "0x82202330": {
+  "confidence": "certain",
+  "name": "init_82202330",
+  "summary": "Mid-level init function under 0x82758DB0.",
+  "tags": [
+   "startup"
+  ],
+  "type": "function"
+ },
+ "0x822062B8": {
+  "confidence": "hook-observed",
+  "name": "bypass_822062B8",
+  "summary": "Hook bypass site.",
+  "tags": [
+   "hook-observed"
+  ],
+  "type": "function"
+ },
+ "0x8220B2F8": {
+  "confidence": "certain",
+  "name": "file_obj_op",
+  "summary": "File-object operation hook site.",
+  "tags": [
+   "file-io"
+  ],
+  "type": "function"
+ },
+ "0x82214ED0": {
+  "confidence": "certain",
+  "name": "heap_insert_key",
+  "summary": "Heap insert by key.",
+  "tags": [
+   "memory"
+  ],
+  "type": "function"
+ },
+ "0x82215978": {
+  "confidence": "certain",
+  "name": "heap_node_alloc",
+  "summary": "Heap node allocator (heap/size key).",
+  "tags": [
+   "memory"
+  ],
+  "type": "function"
+ },
+ "0x82216088": {
+  "confidence": "certain",
+  "name": "heap_node_ctor",
+  "summary": "Heap node constructor; has a verified try-original path.",
+  "tags": [
+   "memory"
+  ],
+  "type": "function"
+ },
+ "0x82216270": {
+  "confidence": "certain",
+  "name": "heap_lookup",
+  "summary": "Heap lookup; has a verified try-original path.",
+  "tags": [
+   "memory"
+  ],
+  "type": "function"
+ },
+ "0x8223A7D8": {
+  "confidence": "hook-observed",
+  "name": "bypass_8223A7D8",
+  "summary": "Hook bypass site (object operand).",
+  "tags": [
+   "hook-observed"
+  ],
+  "type": "function"
+ },
+ "0x8223B9A8": {
+  "confidence": "certain",
+  "name": "file_obj_op_B",
+  "summary": "File-object operation hook site.",
+  "tags": [
+   "file-io"
+  ],
+  "type": "function"
+ },
+ "0x8223C1A8": {
+  "confidence": "hook-observed",
+  "name": "obj_lifecycle_A",
+  "summary": "Object lifecycle bypass site.",
+  "tags": [
+   "hook-observed"
+  ],
+  "type": "function"
+ },
+ "0x8223C4D0": {
+  "confidence": "hook-observed",
+  "name": "obj_lifecycle_B",
+  "summary": "Object lifecycle bypass site.",
+  "tags": [
+   "hook-observed"
+  ],
+  "type": "function"
+ },
+ "0x82243710": {
+  "confidence": "hook-observed",
+  "name": "bypass_82243710",
+  "summary": "Hook bypass site (r3 object).",
+  "tags": [
+   "hook-observed"
+  ],
+  "type": "function"
+ },
+ "0x82247FE8": {
+  "confidence": "certain",
+  "name": "alpha_attr_map",
+  "summary": "Maps attribute97 through table 0x82066AFC; normalizes the 16-bit reference at 98 by 1/255.",
+  "tags": [
+   "render",
+   "alpha-test"
+  ],
+  "type": "function"
+ },
+ "0x822482CC": {
+  "confidence": "certain",
+  "name": "cull_face_bits",
+  "summary": "Cull/face control bits: face CW when culling without 0x1000, CCW with it; disabling culling clears both.",
+  "tags": [
+   "render",
+   "rasterizer"
+  ],
+  "type": "function"
+ },
+ "0x82250B88": {
+  "confidence": "certain",
+  "name": "heap_insert_sized",
+  "summary": "Heap insert with key and size.",
+  "tags": [
+   "memory"
+  ],
+  "type": "function"
+ },
+ "0x822569E0": {
+  "confidence": "certain",
+  "name": "sampler_residency_A",
+  "summary": "Sampler residency-minimum rule (with 0x82860880), independent of mip filter.",
+  "tags": [
+   "render",
+   "sampler"
+  ],
+  "type": "function"
+ },
+ "0x82267040": {
+  "confidence": "hook-observed",
+  "name": "obj_ctor_A",
+  "summary": "Object construction bypass site.",
+  "tags": [
+   "hook-observed"
+  ],
+  "type": "function"
+ },
+ "0x822672F0": {
+  "confidence": "hook-observed",
+  "name": "obj_ctor_B",
+  "summary": "Object construction bypass site.",
+  "tags": [
+   "hook-observed"
+  ],
+  "type": "function"
+ },
+ "0x8225A618": {
+  "confidence": "stack-observed",
+  "name": "draw_submit_path",
+  "summary": "Draw-submission path seen under dispatch stacks.",
+  "tags": [
+   "render"
+  ],
+  "type": "function"
+ },
+ "0x8225E218": {
+  "confidence": "certain",
+  "name": "whole_resource_draw",
+  "summary": "Whole-resource indexed draw: VB and IB from one resource ID, triangle count from resource+94 (BE16).",
+  "tags": [
+   "render",
+   "geometry"
+  ],
+  "type": "function"
+ },
+ "0x8225E2E0": {
+  "confidence": "certain",
+  "name": "whole_resource_submit",
+  "summary": "Submitter for whole-resource indexed draws.",
+  "tags": [
+   "render",
+   "geometry"
+  ],
+  "type": "function"
+ },
+ "0x8225E2F0": {
+  "confidence": "certain",
+  "name": "explicit_subset_receiver",
+  "summary": "Receives explicit index subsets (vs whole-resource counts).",
+  "tags": [
+   "render",
+   "geometry"
+  ],
+  "type": "function"
+ },
+ "0x8225E3B8": {
+  "confidence": "certain",
+  "name": "subset_draw_caller",
+  "summary": "Indexed-draw caller with explicit triangles/first/count.",
+  "tags": [
+   "render",
+   "geometry"
+  ],
+  "type": "function"
+ },
+ "0x825B7BD8": {
+  "confidence": "stack-observed",
+  "name": "mutex_queue_op_A",
+  "summary": "Mutex-protected queue operation (Mtx_lock stacks).",
+  "tags": [
+   "threading"
+  ],
+  "type": "function"
+ },
+ "0x825B7F50": {
+  "confidence": "stack-observed",
+  "name": "mutex_queue_op_B",
+  "summary": "Mutex-protected queue operation (Mtx_lock stacks).",
+  "tags": [
+   "threading"
+  ],
+  "type": "function"
+ },
+ "0x8273CD68": {
+  "confidence": "certain",
+  "name": "startup_8273CD68",
+  "summary": "Startup-chain function above the 0x8274D3F8 preparation wrapper.",
+  "tags": [
+   "startup"
+  ],
+  "type": "function"
+ },
+ "0x8273D2C8": {
+  "confidence": "certain",
+  "name": "startup_8273D2C8",
+  "summary": "Startup-chain function.",
+  "tags": [
+   "startup"
+  ],
+  "type": "function"
+ },
+ "0x8274D3F8": {
+  "confidence": "certain",
+  "name": "prep_wrapper",
+  "summary": "Preparation wrapper over the draw-submit path.",
+  "tags": [
+   "startup",
+   "render"
+  ],
+  "type": "function"
+ },
+ "0x8274D4E8": {
+  "confidence": "certain",
+  "name": "startup_8274D4E8",
+  "summary": "Startup-chain function.",
+  "tags": [
+   "startup"
+  ],
+  "type": "function"
+ },
+ "0x82758DB0": {
+  "confidence": "certain",
+  "name": "init_82758DB0",
+  "summary": "Init function calling 0x82202330.",
+  "tags": [
+   "startup"
+  ],
+  "type": "function"
+ },
+ "0x8275A6B8": {
+  "confidence": "certain",
+  "name": "startup_8275A6B8",
+  "summary": "Startup-chain function under 0x8275D498.",
+  "tags": [
+   "startup"
+  ],
+  "type": "function"
+ },
+ "0x8275CE18": {
+  "confidence": "certain",
+  "name": "indirect_heavy",
+  "summary": "Indirect-call-heavy function (repeated dispatch misses at +0x119 during boot).",
+  "tags": [
+   "dispatch",
+   "startup"
+  ],
+  "type": "function"
+ },
+ "0x8275D2B0": {
+  "confidence": "certain",
+  "name": "startup_8275D2B0",
+  "summary": "Startup-chain function.",
+  "tags": [
+   "startup"
+  ],
+  "type": "function"
+ },
+ "0x8275D498": {
+  "confidence": "certain",
+  "name": "startup_8275D498",
+  "summary": "Startup-chain function.",
+  "tags": [
+   "startup"
+  ],
+  "type": "function"
+ },
+ "0x82760538": {
+  "confidence": "certain",
+  "name": "size_table_user_A",
+  "summary": "Uses the original byte-size table at 0x82A3D31C (with 0x82762328).",
+  "tags": [
+   "render",
+   "geometry"
+  ],
+  "type": "function"
+ },
+ "0x82760598": {
+  "confidence": "certain",
+  "name": "cpu_vertex_converter",
+  "summary": "Original CPU vertex converter; single-round multiply-add, do not round the product before addition.",
+  "tags": [
+   "render",
+   "geometry"
+  ],
+  "type": "function"
+ },
+ "0x82762328": {
+  "confidence": "certain",
+  "name": "stored_vertex_prep",
+  "summary": "Stored vertex conversion prep: reads vertex count from descriptor+424 (ignores incoming r8), skips absent source slots without advancing the output cursor.",
+  "tags": [
+   "render",
+   "geometry"
+  ],
+  "type": "function"
+ },
+ "0x82764320": {
+  "confidence": "certain",
+  "name": "stored_ib_allocator",
+  "summary": "Stored index-buffer expansion allocator (allocates the total count).",
+  "tags": [
+   "render",
+   "geometry"
+  ],
+  "type": "function"
+ },
+ "0x82765410": {
+  "confidence": "certain",
+  "name": "index_convert_orig",
+  "summary": "Original index-conversion routine (test oracle for byte order).",
+  "tags": [
+   "render",
+   "geometry"
+  ],
+  "type": "function"
+ },
+ "0x82777BF0": {
+  "confidence": "certain",
+  "name": "init_82777BF0",
+  "summary": "Init function calling 0x820DEAE8.",
+  "tags": [
+   "startup"
+  ],
+  "type": "function"
+ },
+ "0x827A5E30": {
+  "confidence": "certain",
+  "name": "init_827A5E30",
+  "summary": "Init function calling 0x82104DC8.",
+  "tags": [
+   "startup"
+  ],
+  "type": "function"
+ },
+ "0x827A72D8": {
+  "confidence": "certain",
+  "name": "worker_throttle",
+  "summary": "Worker throttle hook site.",
+  "tags": [
+   "threading"
+  ],
+  "type": "function"
+ },
+ "0x8285D568": {
+  "confidence": "stack-observed",
+  "name": "draw_path_B",
+  "summary": "Draw path function seen under dispatch stacks.",
+  "tags": [
+   "render"
+  ],
+  "type": "function"
+ },
+ "0x8285E378": {
+  "confidence": "certain",
+  "name": "surface_binder_B",
+  "summary": "Completed surface-state binder (with 0x82861698): layout word at device+10368 plus five color/depth allocation words.",
+  "tags": [
+   "render",
+   "surface"
+  ],
+  "type": "function"
+ },
+ "0x82860880": {
+  "confidence": "certain",
+  "name": "sampler_residency_B",
+  "summary": "Sampler residency-minimum rule (with 0x822569E0).",
+  "tags": [
+   "render",
+   "sampler"
+  ],
+  "type": "function"
+ },
+ "0x82861698": {
+  "confidence": "certain",
+  "name": "surface_binder_A",
+  "summary": "Completed surface-state binder (with 0x8285E378): shared layout word at device+10368.",
+  "tags": [
+   "render",
+   "surface"
+  ],
+  "type": "function"
+ },
+ "0x82871600": {
+  "confidence": "certain",
+  "name": "tangent_zero_link",
+  "summary": "Links an absent tangent semantic to constant zero XYZ (cache record13).",
+  "tags": [
+   "render",
+   "geometry"
+  ],
+  "type": "function"
+ },
+ "0x82899A7C": {
+  "confidence": "stack-observed",
+  "name": "recurring_worker_fn",
+  "summary": "Recurring function dominating worker-thread guest stacks at shutdown.",
+  "tags": [
+   "threading"
+  ],
+  "type": "function"
+ },
+ "0x82899BF0": {
+  "confidence": "certain",
+  "name": "index_convert_orig_B",
+  "summary": "Original index-conversion routine variant (test oracle).",
+  "tags": [
+   "render",
+   "geometry"
+  ],
+  "type": "function"
+ },
+ "0x8289C658": {
+  "confidence": "certain",
+  "name": "returns_one",
+  "summary": "Bypassed hook returning 1.",
+  "tags": [
+   "hook-observed"
+  ],
+  "type": "function"
+ },
+ "0x8289FCF8": {
+  "confidence": "hook-observed",
+  "name": "indexed_guest_alloc",
+  "summary": "Index-based guest allocation bypass site.",
+  "tags": [
+   "hook-observed",
+   "memory"
+  ],
+  "type": "function"
+ },
+ "0x828AA3E8": {
+  "confidence": "certain",
+  "name": "_xstart",
+  "summary": "Recompiled PowerPC process entry point; runs on the guest thread.",
+  "tags": [
+   "startup",
+   "entry"
+  ],
+  "type": "function"
+ },
+ "0x828AC000": {
+  "confidence": "hook-observed",
+  "name": "bypass_828AC000",
+  "summary": "Hook bypass site (r3/r4).",
+  "tags": [
+   "hook-observed"
+  ],
+  "type": "function"
+ },
+ "0x828AC670": {
+  "confidence": "stack-observed",
+  "name": "sync_wait_site",
+  "summary": "Sync-wait site where the guest idles at shutdown/timer waits.",
+  "tags": [
+   "threading"
+  ],
+  "type": "function"
+ },
+ "0x828A9B00": {
+  "confidence": "certain",
+  "name": "chapter_delete",
+  "summary": "Deletes a chapter file before a new game (save finalization).",
+  "tags": [
+   "file-io",
+   "save"
+  ],
+  "type": "function"
+ },
+ "0x828A9EB8": {
+  "confidence": "stack-observed",
+  "name": "sync_wait_wrapper",
+  "summary": "Sync-wait wrapper at the base of all guest worker stacks.",
+  "tags": [
+   "threading"
+  ],
+  "type": "function"
+ },
+ "0x82A3D31C": {
+  "confidence": "certain",
+  "name": "vertex_size_table",
+  "summary": "Original 27-entry vertex format byte-size table used by 0x82760538/0x82762328. Data.",
+  "tags": [
+   "data",
+   "render"
+  ],
+  "type": "data"
+ },
+ "0x82A69B00": {
+  "confidence": "certain",
+  "name": "render_context_addr",
+  "summary": "Render context address used by stored-geometry validation. Data.",
+  "tags": [
+   "data",
+   "render"
+  ],
+  "type": "data"
+ },
+ "0x820F5F28": {
+  "confidence": "certain",
+  "name": "SaveList",
+  "summary": "Save-list path; per-call work is profile-gated.",
+  "tags": [
+   "file-io",
+   "save",
+   "profile-gated"
+  ],
+  "type": "function"
+ }
+}
