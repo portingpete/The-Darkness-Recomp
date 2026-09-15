@@ -1,125 +1,142 @@
+"""Add The Darkness (DarkRecomp) to the Steam library as a non-Steam game.
+
+Edits the local shortcuts.vdf for the detected Steam user. Steam must be
+CLOSED first or it will overwrite this file on exit. A .bak backup is made
+before writing. Safe to re-run: exits quietly if the entry already exists.
+"""
 import os
 import struct
+import sys
 import zlib
 import shutil
 
-shortcuts_path = r'C:\Program Files (x86)\Steam\userdata\76505701\config\shortcuts.vdf'
-backup_path = shortcuts_path + '.bak'
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PREVIEW_EXE = os.path.join(ROOT, "build_native", "Release", "DarkRecompPreview.exe")
+APP_NAME = "The Darkness (DarkRecomp)"
+LAUNCH_OPTIONS = "--sound"
 
-if not os.path.exists(shortcuts_path):
-    print(f'File not found: {shortcuts_path}')
-    exit(1)
+STEAM_USERDATA = r"C:\Program Files (x86)\Steam\userdata"
 
-with open(shortcuts_path, 'rb') as f:
-    data = f.read()
 
-# Parse binary VDF
-pos = 0
-def read_string():
-    global pos
-    end = data.find(b'\x00', pos)
+def find_shortcuts():
+    if len(sys.argv) > 1:
+        return [sys.argv[1]]
+    if not os.path.isdir(STEAM_USERDATA):
+        return []
+    found = []
+    for user in sorted(os.listdir(STEAM_USERDATA)):
+        path = os.path.join(STEAM_USERDATA, user, "config", "shortcuts.vdf")
+        if os.path.isfile(path):
+            found.append(path)
+    return found
+
+
+def read_string(data, pos):
+    end = data.find(b"\x00", pos)
     if end == -1:
-        s = data[pos:].decode('utf-8', errors='replace')
-        pos = len(data)
-        return s
-    s = data[pos:end].decode('utf-8', errors='replace')
-    pos = end + 1
-    return s
+        return data[pos:].decode("utf-8", errors="replace"), len(data)
+    return data[pos:end].decode("utf-8", errors="replace"), end + 1
 
-def parse_dict():
-    global pos
+
+def parse_dict(data, pos):
     d = {}
     while pos < len(data):
         t = data[pos]
         pos += 1
         if t == 8:
             break
-        key = read_string()
+        key, pos = read_string(data, pos)
         if t == 0:
-            d[key] = parse_dict()
+            d[key], pos = parse_dict(data, pos)
         elif t == 1:
-            d[key] = read_string()
+            d[key], pos = read_string(data, pos)
         elif t == 2:
-            val = struct.unpack('<I', data[pos:pos+4])[0]
+            d[key] = struct.unpack("<I", data[pos:pos + 4])[0]
             pos += 4
-            d[key] = val
-    return d
+    return d, pos
 
-parsed = parse_dict()
-shortcuts = parsed.get('shortcuts', {})
 
-# Check if already present
-for idx, entry in shortcuts.items():
-    if 'The Darkness' in entry.get('AppName', '') or 'DarkRecomp' in entry.get('AppName', ''):
-        print(f"Already exists in Steam shortcuts as '{entry.get('AppName')}'")
-        exit(0)
-
-# Create new shortcut entry
-exe = r'K:\DarkRecomp\xenia\canary\xenia_canary.exe'
-launch_opts = r'"K:\DarkRecomp\Darkness\default.xex"'
-start_dir = 'K:\\DarkRecomp\\xenia\\canary\\'
-app_name = 'The Darkness (Xenia Canary)'
-
-# Calculate 32-bit AppID
-crc_input = f'"{exe}"{app_name}'.encode('utf-8')
-appid = (zlib.crc32(crc_input) | 0x80000000) & 0xFFFFFFFF
-
-next_idx = str(len(shortcuts))
-new_entry = {
-    'appid': appid,
-    'AppName': app_name,
-    'Exe': f'"{exe}"',
-    'StartDir': start_dir,
-    'icon': '',
-    'ShortcutPath': '',
-    'LaunchOptions': launch_opts,
-    'IsHidden': 0,
-    'AllowDesktopConfig': 1,
-    'AllowOverlay': 1,
-    'OpenVR': 0,
-    'Devkit': 0,
-    'DevkitGameID': '',
-    'DevkitOverrideAppID': 0,
-    'LastPlayTime': 0,
-    'FlatpakAppID': '',
-    'sortas': '',
-    'tags': {}
-}
-
-shortcuts[next_idx] = new_entry
-parsed['shortcuts'] = shortcuts
-
-# Backup original
-shutil.copy2(shortcuts_path, backup_path)
-print(f'Backup created at {backup_path}')
-
-# Serialize binary VDF
 def serialize_dict(d):
     out = bytearray()
     for k, v in d.items():
         if isinstance(v, dict):
             out.append(0)
-            out.extend(k.encode('utf-8') + b'\x00')
+            out.extend(k.encode("utf-8") + b"\x00")
             out.extend(serialize_dict(v))
             out.append(8)
         elif isinstance(v, str):
             out.append(1)
-            out.extend(k.encode('utf-8') + b'\x00')
-            out.extend(v.encode('utf-8') + b'\x00')
+            out.extend(k.encode("utf-8") + b"\x00")
+            out.extend(v.encode("utf-8") + b"\x00")
         elif isinstance(v, int):
             out.append(2)
-            out.extend(k.encode('utf-8') + b'\x00')
-            out.extend(struct.pack('<I', v & 0xFFFFFFFF))
+            out.extend(k.encode("utf-8") + b"\x00")
+            out.extend(struct.pack("<I", v & 0xFFFFFFFF))
     return out
 
-out_bytes = bytearray()
-out_bytes.append(0)
-out_bytes.extend(b'shortcuts\x00')
-out_bytes.extend(serialize_dict(shortcuts))
-out_bytes.append(8)
-out_bytes.append(8)
 
-with open(shortcuts_path, 'wb') as f:
-    f.write(out_bytes)
+def add_to(shortcuts_path):
+    with open(shortcuts_path, "rb") as f:
+        data = f.read()
+    parsed, _ = parse_dict(data, 0)
+    shortcuts = parsed.get("shortcuts", {})
 
-print(f"Successfully added '{app_name}' to Steam shortcuts!")
+    for idx, entry in shortcuts.items():
+        if "DarkRecomp" in entry.get("AppName", ""):
+            print(f"Already present in {shortcuts_path} as '{entry.get('AppName')}'")
+            return False
+
+    appid = (zlib.crc32(f'"{PREVIEW_EXE}"{APP_NAME}'.encode("utf-8")) | 0x80000000) & 0xFFFFFFFF
+    next_idx = str(len(shortcuts))
+    shortcuts[next_idx] = {
+        "appid": appid,
+        "AppName": APP_NAME,
+        "Exe": f'"{PREVIEW_EXE}"',
+        "StartDir": ROOT + "\\",
+        "icon": "",
+        "ShortcutPath": "",
+        "LaunchOptions": LAUNCH_OPTIONS,
+        "IsHidden": 0,
+        "AllowDesktopConfig": 1,
+        "AllowOverlay": 1,
+        "OpenVR": 0,
+        "Devkit": 0,
+        "DevkitGameID": "",
+        "DevkitOverrideAppID": 0,
+        "LastPlayTime": 0,
+        "FlatpakAppID": "",
+        "sortas": "",
+        "tags": {},
+    }
+    parsed["shortcuts"] = shortcuts
+
+    shutil.copy2(shortcuts_path, shortcuts_path + ".bak")
+    out = bytearray(b"\x00shortcuts\x00")
+    out.extend(serialize_dict(shortcuts))
+    out.extend(b"\x08\x08")
+    with open(shortcuts_path, "wb") as f:
+        f.write(out)
+    print(f"Added '{APP_NAME}' (appid {appid}) to {shortcuts_path}")
+    return True
+
+
+def main():
+    if not os.path.isfile(PREVIEW_EXE):
+        print(f"Built game not found: {PREVIEW_EXE}")
+        print("Run tools\\build.ps1 first.")
+        return 1
+    targets = find_shortcuts()
+    if not targets:
+        print(f"No shortcuts.vdf found under {STEAM_USERDATA}")
+        print("Pass the path explicitly: python tools\\add_steam_shortcut.py <path>")
+        return 1
+    changed = False
+    for target in targets:
+        changed |= add_to(target)
+    if changed:
+        print("Restart Steam to see the new shortcut.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
