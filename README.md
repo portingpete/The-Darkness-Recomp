@@ -33,9 +33,9 @@ Darkness/
   System/                   # engine shaders and system data
 ```
 
-`Darkness/darkness_switch_tables.toml` (jump-table analysis) and
-`Darkness/darkness.toml` are tracked in this repo — keep them and add the
-rest from your dump. Nothing else under `Darkness/` is committed.
+`Darkness/darkness_switch_tables.toml` (jump-table analysis) is tracked in this
+repo — keep it and add the rest from your dump. Nothing else under `Darkness/`
+is committed.
 
 ## Reference dependency (build-time)
 
@@ -61,11 +61,14 @@ Output lands in `build_native/Release/` (`DarkRecomp.exe`, `DarkRecompPreview.ex
 
 ## Run
 
-- `Launch-With-Sound.cmd` — play with audio
-- `Launch-No-Sound.cmd` — muted
-- `Launch-Preview.cmd` — engine preview / diagnostics
-- `Launch-Steady-60.cmd`, `Launch-Performance.cmd`, `Launch-Render-Profile.cmd`,
-  `Launch-Stutter-Capture.cmd` — profiling and capture variants
+`Launch.cmd` plays with audio. Other modes:
+
+- `Launch.cmd mute` — muted
+- `Launch.cmd preview` — engine preview / diagnostics
+- `Launch.cmd steady-60`, `performance`, `render-profile`, `stutter` — diagnostics
+- `Launch.cmd help` — full usage
+
+Extra arguments are forwarded to the game, e.g. `Launch.cmd play --fps 120`.
 
 Click the game window to capture the mouse (**F1** controls guide,
 **F2** toggle capture, **Esc** release). Full bindings: [CONTROLS.md](CONTROLS.md).

@@ -548,7 +548,7 @@ clears, resolves, copies, queries, frame cleanup and other preview work. Reports
 run on the sampler worker. External modules are identified even without symbols;
 nearest exports are explicitly labelled, not treated as exact function names.
 
-`Launch-Render-Profile.cmd` selects this diagnostic and ordinary hitch tracing,
+`Launch.cmd render-profile` selects this diagnostic and ordinary hitch tracing,
 with no per-draw CPU timing, automatic image capture or guest/worker sampling.
 The render sampler is off for normal launchers. Sampling itself perturbs execution,
 includes waits inside rendering, and provides instruction/phase observations rather

@@ -1,7 +1,7 @@
 # Native keyboard and mouse controls
 
-Open `Launch-With-Sound.cmd` for audio, or `Launch-No-Sound.cmd` for a muted game.
-Both run until you close the game window. `Launch-Preview.cmd` and
+Run `Launch.cmd` for audio, or `Launch.cmd mute` for a muted game.
+Both run until you close the game window. `Launch.cmd preview` and
 `build_native/Release/DarkRecompPreview.exe` still default to muted;
 the preview executable also accepts `--sound` or `--mute`.
 
@@ -9,12 +9,12 @@ Normal launchers record lightweight slow-frame timings in their runtime log.
 Automatic screenshots are disabled during normal play; use the preview executable's
 `--capture-frames` option when diagnostic BMP captures are specifically needed.
 
-For a requested rendering-stutter diagnostic, use `Launch-Render-Profile.cmd`.
+For a requested rendering-stutter diagnostic, use `Launch.cmd render-profile`.
 It records active render-thread instruction samples and their rendering phase in
 `build_native/run/render-profile-*.log`. Close the game to finish recording. This
 mode adds measurement overhead; use the normal launcher for regular play.
 
-To record a gameplay stutter for later analysis, use `Launch-Stutter-Capture.cmd`.
+To record a gameplay stutter for later analysis, use `Launch.cmd stutter`.
 It plays with sound under your saved graphics settings (no captures, no profiling),
 auto-skips intro videos, and writes lightweight slow-frame timings to
 `build_native/run/stutter-*.log` plus a slow-frame count at the end.
@@ -51,7 +51,7 @@ and A work through the same original menu controls. Escape/Backspace or B goes
 back. Changes save automatically to `DarkRecomp.settings.ini` beside `Darkness`
 and apply immediately except resolution. A failed save is shown in the row text.
 
-Both launchers use saved settings. Direct-launch options `--fov 100`, `--fps 120`,
+All play modes use saved settings. Direct-launch options `--fov 100`, `--fps 120`,
 `--render-height 720`, `--fullscreen` / `--windowed`, and `--vsync` / `--no-vsync`
 override their saved values for that run. `--fov 0` selects Original. Editing a
 menu option saves the current selection, including overrides. Valid custom
@@ -78,8 +78,8 @@ The original game's camera sensitivity controls the controller. Mouse look
 uses a separate, linear sensitivity and follows the game's inversion option.
 When launching `DarkRecomp.exe` directly, `--mouse-sensitivity 1.0` sets the
 mouse multiplier (0.1 to 10). Add `--mute --timeout-ms 0 --engine-preview` for a
-muted interactive run. Both launchers supply the interactive flags; the sound
-launcher omits `--mute`.
+muted interactive run. The play modes supply the interactive flags; the default
+mode plays with sound instead of `--mute`.
 
 ## Implementation
 

@@ -1,7 +1,6 @@
 # --- Game dump (copyrighted, user-provided; see README) ---
-# Keep only the small RE analysis files; ignore the binaries and game data.
+# Keep only the small RE analysis file; ignore the binaries and game data.
 Darkness/*
-!Darkness/darkness.toml
 !Darkness/darkness_switch_tables.toml
 
 # --- Stale generated PPC output ---
