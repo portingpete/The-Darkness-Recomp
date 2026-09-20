@@ -1,4 +1,4 @@
-param([switch]$Diagnostic, [int]$Jobs = 4)
+param([switch]$Diagnostic, [switch]$ReleasePackage, [int]$Jobs = 4)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $generatorRoot = Join-Path $projectRoot 'refs/UnleashedRecomp/tools/XenonRecomp'
@@ -15,8 +15,10 @@ $generateArgs = @((Join-Path $PSScriptRoot 'recompile.py'), '--output', (Join-Pa
     '--generator', (Join-Path $generatorBuild 'XenonRecomp/Release/XenonRecomp.exe'))
 if ($Diagnostic) { $generateArgs += '--allow-incomplete' }
 Invoke-Checked python $generateArgs
-Invoke-Checked python @((Join-Path $PSScriptRoot 'build_xma_codec.py'))
+$codecArgs = @((Join-Path $PSScriptRoot 'build_xma_codec.py'))
+if ($ReleasePackage) { $codecArgs += '--rebuild' }
+Invoke-Checked python $codecArgs
 $allowIncomplete = if ($Diagnostic) { 'ON' } else { 'OFF' }
-Invoke-Checked cmake @('-S', $projectRoot, '-B', $nativeBuild, '-G', 'Visual Studio 17 2022', '-A', 'x64', '-T', 'ClangCL', "-DDARK_ALLOW_INCOMPLETE=$allowIncomplete")
+Invoke-Checked cmake @('-S', $projectRoot, '-B', $nativeBuild, '-G', 'Visual Studio 17 2022', '-A', 'x64', '-T', 'ClangCL', '-DBUILD_TESTING=ON', "-DDARK_ALLOW_INCOMPLETE=$allowIncomplete")
 Invoke-Checked cmake @('--build', $nativeBuild, '--config', 'Release', '--parallel', "$Jobs")
-Invoke-Checked ctest @('--test-dir', $nativeBuild, '-C', 'Release', '--output-on-failure')
+Invoke-Checked ctest @('--test-dir', $nativeBuild, '-C', 'Release', '--output-on-failure', '--no-tests=error')
