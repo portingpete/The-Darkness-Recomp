@@ -106,7 +106,7 @@ def main():
         raise RuntimeError('Commit your changes before packaging a release.')
     revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
     subprocess.run(['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
-                    str(ROOT / 'tools/build.ps1')], cwd=ROOT, check=True)
+                    str(ROOT / 'tools/build.ps1'), '-ReleasePackage'], cwd=ROOT, check=True)
     if subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True).strip():
         raise RuntimeError('Source checkout changed during the build; refusing to package.')
     current = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()

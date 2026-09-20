@@ -11,6 +11,7 @@ rem   stutter        - play with sound while recording slow-frame timings
 rem Extra arguments are forwarded to the game, e.g. Launch.cmd play --fps 120
 setlocal DisableDelayedExpansion
 cd /d "%~dp0"
+set "GAME_DIR=%~dp0Darkness"
 
 set "MODE=play"
 if not "%~1"=="" (
@@ -26,7 +27,9 @@ if /i "%MODE%"=="%~1" shift
 set "REST="
 :collect_args
 if "%~1"=="" goto collected_args
-set "REST=%REST% %1"
+if "%~1"=="--game-dir" if not "%~2"=="" set "GAME_DIR=%~2"
+rem Preserve each argument's original quotes, including paths containing ampersands.
+set REST=%REST% %1
 shift
 goto collect_args
 :collected_args
@@ -162,21 +165,21 @@ if not exist "build_native\Release\DarkRecomp.exe" goto missing
 if not exist "build_native\Release\DarkRecompPreview.exe" goto missing
 set "MISSING_GAME="
 for %%F in (basefile.exe _uncrypted.xex default.xex) do (
-    if not exist "Darkness\%%F" (
-        echo Missing game file: "Darkness\%%F"
+    if not exist "%GAME_DIR%\%%F" (
+        echo Missing game file: "%GAME_DIR%\%%F"
         set "MISSING_GAME=1"
     )
 )
 for %%D in (Content System) do (
-    if not exist "Darkness\%%D\." (
-        echo Missing game folder: "Darkness\%%D"
+    if not exist "%GAME_DIR%\%%D\." (
+        echo Missing game folder: "%GAME_DIR%\%%D"
         set "MISSING_GAME=1"
     )
 )
 if not defined MISSING_GAME exit /b 0
 echo.
 echo Copy the files from your own Xbox 360 game dump into:
-echo   "%~dp0Darkness"
+echo   "%GAME_DIR%"
 echo Put the files directly inside Darkness, without another folder in between.
 echo See START_HERE.txt for the folder layout, then run Launch.cmd again.
 exit /b 1

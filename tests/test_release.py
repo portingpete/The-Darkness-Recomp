@@ -2,10 +2,12 @@
 import hashlib
 import importlib.util
 import json
+import io
 import os
 from pathlib import Path
 import subprocess
 import tempfile
+import tarfile
 import unittest
 import zipfile
 
@@ -13,6 +15,9 @@ ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('package_release', ROOT / 'tools/package_release.py')
 release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
+codec_spec = importlib.util.spec_from_file_location('build_xma_codec', ROOT / 'tools/build_xma_codec.py')
+codec = importlib.util.module_from_spec(codec_spec)
+codec_spec.loader.exec_module(codec)
 
 
 class ReleaseTests(unittest.TestCase):
@@ -49,7 +54,8 @@ class ReleaseTests(unittest.TestCase):
             (game / name).mkdir(exist_ok=True)
 
     def launch(self, argument='check'):
-        return subprocess.run(['cmd', '/d', '/c', f'Launch.cmd {argument}'], cwd=self.root,
+        # cmd.exe consumes a shell command, not CRT-escaped argv quoting.
+        return subprocess.run(f'cmd /d /c Launch.cmd {argument}', cwd=self.root,
                               input='\n', capture_output=True, text=True, timeout=15,
                               creationflags=subprocess.CREATE_NO_WINDOW)
 
@@ -126,6 +132,52 @@ class ReleaseTests(unittest.TestCase):
         result = self.launch('help')
         self.assertEqual(result.returncode, 0)
         self.assertIn('Usage:', result.stdout)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows launcher')
+    def test_launcher_checks_external_game_directory(self):
+        self.game_files()
+        external = self.root / 'external dump & files!'
+        (self.root / 'Darkness').rename(external)
+        result = self.launch('check --game-dir "external dump & files!"')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('Setup looks ready', result.stdout)
+        (external / '_uncrypted.xex').unlink()
+        result = self.launch('check --game-dir "external dump & files!"')
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('external dump & files!\\_uncrypted.xex', result.stdout)
+
+
+class CodecSourceTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        root = Path(self.temporary.name)
+        self.source = root / 'FFmpeg-fixture'
+        self.source.mkdir()
+        self.archive = root / 'source.tar.gz'
+        with tarfile.open(self.archive, 'w:gz') as tar:
+            for name, contents in {'decoder.c': b'original', 'version.c': b'version'}.items():
+                entry = tarfile.TarInfo(f'{self.source.name}/{name}')
+                entry.size = len(contents)
+                tar.addfile(entry, io.BytesIO(contents))
+                (self.source / name).write_bytes(contents)
+        (self.source / 'decoder.c').write_bytes(b'patched')
+
+    def verify(self):
+        codec.verify_source_tree(self.source, self.archive, {'decoder.c': b'patched'})
+
+    def test_exact_source_with_shipped_patch_is_accepted(self):
+        self.verify()
+
+    def test_edit_outside_patch_is_rejected(self):
+        (self.source / 'version.c').write_bytes(b'local change')
+        with self.assertRaisesRegex(RuntimeError, 'version.c'):
+            self.verify()
+
+    def test_unshipped_source_file_is_rejected(self):
+        (self.source / 'config.h').write_bytes(b'local configuration')
+        with self.assertRaisesRegex(RuntimeError, 'config.h'):
+            self.verify()
 
 
 if __name__ == '__main__':

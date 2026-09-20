@@ -5,6 +5,7 @@ generation are bypassed only when darkrecomp_raw_frames=1. LGPL source and a
 reviewable patch remain beside the DLLs. Requires existing MSYS2 MinGW + LLVM.
 """
 from pathlib import Path
+import argparse
 import difflib
 import hashlib
 import json
@@ -20,7 +21,32 @@ COMMIT = '1c2c67c0b9f7f66ab32c19dcf7f227bcd290aa4c'  # FFmpeg n8.1.2
 ARCHIVE_HASH = '1291ae49c285f7bd55c7c059aa43f1a0fd784a1ae22d5c76297dcd11c531248a'
 SOURCE_HASH = '803547a38dea1294891c00402d6b3576a16053b0f00b395768c4983740c86553'
 
-def main():
+def verify_source_tree(source: Path, archive: Path, patched_files: dict[str, bytes]):
+    """Reject edits outside the shipped patch, including unexpected source files."""
+    expected_files = set()
+    with tarfile.open(archive) as tar:
+        for member in tar.getmembers():
+            if member.isdir():
+                continue
+            relative = Path(member.name).relative_to(source.name)
+            if not member.isfile() or '..' in relative.parts:
+                raise RuntimeError(f'Unexpected codec archive entry: {member.name}')
+            name = relative.as_posix()
+            expected_files.add(name)
+            path = source / relative
+            expected = patched_files.get(name)
+            if expected is None:
+                expected = tar.extractfile(member).read()
+            if path.is_symlink() or not path.is_file() or path.read_bytes() != expected:
+                raise RuntimeError(f'Codec source differs from the release source: {path}')
+    actual_files = {path.relative_to(source).as_posix()
+                    for path in source.rglob('*') if path.is_file() or path.is_symlink()}
+    unexpected = actual_files - expected_files
+    if unexpected:
+        raise RuntimeError(f'Unexpected codec source files: {sorted(unexpected)}')
+
+
+def main(rebuild=False):
     DEPS.mkdir(parents=True, exist_ok=True)
     archive = DEPS / 'ffmpeg-darkxma-upstream.tar.gz'
     if not archive.exists():
@@ -86,6 +112,7 @@ static const AVClass darkrecomp_xma_class = {
         raise RuntimeError('Unexpected local edits to FFmpeg decoder; refusing overwrite')
     if current != text.encode():
         path.write_text(text, newline='\n')
+    verify_source_tree(source, archive, {'libavcodec/wmaprodec.c': text.encode()})
     patch = ''.join(difflib.unified_diff(original.decode().splitlines(True), text.splitlines(True),
                                         fromfile='a/libavcodec/wmaprodec.c', tofile='b/libavcodec/wmaprodec.c'))
     (DEPS / 'ffmpeg-darkxma.patch').write_text(patch)
@@ -109,6 +136,9 @@ static const AVClass darkrecomp_xma_class = {
     config_stamp = build / 'darkrecomp-configure.json'
     if not config_stamp.exists() or json.loads(config_stamp.read_text()) != configure:
         script += ' '.join(map(shlex.quote, configure)) + '\n'
+    if rebuild:
+        # Release DLLs must not reuse objects left by an earlier edited checkout.
+        script += 'make clean\n'
     script += 'make -j8\nmake install\n'
     subprocess.run(['C:/msys64/usr/bin/bash.exe', '-c', script], check=True)
     config_stamp.write_text(json.dumps(configure))
@@ -131,4 +161,6 @@ static const AVClass darkrecomp_xma_class = {
     shutil.copy2('C:/msys64/mingw64/share/licenses/winpthreads/COPYING', install / 'COPYING.winpthreads')
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--rebuild', action='store_true', help='Rebuild all codec objects for a release')
+    main(parser.parse_args().rebuild)
