@@ -27,26 +27,24 @@ Darkness/
 `darkness_switch_tables.toml` already ships with the repo — keep it and add
 the rest from your dump. Nothing else under `Darkness/` is committed.
 
-**2. Generator dependency** — the ahead-of-time translator lives upstream and
-is intentionally not committed. Fetch it once:
-
-```powershell
-git clone https://github.com/hedge-dev/UnleashedRecomp.git refs/UnleashedRecomp
-git -C refs/UnleashedRecomp checkout 5e8695a157ce9d2a783944d63439cc8c76a38fc2
-git -C refs/UnleashedRecomp submodule update --init tools/XenonRecomp
-```
-
-**3. Build** — one step (generator + translation + XMA codec + compile + tests):
+**2. Build** — one step (dependency setup + generator + translation + XMA codec + compile + tests):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\build.ps1
 ```
 
-You'll need 64-bit Windows, Visual Studio 2022 with the **ClangCL** toolset,
+The build downloads the pinned XenonRecomp source and applies the bundled
+Darkness patches automatically. Existing checkouts from the old setup instructions
+are supported too. The first build needs an internet connection.
+
+You'll need 64-bit Windows, Git, Visual Studio 2022 with the **ClangCL** toolset,
 CMake 3.24+, Python 3.11+, and ~15 GB free. Output lands in
 `build_native/Release/`.
 
-**4. Play** — double-click `Launch.cmd`:
+The XMA audio build also requires MSYS2 at `C:\msys64` with MinGW64 GCC and
+`make`, plus standalone LLVM at `C:\Program Files\LLVM` (for `llvm-lib.exe`).
+
+**3. Play** — double-click `Launch.cmd`:
 
 | Command | What it does |
 |---|---|
@@ -66,6 +64,21 @@ toggle capture, **Esc** release).
 
 - [CONTROLS.md](CONTROLS.md) — every binding, launcher option, and setting
 - [RENDERING.md](RENDERING.md) — how the renderer and frame pacing work
+
+## Updating
+
+Pull the latest version and run the build again:
+
+```powershell
+git pull --ff-only
+powershell -ExecutionPolicy Bypass -File tools\build.ps1
+```
+
+Keep your game dump and existing build directory. Unchanged generated files
+retain their timestamps so the native build can reuse previous compilation work.
+
+If an older setup stopped with `AOT gate: Generator failed (0)`, these same
+commands install the missing generator patches and regenerate the output.
 
 ## Tests
 
