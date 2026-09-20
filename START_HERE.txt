@@ -1,0 +1,55 @@
+THE DARKNESS RECOMP - START HERE
+
+1. Right-click the downloaded Windows ZIP and choose "Extract All".
+   Open the extracted folder. Do not run the game from inside the ZIP.
+
+2. Copy your own Xbox 360 game dump into the Darkness folder.
+   The finished folder should look like this:
+
+     Launch.cmd
+     Darkness\
+       _uncrypted.xex
+       basefile.exe
+       default.xex
+       Content\
+       System\
+       ...and ALL other files and folders from your dump
+     build_native\
+       Release\
+         DarkRecomp.exe
+         DarkRecompPreview.exe
+         ...leave all the other included files here
+
+   Put the game files directly inside Darkness, not Darkness\Darkness.
+   Game files are not included. An ISO alone will not work: use the extracted
+   dump, including its decrypted _uncrypted.xex and basefile.exe images.
+   The release supports the same game revision used to build it. Renaming an
+   ISO or default.xex does not create the required decrypted images.
+
+3. Double-click Launch.cmd. That's it - no build or developer tools needed.
+
+Windows 10/11, 64-bit, with a Direct3D 11-capable graphics device is required.
+The audio and Visual C++ runtime files are included. Keep them with the game.
+
+CONTROLS
+Click inside the game to use the mouse. Press F1 for the controls guide.
+F2 toggles mouse capture. Escape pauses and releases the mouse.
+Alt+Enter switches fullscreen/windowed. Controllers are supported.
+Change graphics options in the game's Options > Video Settings menu.
+
+UPDATING AN OLDER RELEASE
+Close the game. Extract the new Windows ZIP into your existing game folder
+and replace the included program files. Keep your Darkness folder, saves
+folder, and DarkRecomp.settings.ini. They contain your game, progress, and
+settings, and are not supplied or overwritten by this release.
+
+IF IT DOESN'T START
+- Extract the whole ZIP. Keep Launch.cmd and build_native together.
+- If the launcher lists missing files, check step 2 above.
+- If Windows reports a missing DLL, extract the whole release again.
+- If the game closes after launch, look in build_native\run for the newest
+  desktop-* folder and its runtime.log. Include that log when reporting the
+  problem at https://github.com/portingpete/The-Darkness-Recomp/issues.
+
+More controls and launcher options: CONTROLS.md
+Downloads: https://github.com/portingpete/The-Darkness-Recomp/releases

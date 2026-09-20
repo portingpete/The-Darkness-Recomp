@@ -11,7 +11,28 @@ renderer — no emulation at runtime.
 Playable today: full gameplay, mouse look + controller input, video settings
 (resolution, FOV, gamma, bloom, frame cap, VSync), XMA audio, and saves.
 
-## Quick start
+## Download and play
+
+**[Download the Windows release](https://github.com/portingpete/The-Darkness-Recomp/releases).**
+Choose `The-Darkness-Recomp-v...-windows-x64.zip` under **Assets**.
+The GitHub **Source code** downloads are for building the project yourself.
+
+1. Right-click the Windows ZIP and choose **Extract All**.
+2. Copy your own extracted Xbox 360 game dump into the included **Darkness**
+   folder: `_uncrypted.xex`, `basefile.exe`, `default.xex`, `Content`, `System`,
+   and all the other files and folders from your dump.
+3. Double-click **Launch.cmd** to play with sound.
+
+No compiler, Python, or separate audio setup is needed for the Windows release.
+Use 64-bit Windows 10/11 with a Direct3D 11-capable graphics device.
+See [START_HERE.txt](START_HERE.txt) for the folder layout and troubleshooting.
+An ISO alone is not enough; the dump must include the decrypted executable
+images for the supported game revision.
+
+Click the game window to capture the mouse. **F1** shows controls, **F2** toggles
+capture, and **Esc** releases it. Graphics options are in **Options > Video Settings**.
+
+## Build from source
 
 **1. Game files** — from your own dumped copy, fill in `Darkness/`:
 
@@ -65,7 +86,14 @@ toggle capture, **Esc** release).
 - [CONTROLS.md](CONTROLS.md) — every binding, launcher option, and setting
 - [RENDERING.md](RENDERING.md) — how the renderer and frame pacing work
 
-## Updating
+## Updating a downloaded release
+
+Close the game, extract the new Windows ZIP into your existing game folder,
+and replace the included program files. Keep **Darkness/**, **saves/**, and
+**DarkRecomp.settings.ini** to preserve your game files, progress, and settings.
+You do not need to rebuild.
+
+## Updating a source build
 
 Pull the latest version and run the build again:
 
@@ -79,6 +107,19 @@ retain their timestamps so the native build can reuse previous compilation work.
 
 If an older setup stopped with `AOT gate: Generator failed (0)`, these same
 commands install the missing generator patches and regenerate the output.
+
+## Packaging a release
+
+Maintainers can build, test, and package a Windows ZIP with:
+
+```powershell
+python tools/package_release.py --version v0.1.1
+```
+
+Run from a clean, committed checkout with the build prerequisites installed.
+The ZIP and SHA-256 checksum land in `build_native/releases/`. The packager
+includes the launcher, runtime dependencies, notices, and audio-library source;
+game dumps, saves, settings, build tools, and diagnostic logs are excluded.
 
 ## Tests
 
