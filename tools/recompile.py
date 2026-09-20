@@ -89,8 +89,12 @@ def main() -> int:
                                 stdout=log, stderr=subprocess.STDOUT, cwd=ROOT)
     log = log_path.read_text(encoding="utf-8")
     matches = re.findall(r"Semantic diagnostics: (\d+)", log)
-    if not matches or result.returncode not in (0, 1):
+    if result.returncode not in (0, 1):
         raise RuntimeError(f"Generator failed ({result.returncode}); see {log_path}")
+    if not matches:
+        raise RuntimeError("Generator did not report semantic diagnostics. "
+                           "Run tools/build.ps1 to install and build the patched XenonRecomp; "
+                           f"see {log_path}")
     diagnostic_count = int(matches[-1])
     if result.returncode != bool(diagnostic_count):
         raise RuntimeError("Generator exit status disagrees with semantic diagnostics")

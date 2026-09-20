@@ -21,6 +21,7 @@ ARCHIVE_HASH = '1291ae49c285f7bd55c7c059aa43f1a0fd784a1ae22d5c76297dcd11c531248a
 SOURCE_HASH = '803547a38dea1294891c00402d6b3576a16053b0f00b395768c4983740c86553'
 
 def main():
+    DEPS.mkdir(parents=True, exist_ok=True)
     archive = DEPS / 'ffmpeg-darkxma-upstream.tar.gz'
     if not archive.exists():
         urllib.request.urlretrieve(f'https://codeload.github.com/FFmpeg/FFmpeg/tar.gz/{COMMIT}', archive)

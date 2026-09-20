@@ -8,6 +8,7 @@ function Invoke-Checked([string]$Executable, [string[]]$Arguments) {
     & $Executable @Arguments
     if ($LASTEXITCODE -ne 0) { throw "$Executable failed with exit code $LASTEXITCODE" }
 }
+Invoke-Checked python @((Join-Path $PSScriptRoot 'setup_generator.py'))
 Invoke-Checked cmake @('-S', $generatorRoot, '-B', $generatorBuild, '-G', 'Visual Studio 17 2022', '-A', 'x64')
 Invoke-Checked cmake @('--build', $generatorBuild, '--config', 'Release', '--target', 'XenonRecomp', '--parallel', "$Jobs")
 $generateArgs = @((Join-Path $PSScriptRoot 'recompile.py'), '--output', (Join-Path $nativeBuild 'generated'),

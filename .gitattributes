@@ -6,3 +6,4 @@
 *.toml text eol=lf
 *.cmake text eol=lf
 CMakeLists.txt text eol=lf
+tools/patches/*.patch text eol=lf whitespace=-blank-at-eol

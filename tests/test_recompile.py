@@ -110,6 +110,7 @@ class RecompileTests(unittest.TestCase):
         self.chunk_count = 1
         self.diagnostics = 0
         self.report_chunk_count = True
+        self.report_diagnostics = True
         self.omit_chunk = None
         for patcher in (
             patch.object(recompile, 'ROOT', self.root),
@@ -133,7 +134,8 @@ class RecompileTests(unittest.TestCase):
                 (out / f'ppc_recomp.{index}.cpp').write_text(f'void guest_{index}() {{}}\n')
         if self.report_chunk_count:
             kwargs['stdout'].write(f'Translation units: {self.chunk_count}\n')
-        kwargs['stdout'].write(f'Semantic diagnostics: {self.diagnostics}\n')
+        if self.report_diagnostics:
+            kwargs['stdout'].write(f'Semantic diagnostics: {self.diagnostics}\n')
         return subprocess.CompletedProcess(command, int(bool(self.diagnostics)))
 
     def generate_imports(self, root, out):
@@ -202,6 +204,13 @@ class RecompileTests(unittest.TestCase):
     def test_missing_translation_unit_count_is_rejected(self):
         self.report_chunk_count = False
         with self.assertRaisesRegex(RuntimeError, '[Tt]ranslation unit'):
+            self.regenerate()
+        self.assertFalse((self.out / 'manifest.json').exists())
+
+    def test_unpatched_generator_exits_zero_but_explains_how_to_repair(self):
+        self.report_diagnostics = False
+        self.report_chunk_count = False
+        with self.assertRaisesRegex(RuntimeError, r'Run tools/build\.ps1.*patched XenonRecomp'):
             self.regenerate()
         self.assertFalse((self.out / 'manifest.json').exists())
 

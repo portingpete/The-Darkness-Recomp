@@ -9,8 +9,8 @@ Darkness/*
 ppc/
 
 # --- Vendored reference clones (build-time dependencies, see README) ---
-# Clone hedge-dev/UnleashedRecomp (pinned commit in README) into refs/
-# before building; tools/recompile.py consumes its XenonRecomp generator.
+# tools/setup_generator.py fetches and patches the pinned XenonRecomp source.
+# The patch itself is tracked under tools/patches/.
 refs/
 
 # --- Build outputs ---

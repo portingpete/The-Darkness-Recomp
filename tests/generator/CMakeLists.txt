@@ -1,0 +1,31 @@
+cmake_minimum_required(VERSION 3.24)
+project(DarkGeneratorRegression LANGUAGES C CXX)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+get_filename_component(DARK_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
+set(DARK_XENON_ROOT "${DARK_ROOT}/refs/UnleashedRecomp/tools/XenonRecomp" CACHE PATH "Generator source under test")
+set(DARK_RECOMPILER_SOURCE "${DARK_XENON_ROOT}/XenonRecomp/recompiler.cpp" CACHE FILEPATH "Instruction emitter implementation under test")
+add_subdirectory("${DARK_XENON_ROOT}" "${CMAKE_CURRENT_BINARY_DIR}/upstream" EXCLUDE_FROM_ALL)
+add_executable(GeneratorInstructionEmitter emit_instructions.cpp
+    "${DARK_RECOMPILER_SOURCE}" "${DARK_XENON_ROOT}/XenonRecomp/recompiler_config.cpp")
+target_include_directories(GeneratorInstructionEmitter PRIVATE "${DARK_XENON_ROOT}/XenonRecomp")
+target_precompile_headers(GeneratorInstructionEmitter PRIVATE "${DARK_XENON_ROOT}/XenonRecomp/pch.h")
+target_link_libraries(GeneratorInstructionEmitter PRIVATE LibXenonAnalyse XenonUtils fmt::fmt tomlplusplus::tomlplusplus xxHash::xxhash)
+target_compile_definitions(GeneratorInstructionEmitter PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+set(FIXTURE_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/translated_instructions.inc")
+add_custom_command(OUTPUT "${FIXTURE_OUTPUT}"
+    COMMAND GeneratorInstructionEmitter "${FIXTURE_OUTPUT}"
+    DEPENDS GeneratorInstructionEmitter VERBATIM)
+add_executable(GeneratorInstructionTests instruction_tests.cpp "${FIXTURE_OUTPUT}")
+target_include_directories(GeneratorInstructionTests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}" "${DARK_ROOT}/runtime/guest" "${DARK_XENON_ROOT}/thirdparty/simde")
+target_compile_definitions(GeneratorInstructionTests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_compile_options(GeneratorInstructionTests PRIVATE /fp:strict)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    enable_testing()
+endif()
+add_test(NAME GeneratorInstructionContract COMMAND GeneratorInstructionTests)
+set_tests_properties(GeneratorInstructionContract PROPERTIES TIMEOUT 30)
+add_test(NAME GeneratorDiagnosticContract COMMAND GeneratorInstructionEmitter --check-diagnostics
+    "${CMAKE_CURRENT_BINARY_DIR}/diagnostic-fixture" "${DARK_ROOT}/runtime/guest/ppc_context.template.h")
+set_tests_properties(GeneratorDiagnosticContract PROPERTIES TIMEOUT 30)
