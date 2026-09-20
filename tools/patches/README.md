@@ -11,11 +11,20 @@ the guest timebase hook, and MSVC/C++20 build support. It contains no game binar
 or generated game code. The upstream tool and these modifications are GPLv3;
 see the repository's `COPYING` and the upstream license.
 
-`tools/build.ps1` runs `tools/setup_generator.py` before compiling. Setup accepts
-the original submodule layout, skips patches already applied, and refuses to
-overwrite conflicting local edits. The Python setup script also accepts
+`xenonrecomp-corrections.patch` follows the initial patch. It fixes unsigned
+float conversion, overlapping vector packing, halfword comparison flags, fused
+negative multiply-add, unsigned multiply-high record flags, and lost analysis
+diagnostics. Reciprocal-square-root and negative-multiply-add record forms fail the semantic gate until
+their FPSCR-to-CR1 behavior is implemented.
+
+`tools/build.ps1` runs `tools/setup_generator.py` before compiling. Setup builds
+the patch series in a temporary directory and recognizes the pinned original and
+every shipped intermediate version. It upgrades old installs, preserves unchanged
+timestamps, and validates all affected files before replacing any of them. Unknown
+local edits are preserved and reported. The Python setup script also accepts
 `--destination` for validating a separate clean generator checkout.
 
-When changing the generator, update this patch from the pinned base along with
-the repository changes that need it. Validate setup and AOT generation using a
-fresh checkout so local dependency edits cannot silently become a requirement.
+When changing the generator after a release, append a patch to `PATCHES` in
+`tools/setup_generator.py` so existing installs remain recognizable. Validate the
+instruction regressions, setup upgrades, and AOT generation using a fresh checkout
+so local dependency edits cannot silently become a requirement.

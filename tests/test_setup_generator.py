@@ -38,6 +38,7 @@ class GeneratorSetupTests(unittest.TestCase):
         self.git(self.upstream, "diff", "--binary", "--full-index", f"--output={self.patch}")
         self.git(self.upstream, "restore", ".")
         self.destination = self.root / "checkout with spaces" / "XenonRecomp"
+        self.patches = (self.patch,)
 
     def git(self, directory, *arguments):
         return subprocess.run(["git", "-C", str(directory), *arguments], check=True,
@@ -46,7 +47,7 @@ class GeneratorSetupTests(unittest.TestCase):
     def setup(self):
         with redirect_stdout(io.StringIO()):
             setup_generator.setup(self.destination, upstream=str(self.upstream),
-                                  commit=self.commit, patch_path=self.patch)
+                                  commit=self.commit, patch_paths=self.patches)
 
     def assert_patched(self):
         for name, content in self.patched.items():
@@ -94,13 +95,32 @@ class GeneratorSetupTests(unittest.TestCase):
         self.assertEqual(source.read_text(), "a developer's different implementation\n")
         self.assertEqual((self.destination / "context.h").read_text(), self.original["context.h"])
 
-    def test_partially_applied_patch_is_not_overwritten(self):
+    def test_partially_applied_known_version_is_repaired(self):
         self.clone_original()
         (self.destination / "main.cpp").write_text(self.patched["main.cpp"])
-        with self.assertRaisesRegex(RuntimeError, "partially applied"):
+        self.setup()
+        self.assert_patched()
+
+    def test_patch_series_upgrades_an_earlier_install_and_is_idempotent(self):
+        self.setup()
+        upgrade = self.root / "correction.patch"
+        upgrade.write_text("--- a/main.cpp\n+++ b/main.cpp\n@@ -1,3 +1,3 @@\n"
+                           " before\n-patched body\n+corrected body\n after\n", newline="\n")
+        self.patches += (upgrade,)
+        self.setup()
+        source = self.destination / "main.cpp"
+        self.assertEqual(source.read_text(), "before\ncorrected body\nafter\n")
+        timestamp = source.stat().st_mtime_ns
+        self.setup()
+        self.assertEqual(source.stat().st_mtime_ns, timestamp)
+
+    def test_unknown_edits_outside_patch_hunks_are_preserved(self):
+        self.setup()
+        source = self.destination / "main.cpp"
+        source.write_text(self.patched["main.cpp"] + "developer extension\n")
+        with self.assertRaisesRegex(RuntimeError, "Local changes"):
             self.setup()
-        self.assertEqual((self.destination / "main.cpp").read_text(), self.patched["main.cpp"])
-        self.assertEqual((self.destination / "context.h").read_text(), self.original["context.h"])
+        self.assertEqual(source.read_text(), self.patched["main.cpp"] + "developer extension\n")
 
     def test_wrong_revision_is_not_changed(self):
         (self.upstream / "notes.txt").write_text("new upstream note\n")

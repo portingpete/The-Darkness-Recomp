@@ -5,12 +5,16 @@ import argparse
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 DESTINATION = ROOT / "refs/UnleashedRecomp/tools/XenonRecomp"
 UPSTREAM = "https://github.com/hedge-dev/XenonRecomp.git"
 COMMIT = "c5bfd90d87f2ed0db8cff5c19ea3aff0e161e527"
-PATCH = ROOT / "tools/patches/xenonrecomp-darkness.patch"
+PATCHES = (
+    ROOT / "tools/patches/xenonrecomp-darkness.patch",
+    ROOT / "tools/patches/xenonrecomp-corrections.patch",
+)
 
 
 def git(directory: Path, *arguments: str, check: bool = True) -> subprocess.CompletedProcess:
@@ -23,12 +27,63 @@ def git(directory: Path, *arguments: str, check: bool = True) -> subprocess.Comp
     return result
 
 
+def install_patches(destination: Path, commit: str, patch_paths: tuple[Path, ...]) -> None:
+    # Build the complete patch series away from the user's working tree. Keep
+    # each shipped intermediate version so earlier installs can upgrade safely.
+    names = set()
+    for patch_path in patch_paths:
+        stats = git(destination, "apply", "--numstat", "-z", str(patch_path)).stdout
+        for entry in filter(None, stats.split("\0")):
+            added, removed, name = entry.split("\t", 2)
+            target = (destination / name).resolve()
+            if added == "-" or removed == "-" or not target.is_relative_to(destination):
+                raise RuntimeError(f"Unsupported generator patch path: {name}")
+            names.add(name)
+    with tempfile.TemporaryDirectory(prefix="darkrecomp-generator-") as temporary:
+        staging = Path(temporary)
+        git(staging, "init", "--quiet")
+        git(staging, "config", "core.autocrlf", "false")
+        versions = {}
+        for name in sorted(names):
+            original = git(destination, "show", f"{commit}:{name}").stdout.encode("utf-8")
+            path = staging / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(original)
+            versions[name] = {original}
+        for patch_path in patch_paths:
+            git(staging, "apply", "--whitespace=nowarn", str(patch_path))
+            for name in names:
+                versions[name].add((staging / name).read_bytes())
+
+        updates = []
+        for name in sorted(names):
+            path = destination / name
+            current = path.read_bytes()
+            normalized = current.replace(b"\r\n", b"\n")
+            desired = (staging / name).read_bytes()
+            if normalized not in versions[name]:
+                raise RuntimeError(f"Local changes in {path} conflict with the generator patches. "
+                                   "Save your edits and restore a shipped version, or move the "
+                                   "checkout aside and rerun tools/build.ps1. "
+                                   "Your files have not been changed.")
+            if normalized != desired:
+                updates.append((path, desired.replace(b"\n", b"\r\n")
+                                if b"\r\n" in current else desired))
+        # Validate every affected file before writing any of them. An interrupted
+        # write between files is recoverable because every version is recognized.
+        for path, content in updates:
+            path.write_bytes(content)
+        print("Installed Darkness generator patches." if updates
+              else "Darkness generator patches are already installed.")
+
+
 def setup(destination: Path, *, upstream: str = UPSTREAM, commit: str = COMMIT,
-          patch_path: Path = PATCH) -> None:
+          patch_paths: tuple[Path, ...] = PATCHES) -> None:
     destination = destination.resolve()
-    patch_path = patch_path.resolve()
-    if not patch_path.is_file():
-        raise RuntimeError(f"Missing bundled generator patch: {patch_path}")
+    patch_paths = tuple(path.resolve() for path in patch_paths)
+    for patch_path in patch_paths:
+        if not patch_path.is_file():
+            raise RuntimeError(f"Missing bundled generator patch: {patch_path}")
 
     # Keep the original dependency location compatible with existing builds.
     # A fresh setup only needs XenonRecomp, not the whole UnleashedRecomp tree.
@@ -50,21 +105,7 @@ def setup(destination: Path, *, upstream: str = UPSTREAM, commit: str = COMMIT,
                            f"Move {destination} aside and rerun tools/build.ps1; "
                            "your checkout has not been changed.")
 
-    # Reverse-checking makes repeated builds work with the already patched
-    # development tree. Git checks the entire patch before changing any files.
-    patch_arguments = ("--ignore-space-change", "--whitespace=nowarn", str(patch_path))
-    if git(destination, "apply", "--reverse", "--check", *patch_arguments,
-           check=False).returncode == 0:
-        print("Darkness generator patches are already installed.")
-    else:
-        ready = git(destination, "apply", "--check", *patch_arguments, check=False)
-        if ready.returncode:
-            raise RuntimeError("Cannot apply the bundled XenonRecomp patch to this checkout. "
-                               "Local changes or a partially applied patch may conflict. "
-                               f"Move {destination} aside and rerun tools/build.ps1; "
-                               f"your files have not been changed.\n{ready.stderr.strip()}")
-        git(destination, "apply", *patch_arguments)
-        print("Installed Darkness generator patches.")
+    install_patches(destination, commit, patch_paths)
     # Run even for an already patched tree: a download may have been interrupted.
     print("Preparing XenonRecomp dependencies...", flush=True)
     git(destination, "submodule", "update", "--init", "--recursive")
