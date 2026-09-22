@@ -20,7 +20,8 @@ The GitHub **Source code** downloads are for building the project yourself.
 1. Right-click the Windows ZIP and choose **Extract All**.
 2. Copy your own extracted Xbox 360 game dump into the included **Darkness**
    folder: `_uncrypted.xex`, `basefile.exe`, `default.xex`, `Content`, `System`,
-   and all the other files and folders from your dump.
+   and all the other files and folders from your dump. If the first two files
+   are missing, follow **Preparing the game files** below to generate them.
 3. Double-click **Launch.cmd** to play with sound.
 
 No compiler, Python, or separate audio setup is needed for the Windows release.
@@ -32,9 +33,63 @@ images for the supported game revision.
 Click the game window to capture the mouse. **F1** shows controls, **F2** toggles
 capture, and **Esc** releases it. Graphics options are in **Options > Video Settings**.
 
+## Preparing the game files
+
+`_uncrypted.xex` and `basefile.exe` are generated from your own `default.xex`;
+they are not normally present in a disc extraction. `basefile.exe` is a raw
+Xbox 360 memory image read by the port, not a Windows application to run.
+
+1. Obtain **xorloser's XexTool** separately; **v6.3** is the version tested here.
+   It is not included with this release.
+2. Place `xextool.exe` beside `default.xex` in your **Darkness** folder.
+3. Open that folder in File Explorer, type `powershell` into its address bar,
+   and press Enter. Run these commands one at a time:
+
+   ```powershell
+   .\xextool.exe -e u -c u -o _uncrypted.xex default.xex
+   .\xextool.exe -b basefile.exe default.xex
+   ```
+
+   Confirm that each command reports success. These commands preserve
+   `default.xex`. Keep the `-o _uncrypted.xex` option on the first command;
+   do not rename files or apply region/devkit patches. If you already have
+   generated files, back them up before regenerating them.
+4. Keep both generated files in **Darkness**, together with the original dump,
+   then double-click `Launch.cmd` in the parent folder.
+
+### Checking the supported game revision
+
+For **v0.1.1**, run this in the same PowerShell window:
+
+```powershell
+Get-FileHash .\_uncrypted.xex, .\basefile.exe -Algorithm SHA256 | Format-List
+```
+
+The generated SHA-256 hashes must match these values (case does not matter):
+
+```text
+_uncrypted.xex  a7ccd87860889fa082d62dcc24382467d59c8031f6e99d2ed9f3dbddaa7d535e
+basefile.exe   180b7fc8f57462f6bac3404ecab061a8d79914c7a3e9a12c238bd3449e72d049
+```
+
+These commands were tested against the project's dump and reproduced both
+release inputs exactly. Its XEX metadata reports Title ID `545407EE`, Media ID
+`0F213645`, version `0.0.0.1`, and **All Regions**. That does not establish
+compatibility with every USA/Canadian/international disc revision; the generated
+hashes are the decisive check for this release.
+
+If the hashes differ, report the hashes and the Title ID, Media ID, and version
+shown by `.\xextool.exe -l default.xex`. Do not post
+the game files or the full tool output, which includes unrelated key fields.
+If the game closes after launch, also attach the newest
+`build_native/run/desktop-*/runtime.log`. A different result can indicate a
+different revision, a modified dump, or a preparation problem.
+
 ## Build from source
 
 **1. Game files** — from your own dumped copy, fill in `Darkness/`:
+
+Use **Preparing the game files** above to generate the two required images.
 
 ```
 Darkness/
