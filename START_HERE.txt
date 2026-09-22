@@ -4,6 +4,8 @@ THE DARKNESS RECOMP - START HERE
    Open the extracted folder. Do not run the game from inside the ZIP.
 
 2. Copy your own Xbox 360 game dump into the Darkness folder.
+   If _uncrypted.xex or basefile.exe is missing, generate them using the
+   PREPARING THE TWO MISSING FILES steps below. This is normal for a disc dump.
    The finished folder should look like this:
 
      Launch.cmd
@@ -30,6 +32,46 @@ THE DARKNESS RECOMP - START HERE
 
 Windows 10/11, 64-bit, with a Direct3D 11-capable graphics device is required.
 The audio and Visual C++ runtime files are included. Keep them with the game.
+
+PREPARING THE TWO MISSING FILES
+You need your own default.xex and xorloser's XexTool (v6.3 was tested).
+XexTool is a separate preparation tool and is not included in the release.
+basefile.exe is an extracted Xbox 360 memory image, not a Windows program.
+
+1. Put xextool.exe beside default.xex inside the Darkness folder.
+2. Open that folder in File Explorer. Type powershell into the address bar
+   and press Enter. Run these commands one at a time:
+
+   .\xextool.exe -e u -c u -o _uncrypted.xex default.xex
+   .\xextool.exe -b basefile.exe default.xex
+
+3. Confirm both commands report success. Keep default.xex and both new files
+   in Darkness, then run Launch.cmd from the parent folder.
+
+These commands preserve default.xex. Keep the -o option on the first command.
+Do not rename default.xex or apply region/devkit patches. Back up any existing
+generated files before regenerating them.
+
+CHECKING YOUR GAME VERSION (v0.1.1)
+Run this in the same PowerShell window:
+
+   Get-FileHash .\_uncrypted.xex, .\basefile.exe -Algorithm SHA256 | Format-List
+
+Expected SHA-256 values (uppercase/lowercase does not matter):
+_uncrypted.xex:
+  a7ccd87860889fa082d62dcc24382467d59c8031f6e99d2ed9f3dbddaa7d535e
+basefile.exe:
+  180b7fc8f57462f6bac3404ecab061a8d79914c7a3e9a12c238bd3449e72d049
+
+The tested dump reports Title ID 545407EE, Media ID 0F213645, version 0.0.0.1,
+and All Regions. USA/Canada/international labels alone do not prove a match.
+The generated hashes must match this release. If they differ, report the
+hashes and the Title ID, Media ID, and version shown by:
+
+   .\xextool.exe -l default.xex
+
+Share only those fields, not the game files or the full tool output. Different
+hashes can mean a different revision, modified files, or a preparation problem.
 
 CONTROLS
 Click inside the game to use the mouse. Press F1 for the controls guide.
