@@ -936,6 +936,8 @@ static void immediateCanonicalContract(WorldRendererD3D11& renderer) {
 #include "darkness_effect_tests.h"
 #include "world_alpha_coverage_tests.h"
 #include "world_shadow_projection_tests.h"
+#include "world_color_lookup_tests.h"
+#include "world_resolve_fringe_tests.h"
 static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
     context->ClearState();WorldRendererD3D11 renderer(device,context);
     WorldClear clear;clear.targets={1,0,0,0,2};clear.viewport={0,0,64,64};clear.flags=49;renderer.clear(clear);
@@ -1488,6 +1490,8 @@ static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
     deeperResources(renderer,device,context,histogramDraw);
     alphaCoveragePass(renderer,histogramDraw,1);
     shadowProjectionPass(renderer,histogramDraw,1);
+    colorLookupUpscalePass(renderer,1);
+    resolvePartialTilePass(renderer,device,context,1);
     // A diagonal must resolve to different coverage values inside individual
     // logical pixels. Enlarging a 64x64 raster would repeat each pixel instead.
     for(unsigned scale:{2u,3u}) {
@@ -1528,6 +1532,8 @@ static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
         std::printf("PhysicalRaster%u: %u covered pixels, %u mixed logical edge blocks retained through resolve/present.\n",scale,physicalCoverage,mixedBlocks);
         alphaCoveragePass(scaled,histogramDraw,scale);
         shadowProjectionPass(scaled,histogramDraw,scale);
+        colorLookupUpscalePass(scaled,scale);
+        resolvePartialTilePass(scaled,device,context,scale);
     }
 }
 // Page-in pacing: a burst of fresh large uploads in one frame must defer the
