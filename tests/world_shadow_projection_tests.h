@@ -37,21 +37,24 @@ static void shadowProjectionPass(WorldRendererD3D11& renderer,const WorldDraw& s
         const unsigned e=(h>>10)&31,m=h&1023;
         return std::ldexp(double(e?1024+m:m),int(e?e:1)-25)*(h&0x8000?-1:1);
     };
-    for(unsigned pattern=0;pattern<3;++pattern) {
+    for(unsigned pattern=0;pattern<5;++pattern) {
         shadow.depth=pattern==1?.75f:.25f;renderer.clear(shadow);
-        if(pattern==2) {
+        if(pattern>=2) {
             auto right=shadow;right.rectangle=std::array<int32_t,4>{32,0,64,64};right.depth=.75f;
             renderer.clear(right);
         }
         require(renderer.resolve(shadowCopy),"Shadow atlas depth resolve rejected");
+        // One logical pixel off the seam must still see the opposite side at
+        // 2x/3x. A filter accidentally measured in physical pixels will not.
+        draw.fragmentConstants[3][3]=pattern==3?-1.0f/64:pattern==4?1.0f/64:0;
         renderer.clear(target);require(renderer.draw(draw),"Original shadow projector draw rejected");
         const auto pixels=renderer.readSurface(3103,false);
         const unsigned side=64*scale;require(pixels.size()==size_t(side)*side*8,"Shadow output scale differs");
         uint16_t rgba[4]{};std::memcpy(rgba,pixels.data()+(size_t(side/2)*side+side/2)*8,8);
-        const double expected=pattern==0?1.0:pattern==1?0.0:0.5;
+        const double expected=pattern==0?1.0:pattern==1?0.0:pattern==2?0.5:pattern==3?0.75:0.25;
         require(std::abs(halfFloat(rgba[0])-expected)<.01 &&
                 std::abs(halfFloat(rgba[3])-(1-expected))<.01,
                 "Shadow PCF/lighting differs between logical and physical resolutions");
     }
-    std::printf("ShadowProjection%u: lit, occluded and 4x4 penumbra depth samples passed.\n",scale);
+    std::printf("ShadowProjection%u: lit, occluded and three 4x4 penumbra positions passed.\n",scale);
 }
