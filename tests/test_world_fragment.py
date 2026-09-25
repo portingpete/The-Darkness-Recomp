@@ -64,6 +64,16 @@ END''')
             self.assertEqual(1 in metadata['textures'], bool(flags & 8))
             self.assertEqual(2 in metadata['textures'], bool(flags & 4))
 
+    def test_shadow_projector_uses_logical_texel_filter_at_native_scale(self):
+        source = (ROOT / 'Darkness/System/Gl/ARB_fragment_program/XREngine_ShadowProj.fp').read_text(encoding='latin-1')
+        code, metadata = compile_source(select_template(source, 8))
+        self.assertEqual(VARIANTS['XREngine_ShadowProj'], [8])
+        self.assertEqual(metadata['textures'], {0: '2D', 1: '2D'})
+        self.assertIn('position.xy + env[9].xy * float2(x - 1.5, y - 1.5)', code)
+        self.assertIn('texture0.SampleLevel(sampler0, uv, 0)', code)
+        self.assertIn('position.z >= depth', code)
+        self.assertNotIn('@', code)
+
     def test_original_programs_and_texture_dimensions(self):
         for name, expected in ASSETS.items():
             self.assertEqual(hashlib.sha256((ROOT / 'Darkness' / name).read_bytes()).hexdigest(), expected)

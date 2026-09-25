@@ -39,6 +39,7 @@ ASSETS = {
     'System/Gl/ARB_fragment_program/XREngine_CCFuser.fp': '2dc30d146fa599ea0f40a0be2e228bc905d15b5eb48b6f3eb883f64b6fd7805c',
     'System/Gl/ARB_fragment_program/XREngine_Final5.fp': '04f4ac016bcb2d05ed6f8c59b0e388d09fd3360c12a2a2fd4d1d56abe1e02b8c',
     'System/Gl/ARB_fragment_program/XREngine_MulFilter.fp': '78e83bb6678b53ee9c2e79f79dc0b79d85a652289dbf7606e02c2e8758d0e3e3',
+    'System/Gl/ARB_fragment_program/XREngine_ShadowProj.fp': 'f128ded198aa6c5313f8197d92537e80d05727e29ca4f2c5d25ae2731d49064f',
 }
 LANES = str.maketrans('rgba', 'xyzw')
 VARIANTS = {'XRShader_FP20_NDSP': [0], 'XRShader_FP20_NDS': [0], 'XRShader_MotionMap': [0], 'GUIFadeToWhite': [0],
@@ -48,6 +49,7 @@ VARIANTS = {'XRShader_FP20_NDSP': [0], 'XRShader_FP20_NDS': [0], 'XRShader_Motio
             'XREngine_GaussClamped': [0], 'XREngine_RadialBlur': [0], 'XREngine_RadialBlurHurt': [0],
             'XREngine_RadialBlurInvert': [0], 'XRUtil_ShrinkTexture8': [0],
             'XREngine_CCFuser': [0, 1, 2, 4], 'XREngine_Final5': list(range(16)), 'XREngine_Histogram': [0],
+            'XREngine_ShadowProj': [8],
             # Original RenderSurface's lighting/projector, fog and second
             # texture branches, including the two alpha-only fog variants.
             'XRUtil_RenderSurface': sorted({0, 64, 65, 67, 71, 128, 264, 328} |
@@ -96,17 +98,19 @@ def select_template(source, flags, includes=None):
 
 
 def compile_source(source):
-    # Original Xenon preprocessing822441E8 installs TEMP16 -> TEMP.
+    # Original Xenon preprocessing822441E8 installs precision aliases.
     source = re.sub(r'@TEMP16\b', 'TEMP', source)
+    source = re.sub(r'@PARAM16\b', 'PARAM', source)
     selected, stack = [], [True]
     else_seen = [False]
     for line in source.splitlines():
         line = line.split('#', 1)[0].strip()
-        if line.startswith('@if '):
-            name = line[4:].strip()
+        if line.startswith(('@if ', '@ifnot ')):
+            inverse = line.startswith('@ifnot ')
+            name = line[7:].strip() if inverse else line[4:].strip()
             if name not in ('dynmip', 'support_normalize', 'platform_pc', 'xenon'):
                 raise ValueError(f'Unknown condition: {name}')
-            stack.append(name == 'xenon')
+            stack.append((name == 'xenon') != inverse)
             else_seen.append(False)
         elif line == '@else':
             if len(stack) == 1:
@@ -125,6 +129,7 @@ def compile_source(source):
     if len(stack) != 1:
         raise ValueError('Unterminated condition')
     declarations, body, textures, symbols = [], [], {}, set()
+    uses_pcf4x4 = False
     output = None
 
     def operand(value):
@@ -152,7 +157,7 @@ def compile_source(source):
         statement = statement.strip()
         if not statement or statement == 'END':
             continue
-        if statement == 'OPTION ARB_precision_hint_fastest':
+        if statement in ('OPTION ARB_precision_hint_fastest', 'OPTION ARB_fragment_program_shadow'):
             continue
         match = re.fullmatch(r'(OUTPUT|ATTRIB|PARAM)\s+(\w+)\s*=\s*(.+)', statement)
         if match:
@@ -201,14 +206,21 @@ def compile_source(source):
         saturate = opcode.endswith('_SAT')
         op = opcode.removesuffix('_SAT')
         if op == 'TEX':
-            if len(args) != 3 or not (m := re.fullmatch(r'texture\[(\d+)\]', args[1])) or args[2] not in ('2D', 'CUBE'):
+            if len(args) != 3 or not (m := re.fullmatch(r'texture\[(\d+)\]', args[1])) or args[2] not in ('2D', 'CUBE', 'PCF4X42D'):
                 raise ValueError('Invalid texture instruction')
             slot = int(m[1])
-            if slot >= 16 or (slot in textures and textures[slot] != args[2]):
+            dimension = '2D' if args[2] == 'PCF4X42D' else args[2]
+            if slot >= 16 or (slot in textures and textures[slot] != dimension):
                 raise ValueError('Inconsistent texture slot')
-            textures[slot] = args[2]
-            coord = 'xy' if args[2] == '2D' else 'xyz'
-            expr = f'(texture{slot}.Sample(sampler{slot}, {operand(args[0])}.{coord}) * sampleScale[{slot}])'
+            textures[slot] = dimension
+            if args[2] == 'PCF4X42D':
+                if slot != 0:
+                    raise ValueError('Unsupported shadow map slot')
+                uses_pcf4x4 = True
+                expr = f'((float4)nativeShadow4x4({operand(args[0])}))'
+            else:
+                coord = 'xy' if dimension == '2D' else 'xyz'
+                expr = f'(texture{slot}.Sample(sampler{slot}, {operand(args[0])}.{coord}) * sampleScale[{slot}])'
         elif op == 'SWZ':
             if len(args) != 5:
                 raise ValueError('Invalid SWZ arity')
@@ -252,6 +264,21 @@ def compile_source(source):
     source = 'cbuffer FragmentConstants : register(b0) { float4 env[256]; }\ncbuffer TextureScales : register(b1) { float4 sampleScale[16]; }\n'
     for slot, dimension in sorted(textures.items()):
         source += f'Texture{"Cube" if dimension == "CUBE" else "2D"}<float4> texture{slot} : register(t{slot});\nSamplerState sampler{slot} : register(s{slot});\n'
+    if uses_pcf4x4:
+        # The guest's four-by-four taps are spaced in logical shadow texels.
+        # env[9] retains that pitch while the native depth map grows by 2x/3x.
+        source += '''float nativeShadow4x4(float4 position) {
+    float total = 0;
+    [unroll] for (int y = 0; y < 4; ++y) {
+        [unroll] for (int x = 0; x < 4; ++x) {
+            float2 uv = position.xy + env[9].xy * float2(x - 1.5, y - 1.5);
+            float depth = texture0.SampleLevel(sampler0, uv, 0).r * sampleScale[0].x;
+            total += position.z >= depth ? 1.0 : 0.0;
+        }
+    }
+    return total * (1.0 / 16.0);
+}
+'''
     source += 'struct Fragment { float4 position : SV_Position; float4 tex[8] : TEXCOORD0; float4 color : COLOR0; };\n'
     source += 'float4 pixelMain(Fragment input) : SV_Target {\n' + '\n'.join(declarations + body) + f'\nreturn {output};\n}}\n'
     return source, {'textures': textures, 'instruction_count': len(body), 'conditions': {'dynmip': False, 'support_normalize': False, 'platform_pc': False, 'xenon': True}}
