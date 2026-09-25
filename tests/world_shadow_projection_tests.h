@@ -10,14 +10,15 @@ static void shadowProjectionPass(WorldRendererD3D11& renderer,const WorldDraw& s
     require(renderer.resolve(sceneCopy),"Scene depth resolve for shadow projector rejected");
 
     auto binding=fixture(0,false);binding.descriptor.flags=0x03000000;
-    binding.descriptor.modes.fill(4);binding.descriptor.modes[0]=7;
+    // Saved gameplay draws use stage-0 mode 1 for this projector.
+    binding.descriptor.modes.fill(4);binding.descriptor.modes[0]=1;
     binding.descriptor.parameters[0][0]=20;
     const auto bytes=encodeEngineVertexDescriptor(binding.descriptor);binding.key={};
     for(unsigned i=0;i<5;++i)for(unsigned n=0;n<4;++n)
         binding.key[i+1]=(binding.key[i+1]<<8)|bytes[i*4+n];
-    const EngineVector center{.5f,.5f,0,1};
-    for(unsigned lane=0;lane<4;++lane)
-        put(binding.constantBytes.data()+20*16+lane*4,std::bit_cast<uint32_t>(center[lane]));
+    const std::array<EngineVector,4> projection{{{0,0,0,.5f},{0,0,0,.5f},{0,0,0,0},{0,0,0,1}}};
+    for(unsigned row=0;row<4;++row)for(unsigned lane=0;lane<4;++lane)
+        put(binding.constantBytes.data()+(20+row)*16+lane*4,std::bit_cast<uint32_t>(projection[row][lane]));
     auto draw=seed;require(prepareWorldVertexProgram(binding,draw.options,draw.constants),"Shadow projector vertex binding failed");
     draw.targets={3103,0,0,0,0};draw.material=WorldMaterial::post;
     draw.fragmentName="XREngine_ShadowProj";draw.fragmentFlags=8;draw.fragmentConstants={};
