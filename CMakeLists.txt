@@ -99,6 +99,7 @@ add_custom_command(OUTPUT "${DARK_SHADER_DIR}/engine_world_fragments.generated.h
         Darkness/System/Gl/ARB_fragment_program/XREngine_DepthFog.fp
         Darkness/System/Gl/ARB_fragment_program/XREngine_GaussClampedHurt.fp
         Darkness/System/Gl/ARB_fragment_program/XREngine_Histogram.fp
+        Darkness/System/Gl/ARB_fragment_program/XREngine_ShadowProj.fp
         Darkness/System/Gl/ARB_fragment_program/XRUtil_RenderSurface.fp
         Darkness/System/Gl/ARB_fragment_program/Include_XREngine_Fog.fph
         Darkness/System/Gl/ARB_fragment_program/XREngine_GaussClamped.fp

@@ -467,8 +467,18 @@ bool WorldRendererD3D11::resolve(const Native::WorldResolve& r) {
     if(src==surfaces_.end())return reject(2);
     if(r.rectangle[0]>=r.rectangle[2] || r.rectangle[1]>=r.rectangle[3])
         return reject(5,src->second.width,src->second.height);
-    if(r.rectangle[2]>src->second.width || r.rectangle[3]>src->second.height)
-        return reject(6,src->second.width,src->second.height);
+    if(r.rectangle[2]>src->second.width || r.rectangle[3]>src->second.height) {
+        // A guest frontbuffer can request a final partial tile beyond the
+        // drawn EDRAM extent (1290 vs 1288 pixels at 1080p). Preserve its
+        // drawn pixels and clear only the undrawn fringe before copying.
+        const auto missingWidth=r.rectangle[2]>src->second.width?r.rectangle[2]-src->second.width:0u;
+        const auto missingHeight=r.rectangle[3]>src->second.height?r.rectangle[3]-src->second.height:0u;
+        if(missingWidth>7 || missingHeight>7 ||
+           uint64_t(r.rectangle[2])>uint64_t(r.viewport[0])+r.viewport[2] ||
+           uint64_t(r.rectangle[3])>uint64_t(r.viewport[1])+r.viewport[3])
+            return reject(6,src->second.width,src->second.height);
+        surface(r.surfaceKey(attachment),r.rectangle[2],r.rectangle[3],depth);
+    }
     if(uint64_t(r.offset[0])+r.rectangle[2]-r.rectangle[0]>r.destination.width ||
        uint64_t(r.offset[1])+r.rectangle[3]-r.rectangle[1]>r.destination.height)
         return reject(7,src->second.width,src->second.height);
@@ -873,6 +883,14 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
         }
         if(!(texture.object && resolved!=resolved_.end()))firstMip=draw.textures[slot]->firstMip;
         auto captured=draw.samplers[slot];
+        if(scale_>1 && draw.fragmentName=="XREngine_CCFuser" && slot==1 &&
+           draw.textures[slot] && draw.textures[slot]->width==324 && draw.textures[slot]->height==18) {
+            // This pass copies original 324x18 color-cube texels into a scaled
+            // render target. Linear wrapping blends the opposite LUT edges
+            // into its first physical pixels, tinting dark scenes at 2x/3x.
+            captured.minLinear=captured.magLinear=captured.mipLinear=false;
+            captured.anisotropy=1;captured.baseOnly=true;
+        }
         if(captured.valid) {
             if(captured.maxLevel<firstMip)return rejected(3);
             captured.minLevel=(std::max)(captured.minLevel,uint8_t(firstMip));
