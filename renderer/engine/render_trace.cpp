@@ -4,6 +4,7 @@
 #include "simple_mesh.h"
 #include "texture_upload.h"
 #include "stored_geometry.h"
+#include "decoded_geometry.h"
 #include "engine_texture_constants.h"
 #include "engine_vertex_descriptor.h"
 #include "engine_vertex_program.h"
@@ -45,6 +46,7 @@ constexpr uint64_t maxBytes = 16 * 1024 * 1024;
 thread_local DarkRecomp::Native::StoredUpload* preparingGeometry = nullptr;
 using StoredRequest = DarkRecomp::Native::StoredDrawRequest;
 thread_local const StoredRequest* drawingGeometry = nullptr;
+thread_local DarkRecomp::Native::DecodedDrawRequest* drawingDecodedGeometry = nullptr;
 thread_local uint8_t* clearingBase = nullptr;
 
 template<class T> struct ScopedPointer {
@@ -989,7 +991,17 @@ PPC_FUNC(sub_828AC000) {
     DarkRecomp::Native::EngineCpuScope profile(DarkRecomp::Native::EnginePhase::sleep,ctx.r13.u32==0x7FF00000);
     __imp__sub_828AC000(ctx,base);
 }
-TRACE_ORIGINAL(8225DE78)
+extern "C" PPC_FUNC(__imp__sub_8225DE78);
+PPC_FUNC(sub_8225DE78) {
+    static std::atomic<uint64_t> calls{0};
+    if(enabled)capture(0x8225DE78,++calls,ctx,base);
+    // Packet fans/strips are expanded by the original into transient triangle
+    // lists. Keep each chunk scoped to this call until its actual indexed draw.
+    DarkRecomp::Native::DecodedDrawRequest request;
+    ScopedPointer<DarkRecomp::Native::DecodedDrawRequest> scope(drawingDecodedGeometry,
+        DarkRecomp::Native::enginePreviewEnabled()?&request:nullptr);
+    __imp__sub_8225DE78(ctx,base);
+}
 extern "C" PPC_FUNC(__imp__sub_8225F320);
 PPC_FUNC(sub_8225F320) {
     // Only this caller submits the decoded output as triangle-list indices.
@@ -998,9 +1010,18 @@ PPC_FUNC(sub_8225F320) {
     const bool observe = uint32_t(ctx.lr) == 0x8225E1A0 && DarkRecomp::Native::enginePreviewEnabled();
     const uint32_t indices = ctx.r4.u32, countAddress = ctx.r5.u32;
     const uint32_t capacity = observe ? word(base, countAddress) : 0;
+    // Original 8225DE78 stores the mapped index-buffer byte offset at +84,
+    // then passes half that value as DrawIndexed's first index at 8225E200.
+    uint32_t byteOffset=0;
+    const bool haveOffset=observe && drawingDecodedGeometry && ctx.r1.u32<=0xFFFFFFA8u &&
+        copyGuest(base,ctx.r1.u32+84,&byteOffset,sizeof(byteOffset));
     __imp__sub_8225F320(ctx, base);
-    if (observe)
-        DarkRecomp::Native::previewObserveDecodedTriangles(base, indices, capacity, word(base, countAddress));
+    if (observe) {
+        const auto produced=word(base,countAddress);
+        if(drawingDecodedGeometry)drawingDecodedGeometry->record(indices,haveOffset?capacity:0,
+            produced,_byteswap_ulong(byteOffset));
+        DarkRecomp::Native::previewObserveDecodedTriangles(base,indices,capacity,produced);
+    }
 }
 extern "C" PPC_FUNC(__imp__sub_8225E218);
 PPC_FUNC(sub_8225E218) {
@@ -1132,6 +1153,15 @@ PPC_FUNC(sub_82868FE8) {
         const auto mode=_mm_getcsr();
         DarkRecomp::Native::previewObserveImmediateWorld(base,ctx.r3.u32,ctx.r30.u32,ctx.r7.u32);
         _mm_setcsr(mode);
+    }
+    if(drawingDecodedGeometry && uint32_t(ctx.lr)==0x8225E200) {
+        const auto indices=drawingDecodedGeometry->consume(uint32_t(ctx.lr),ctx.r4.u32,
+            ctx.r5.u32,ctx.r6.u32,ctx.r7.u32);
+        if(indices) {
+            const auto mode=_mm_getcsr();
+            DarkRecomp::Native::previewObserveImmediateWorld(base,ctx.r3.u32,indices,ctx.r7.u32);
+            _mm_setcsr(mode);
+        }
     }
     // Observe the engine's actual indexed call, after its early-out checks
     // and buffer binding. This does not interpret the Xbox command stream.

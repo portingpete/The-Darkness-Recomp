@@ -2,6 +2,7 @@
 #include "renderer/engine/texture_upload.h"
 #include "renderer/engine/texture_mip_layout.h"
 #include "renderer/engine/render_trace.h"
+#include "renderer/engine/decoded_geometry.h"
 #include "renderer/engine/world_mesh.h"
 #include "renderer/d3d11/engine_preview.h"
 #include "renderer/d3d11/display_context_d3d11.h"
@@ -21,6 +22,49 @@ using namespace DarkRecomp::Native;
 extern "C" PPC_FUNC(__imp__sub_8225F320);
 extern "C" PPC_FUNC(__imp__sub_82864F20);
 static void require(bool result, const char* reason) { if (!result) throw std::runtime_error(reason); }
+static void testDecodedDrawRequest() {
+    DecodedDrawRequest request;
+    constexpr uint32_t caller = 0x8225E200;
+    auto consume = [&](uint32_t lr=0x8225E200, uint32_t primitive=4, uint32_t baseVertex=0,
+                       uint32_t firstIndex=0, uint32_t count=6) {
+        return request.consume(lr,primitive,baseVertex,firstIndex,count);
+    };
+    request.record(0x10000,8192,6,0);
+    require(consume()==0x10000 && consume()==0,"First decoded chunk was lost or reused");
+    request.record(0x20000,8192,3,24);
+    require(consume(caller,4,0,12,3)==0x20000 && consume(caller,4,0,12,3)==0,
+            "Second decoded chunk lost its index offset or was reused");
+
+    // Each incorrect draw consumes the pending chunk. No later matching draw
+    // may accidentally submit indices from a different original draw.
+    auto wrong = [&](uint32_t lr,uint32_t primitive,uint32_t baseVertex,uint32_t firstIndex,uint32_t count) {
+        request.record(0x30000,8192,6,12);
+        require(!consume(lr,primitive,baseVertex,firstIndex,count),"Mismatched decoder draw accepted");
+        require(!consume(caller,4,0,6,6),"Mismatched decoder draw left stale chunk");
+    };
+    wrong(0x8225DD38,4,0,6,6);
+    wrong(caller,3,0,6,6);
+    wrong(caller,4,1,6,6);
+    wrong(caller,4,0,5,6);
+    wrong(caller,4,0,6,3);
+
+    auto invalid = [&](uint32_t indices,uint32_t capacity,uint32_t produced,uint32_t byteOffset) {
+        request.record(0x40000,8192,6,0);
+        request.record(indices,capacity,produced,byteOffset);
+        require(!consume(),"Invalid or empty decoder chunk retained stale indices");
+    };
+    invalid(0,8192,6,0);
+    invalid(0x10000,0,6,0);
+    invalid(0x10000,8193,6,0);
+    invalid(0x10000,8192,0,0);
+    invalid(0x10000,3,6,0);
+    invalid(0x10000,8192,4,0);
+    invalid(0x10000,8192,6,1);
+    invalid(0xFFFFFFFE,8192,3,0);
+    request.record(0xFFFFFFFA,3,3,0);
+    require(consume(caller,4,0,0,3)==0xFFFFFFFA,
+            "Decoded index span ending at the guest address limit was rejected");
+}
 static void put16(uint8_t* base, uint32_t address, uint16_t v) { base[address]=uint8_t(v>>8); base[address+1]=uint8_t(v); }
 static void put32(uint8_t* base, uint32_t address, uint32_t v) {
     base[address]=uint8_t(v>>24); base[address+1]=uint8_t(v>>16); base[address+2]=uint8_t(v>>8); base[address+3]=uint8_t(v);
@@ -1187,6 +1231,7 @@ static void testPreviewBridge(Memory& memory, PPCContext& threadContext, EngineP
 int main(int argc, char** argv) {
     HWND window=nullptr;
     try {
+        testDecodedDrawRequest();
         require(argc==2,"Game directory required for original AOT decoder comparison");
         // Match the executable's initialization, including linking the
         // strong engine observers out of DarkRuntime's static archive.
