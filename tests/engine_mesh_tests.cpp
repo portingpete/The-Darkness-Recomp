@@ -84,6 +84,7 @@ static void nearByte(uint32_t pixel, unsigned channel, int expected) {
 #include "world_decal_capture_tests.h"
 #include "prompt_icon_tests.h"
 #include "preview_output_tests.h"
+#include "preview_shadow_capture_tests.h"
 // Synthetic source provider called by the actual original 82256008 refresh.
 // It updates the selected allocation and retains the temporary view so cleanup
 // never enters the unrelated original heap in this isolated fixture.
@@ -1504,6 +1505,7 @@ int main(int argc, char** argv) {
             nearByte(pixel,0,128); nearByte(pixel,1,64); nearByte(pixel,2,32); nearByte(pixel,3,255);
             testColorGpu(base,renderer,display,mesh);
             testPreviewRenderContinuation(renderer,display);
+            testPreviewShadowCaptureFailure(renderer);
             testPreviewBridge(owner,ctx,renderer);
             testPromptIconPreview(renderer,"framerate-stability-20260909/prompts-preview.bmp");
             testPreviewOutputResize(renderer,display);

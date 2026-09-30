@@ -440,6 +440,18 @@ uint32_t EnginePreviewD3D11::readPixel(uint32_t x, uint32_t y) {
     uint32_t value; std::memcpy(&value, static_cast<const uint8_t*>(mapped.pData)+y*mapped.RowPitch+x*4,4);
     context_->Unmap(staging_.Get(),0); return value;
 }
+bool EnginePreviewD3D11::trySaveShadowCapture(const std::filesystem::path& path) noexcept {
+    try {
+        if(std::filesystem::exists(path))throw std::runtime_error("Shadow capture screenshot already exists");
+        saveBmp(path);
+        return true;
+    } catch(const std::exception& error) {
+        std::fprintf(stderr,"[ShadowCapture] Screenshot failed; gameplay continues: %s\n",error.what());
+    } catch(...) {
+        std::fputs("[ShadowCapture] Screenshot failed; gameplay continues.\n",stderr);
+    }
+    return false;
+}
 void EnginePreviewD3D11::saveBmp(const std::filesystem::path& path) {
     if(frameOpen_)throw std::logic_error("Cannot capture an unfinished preview frame");
     std::vector<uint8_t> pixels(size_t(width_)*height_*4);

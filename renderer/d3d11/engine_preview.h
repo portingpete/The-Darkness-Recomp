@@ -64,5 +64,7 @@ public:
     size_t textureBudget() const {return world_->textureBudget();}
     uint32_t readPixel(uint32_t x, uint32_t y);
     void saveBmp(const std::filesystem::path& path);
+    // Optional F8 evidence must not terminate gameplay or replace an existing capture.
+    bool trySaveShadowCapture(const std::filesystem::path& path) noexcept;
 };
 }

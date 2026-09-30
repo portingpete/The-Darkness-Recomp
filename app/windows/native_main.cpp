@@ -571,14 +571,15 @@ int wmain(int argc, wchar_t** argv) {
                         frameWorld=preview->worldPresented();
                         if(frameRendered) {
                         if(shadowCaptureActive) {
-                            const auto path=rendererTrace/(L"inspection-"+std::to_wstring(shadowCaptureActive)+L".bmp");
-                            if(std::filesystem::exists(path))throw std::runtime_error("Shadow capture screenshot already exists");
-                            preview->saveBmp(path);
-                            std::printf("[ShadowCapture] saved=%u worldPresented=%u screenshot=%s\n",
-                                shadowCaptureActive,unsigned(preview->worldPresented()),path.string().c_str());
-                            const auto title=L"The Darkness - Shadow capture "+std::to_wstring(shadowCaptureActive)+L"/2 saved";
-                            SetWindowTextW(window,title.c_str());
+                            const auto completedCapture=shadowCaptureActive;
                             shadowCaptureActive=0;
+                            const auto path=rendererTrace/(L"inspection-"+std::to_wstring(completedCapture)+L".bmp");
+                            const bool saved=preview->trySaveShadowCapture(path);
+                            std::printf("[ShadowCapture] %s=%u worldPresented=%u screenshot=%s\n",
+                                saved?"saved":"failed",completedCapture,unsigned(preview->worldPresented()),path.string().c_str());
+                            const auto title=L"The Darkness - Shadow capture "+std::to_wstring(completedCapture)+
+                                (saved?L"/2 saved":L"/2 screenshot failed; see log");
+                            SetWindowTextW(window,title.c_str());
                         }
                         if(preview->worldPresented() && !previewFrame.empty() && worldCaptureCount<4 && GetTickCount64()>=nextWorldCapture) {
                             ++worldCaptureCount;nextWorldCapture=GetTickCount64()+5000;

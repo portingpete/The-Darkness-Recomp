@@ -1,7 +1,6 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <filesystem>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -26,7 +25,7 @@ struct Handle {
 };
 }
 
-int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR arguments, int) {
+int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     try {
         bool muted = true;
         bool captureFrames = false;

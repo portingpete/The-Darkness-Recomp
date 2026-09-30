@@ -101,10 +101,20 @@ the second stage uses that mask to fill only discarded pixels. Native depth
 writes remain enabled with an ALWAYS comparison in that first stage, matching
 the original state, so the second stage cannot overwrite the gold glow.
 GPU contracts cover both stages, all variants, atlas coordinates, nonuniform
-gold edge glow, the two-stage depth mask, intensity and near/far fades, and far-depth discard at scales
-1/2/3 on hardware and WARP. The original noise maps in stage-0 slots 2 and 4
+gold edge glow, the two-stage depth mask, intensity and near/far fades, and
+far-depth discard at scales 1/2/3 on hardware and WARP. The original noise maps
+in stage-0 slots 2 and 4
 can be recovered after a missed or evicted CPU texture upload. Scene, depth
 and effect-atlas inputs still come from their GPU resolves.
+
+`--shadow-capture <new directory>` enables two on-demand F8 captures at complete
+render-frame boundaries. Each retains the screenshot, ordered commands and
+owned draws. Projector evidence includes the resolved atlas and scene depth,
+with depth/stencil and target alpha before and after its draw. Captures leave
+subsequent rendering unchanged; the hardware/WARP contracts compare inspected
+and ordinary frames. Screenshot I/O failures are logged while gameplay continues,
+and existing captures are never overwritten. The preview contract covers failed
+writes, continued rendering, recovery and overwrite protection.
 
 Antialiasing offers Off (default) and FXAA, stored as `Antialiasing=0` or `1`.
 Missing or invalid values default to Off. Changes apply at the next presentation
