@@ -548,6 +548,40 @@ inline void run(uint8_t* base, uint32_t scratch) {
         for (unsigned i = 0; i < 4; ++i)
             solid(result->pixels, i * 4, 4, {255, 255, 255, alpha[i]});
     }
+    // Video chroma is a LINEAR A8L8 CImage, not compressed DXN. Its decoder
+    // bytes are U,V before the original uploader's endian conversion. Retain
+    // both authored channels and row padding through the actual transaction.
+    {
+        Fixture f(base, scratch); f.descriptor(2, 2, 1);
+        f.be(f.resource + 32, 10); f.be(f.resource + 40, 1u << 10);
+        f.header(2, 2, 12, 6, 2, 0x20000, 0x810);
+        const uint8_t values[]{90, 240, 240, 110, 99, 99, 54, 34, 128, 128, 99, 99};
+        std::memcpy(f.base + f.data, values, sizeof(values));
+        TextureUpload upload(15, 1, 0, 1);
+        expect(upload.record(f.base, f.resource, f.image, f.data, 0, 0, false) && upload.complete(0, 0),
+               "Linear video chroma was rejected as an unsupported/compressed upload");
+        auto result = upload.finish(f.resource);
+        expect(result && result->sourceCodec == 10 && result->authoredMips && result->mips.empty(),
+               "Linear video chroma lost authored resource provenance");
+        const uint8_t uv[][2]{{90, 240}, {240, 110}, {54, 34}, {128, 128}};
+        for(unsigned i=0;i<4;++i)solid(result->pixels, i*4, 4, {uv[i][0], uv[i][0], uv[i][0], uv[i][1]});
+        std::memset(f.base + f.data, 0, sizeof(values));
+        solid(result->pixels, 0, 4, {90,90,90,240});
+        TextureUpload next(15,1,0,1);
+        expect(next.record(f.base,f.resource,f.image,f.data,0,0,false) && next.complete(0,0),
+               "Same-resource video chroma refresh was rejected");
+        const auto refreshed=next.finish(f.resource);
+        expect(refreshed && refreshed!=result && refreshed->pixels==std::vector<uint8_t>(16,0) &&
+               result->pixels[0]==90 && result->pixels[3]==240,
+               "Video refresh reused or mutated a retained frame snapshot");
+        DarkRecomp::ColorImage unchanged;unchanged.width=99;unchanged.pixels={1,2,3,4};
+        f.be(f.image+24,3);
+        expect(DarkRecomp::Native::decodeUploadImage(f.base,f.image,f.data,unchanged) && unchanged.width==99 &&
+               unchanged.pixels==std::vector<uint8_t>({1,2,3,4}),"Short chroma pitch changed output");
+        f.be(f.image+24,6);f.be(f.image+12,11);
+        expect(DarkRecomp::Native::decodeUploadImage(f.base,f.image,f.data,unchanged) && unchanged.width==99,
+               "Truncated linear chroma allocation changed output");
+    }
     // Boundary and overflow checks require no image-sized allocations. Valid
     // <=2048 cube geometry fits the cap; do not bypass that limit just to force
     // a 256 MiB allocation in tests. Exercise the production arithmetic itself.

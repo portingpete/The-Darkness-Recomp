@@ -96,8 +96,15 @@ programs, including their base, radial-add and radial-multiply variants. Missing
 native translations previously dropped these final draws, exposing the scene
 and radial-blur atlas as stacked quadrants. The translator selects the Xenon
 floating-depth branch and preserves ARB `KIL` as a conditional pixel discard.
-GPU contracts cover both stages, all variants, atlas coordinates and far-depth
-discard at scales 1/2/3 on hardware and WARP.
+The first stage writes a depth coverage mask with depth testing disabled;
+the second stage uses that mask to fill only discarded pixels. Native depth
+writes remain enabled with an ALWAYS comparison in that first stage, matching
+the original state, so the second stage cannot overwrite the gold glow.
+GPU contracts cover both stages, all variants, atlas coordinates, nonuniform
+gold edge glow, the two-stage depth mask, intensity and near/far fades, and far-depth discard at scales
+1/2/3 on hardware and WARP. The original noise maps in stage-0 slots 2 and 4
+can be recovered after a missed or evicted CPU texture upload. Scene, depth
+and effect-atlas inputs still come from their GPU resolves.
 
 Antialiasing offers Off (default) and FXAA, stored as `Antialiasing=0` or `1`.
 Missing or invalid values default to Off. Changes apply at the next presentation
@@ -292,6 +299,14 @@ follow the active input source; see `CONTROLS.md` for the switching behavior.
   every original material pass and its order.
 - Read fragment constants from the original completed device upload, including
   the shader's intentional unused NaN values during the zero-blur GUI fade.
+  Retain up to 64 vectors so lit blood/decal programs can use their original
+  lighting and projector constants beyond vector 15.
+- Translate the original water, projected-mark, lit-decal and world-video
+  fragment programs. Water retains authored normal/fog maps alongside GPU
+  reflection/refraction inputs; decals retain plane clipping, lighting,
+  projection and alpha. Video uploads retain decoder-order U,V chroma and
+  immutable frame generations. Hardware/WARP tests exercise their rendered
+  output at 1x, 2x and 3x resolution; capture tests call the original binders.
 - Follow the original resource's primary/alternate texture selection, including
   inline texture objects and readiness checks.
 - Follow completed sampler filtering, addressing, LOD and anisotropy settings.

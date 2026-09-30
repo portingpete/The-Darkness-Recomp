@@ -121,6 +121,11 @@ class WorldRendererD3D11 {
     unsigned smokeRecords_=0;
     bool smokeTruncated_=false;
     unsigned smokeDrawOrdinal_=0;
+    bool captureFrame_=false;
+    unsigned captureCommand_=0,captureShadowPasses_=0;
+    size_t captureGpuBytes_=0;
+    void captureShadow(const Native::WorldDraw&,unsigned command,unsigned ordinal,unsigned pass,bool after,
+        const std::array<ID3D11ShaderResourceView*,16>&) noexcept;
     void smokeEvidence(const Native::WorldDraw&,uint32_t,const std::vector<Native::WorldVertex>&,unsigned);
     Ptr<ID3D11Buffer> fragmentConstants_,textureScales_,transferConstants_,viewportConstants_;
     Native::EngineVector uploadedViewport_{};
@@ -177,7 +182,8 @@ class WorldRendererD3D11 {
     bool motionBlur_ = false;
 public:
     WorldRendererD3D11(ID3D11Device*,ID3D11DeviceContext*,uint32_t scale=1);
-    void inspectNextFrame() {inspectFrame_=true;++inspection_;inspectedPrograms_.clear();smokeRecords_=0;smokeTruncated_=false;smokeDrawOrdinal_=0;}
+    void inspectNextFrame();
+    void endFrame();
     void setDiagnostics(bool enabled) {diagnostics_=enabled;}
     void setPromptSource(bool keyboardMouse) {promptKeyboardMouse_ = keyboardMouse;}
     void printPerformance();

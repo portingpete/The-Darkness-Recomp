@@ -9,6 +9,7 @@ THE DARKNESS RECOMP - START HERE
    The finished folder should look like this:
 
      Launch.cmd
+     LaunchWithSettings.cmd
      Darkness\
        _uncrypted.xex
        basefile.exe
@@ -20,6 +21,7 @@ THE DARKNESS RECOMP - START HERE
        Release\
          DarkRecomp.exe
          DarkRecompPreview.exe
+         DarkRecompSettings.exe
          ...leave all the other included files here
 
    Put the game files directly inside Darkness, not Darkness\Darkness.
@@ -28,10 +30,17 @@ THE DARKNESS RECOMP - START HERE
    The release supports the same game revision used to build it. Renaming an
    ISO or default.xex does not create the required decrypted images.
 
-3. Double-click Launch.cmd. That's it - no build or developer tools needed.
+3. Double-click Launch.cmd to play immediately, or LaunchWithSettings.cmd to
+   choose video settings before the game opens. No build or developer tools
+   are needed.
 
 Windows 10/11, 64-bit, with a Direct3D 11-capable graphics device is required.
 The audio and Visual C++ runtime files are included. Keep them with the game.
+
+Steam Deck/Linux: see STEAM_DECK.md for an unverified Proton test setup using
+the complete Windows folder. Deck gameplay and performance are not verified.
+This release supports The Darkness revision listed below. Other Xbox games
+and updated executables need their own port; changing a hash will not add support.
 
 PREPARING THE TWO MISSING FILES
 You need your own default.xex and xorloser's XexTool (v6.3 was tested).
@@ -77,7 +86,9 @@ CONTROLS
 Click inside the game to use the mouse. Press F1 for the controls guide.
 F2 toggles mouse capture. Escape pauses and releases the mouse.
 Alt+Enter switches fullscreen/windowed. Controllers are supported.
-Change graphics options in the game's Options > Video Settings menu.
+Change graphics options in the game's Options > Video Settings menu, or use
+LaunchWithSettings.cmd before starting the game. Both save to the same settings
+file. Internal resolution changes take effect when the game starts.
 
 UPDATING AN OLDER RELEASE
 Close the game. Extract the new Windows ZIP into your existing game folder
@@ -86,7 +97,7 @@ folder, and DarkRecomp.settings.ini. They contain your game, progress, and
 settings, and are not supplied or overwritten by this release.
 
 IF IT DOESN'T START
-- Extract the whole ZIP. Keep Launch.cmd and build_native together.
+- Extract the whole ZIP. Keep both launchers and build_native together.
 - If the launcher lists missing files, check step 2 above.
 - If Windows reports a missing DLL, extract the whole release again.
 - If the game closes after launch, look in build_native\run for the newest

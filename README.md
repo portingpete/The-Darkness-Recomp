@@ -22,7 +22,8 @@ The GitHub **Source code** downloads are for building the project yourself.
    folder: `_uncrypted.xex`, `basefile.exe`, `default.xex`, `Content`, `System`,
    and all the other files and folders from your dump. If the first two files
    are missing, follow **Preparing the game files** below to generate them.
-3. Double-click **Launch.cmd** to play with sound.
+3. Double-click **Launch.cmd** to play with sound, or
+   **LaunchWithSettings.cmd** to choose video settings before playing.
 
 No compiler, Python, or separate audio setup is needed for the Windows release.
 Use 64-bit Windows 10/11 with a Direct3D 11-capable graphics device.
@@ -31,7 +32,30 @@ An ISO alone is not enough; the dump must include the decrypted executable
 images for the supported game revision.
 
 Click the game window to capture the mouse. **F1** shows controls, **F2** toggles
-capture, and **Esc** releases it. Graphics options are in **Options > Video Settings**.
+capture, and **Esc** releases it. Graphics options are in **Options > Video Settings**
+and in the video settings launcher. Both use the same saved settings.
+The mouse wheel selects dialogue and menu choices; **E** confirms.
+Text language follows supported Windows UI languages. Set `[Game] Language=en`
+in `DarkRecomp.settings.ini` to choose English, or use `de`, `fr`, `es`, `it`, or
+`auto`; restart to apply it. See [CONTROLS.md](CONTROLS.md) for language overrides
+and the full input guide.
+
+## Steam Deck and Linux
+
+The complete Windows release can be used for a Proton test setup. Steam Deck
+gameplay and Linux compatibility have not been verified for this release.
+See [STEAM_DECK.md](STEAM_DECK.md) for the Steam shortcut, bundled dependencies,
+controller setup, and diagnostic logs. A native Linux build is not available.
+
+## Other games and title updates
+
+This executable ports **The Darkness**, using translated code and engine
+integration for its supported Xbox 360 revision. It cannot load another Xbox
+game by replacing the files or changing a hash. Supporting a different title
+requires its own translation configuration, runtime integration, renderer,
+and testing; the upstream XenonRecomp toolchain is a starting point for that
+work. The pinned hashes below also apply to The Darkness title updates: an
+updated executable needs a separate verified translation before it can be used.
 
 ## Preparing the game files
 
@@ -120,11 +144,12 @@ CMake 3.24+, Python 3.11+, and ~15 GB free. Output lands in
 The XMA audio build also requires MSYS2 at `C:\msys64` with MinGW64 GCC and
 `make`, plus standalone LLVM at `C:\Program Files\LLVM` (for `llvm-lib.exe`).
 
-**3. Play** — double-click `Launch.cmd`:
+**3. Play** — double-click either launcher:
 
 | Command | What it does |
 |---|---|
 | `Launch.cmd` | Play with sound |
+| `LaunchWithSettings.cmd` | Choose video settings, then play with sound |
 | `Launch.cmd mute` | Play muted |
 | `Launch.cmd preview` | Engine preview build (muted by default) |
 | `Launch.cmd stutter` | Play with sound while recording slow-frame timings |
@@ -140,6 +165,7 @@ toggle capture, **Esc** release).
 
 - [CONTROLS.md](CONTROLS.md) — every binding, launcher option, and setting
 - [RENDERING.md](RENDERING.md) — how the renderer and frame pacing work
+- [STEAM_DECK.md](STEAM_DECK.md) — unverified Proton setup and diagnostics
 
 ## Updating a downloaded release
 

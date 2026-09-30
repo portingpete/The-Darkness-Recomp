@@ -18,6 +18,9 @@ spec.loader.exec_module(release)
 codec_spec = importlib.util.spec_from_file_location('build_xma_codec', ROOT / 'tools/build_xma_codec.py')
 codec = importlib.util.module_from_spec(codec_spec)
 codec_spec.loader.exec_module(codec)
+steam_spec = importlib.util.spec_from_file_location('add_steam_shortcut', ROOT / 'tools/add_steam_shortcut.py')
+steam = importlib.util.module_from_spec(steam_spec)
+steam_spec.loader.exec_module(steam)
 
 
 class ReleaseTests(unittest.TestCase):
@@ -44,6 +47,7 @@ class ReleaseTests(unittest.TestCase):
             (deps / name).write_bytes(b'codec source')
         (self.root / 'tools').mkdir()
         (self.root / 'tools/build_xma_codec.py').write_bytes(b'build script')
+        (self.root / 'tools/add_steam_shortcut.py').write_bytes((ROOT / 'tools/add_steam_shortcut.py').read_bytes())
 
     def game_files(self):
         game = self.root / 'Darkness'
@@ -73,6 +77,10 @@ class ReleaseTests(unittest.TestCase):
             self.assertFalse(any('private' in n or n.endswith('.ini') or n.startswith('saves/') for n in names))
             self.assertNotIn('build_native/Release/Unrelated.dll', names)
             self.assertIn('build_native/Release/vcruntime140_1.dll', names)
+            self.assertIn('build_native/Release/DarkRecompSettings.exe', names)
+            self.assertIn('LaunchWithSettings.cmd', names)
+            self.assertIn('STEAM_DECK.md', names)
+            self.assertIn('tools/add_steam_shortcut.py', names)
             self.assertIn('START_HERE.txt', names)
             manifest = json.loads(bundle.read('RELEASE.json'))
             self.assertEqual(manifest['commit'], 'abc123')
@@ -145,6 +153,101 @@ class ReleaseTests(unittest.TestCase):
         result = self.launch('check --game-dir "external dump & files!"')
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn('external dump & files!\\_uncrypted.xex', result.stdout)
+
+
+class SteamShortcutTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix='dark steam & test! ')
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        launcher = self.root / 'build_native/Release/DarkRecompPreview.exe'
+        launcher.parent.mkdir(parents=True)
+        launcher.write_bytes(b'launcher')
+        self.entry = steam.shortcut_entry(self.root)
+        self.userdata = self.root / 'Steam/userdata'
+        self.shortcuts = self.userdata / '123/config/shortcuts.vdf'
+        self.shortcuts.parent.mkdir(parents=True)
+
+    def read_shortcuts(self):
+        data = self.shortcuts.read_bytes()
+        parsed, end = steam.parse_dict(data)
+        self.assertEqual(end, len(data))
+        return parsed
+
+    def test_shortcut_quotes_installed_folder_and_starts_sound(self):
+        self.assertEqual(self.entry['Exe'], f'"{self.root / "build_native/Release/DarkRecompPreview.exe"}"')
+        self.assertEqual(self.entry['StartDir'], f'"{self.root}"')
+        self.assertEqual(self.entry['LaunchOptions'], '--sound')
+
+    def test_linux_discovers_native_and_flatpak_steam_locations(self):
+        candidates = steam.steam_userdata_roots(platform='linux', home=self.root)
+        self.assertIn(self.root / '.local/share/Steam/userdata', candidates)
+        self.assertIn(self.root / '.steam/root/userdata', candidates)
+        self.assertIn(self.root / '.var/app/com.valvesoftware.Steam/.local/share/Steam/userdata', candidates)
+
+    def test_discovery_accepts_first_shortcut_and_deduplicates_users(self):
+        (self.userdata / 'anonymous/config').mkdir(parents=True)
+        self.assertEqual(steam.find_shortcuts([self.userdata, self.userdata]), [self.shortcuts])
+        self.assertTrue(steam.add_to(self.shortcuts, self.entry))
+        self.assertEqual(self.read_shortcuts()['shortcuts']['0'], self.entry)
+
+    def test_sparse_entries_and_other_root_fields_survive(self):
+        # Independent binary VDF fixture: existing indices 0 and 2.
+        original = (b'\x00shortcuts\x00\x000\x00\x01AppName\x00Other game\x00\x08'
+                    b'\x002\x00\x01AppName\x00Second game\x00\x08\x08'
+                    b'\x01extra\x00keep me\x00\x08')
+        self.shortcuts.write_bytes(original)
+        self.assertTrue(steam.add_to(self.shortcuts, self.entry))
+        parsed = self.read_shortcuts()
+        self.assertEqual(parsed['shortcuts']['0']['AppName'], 'Other game')
+        self.assertEqual(parsed['shortcuts']['2']['AppName'], 'Second game')
+        self.assertEqual(parsed['shortcuts']['3'], self.entry)
+        self.assertEqual(parsed['extra'], 'keep me')
+        backup = self.shortcuts.with_name('shortcuts.vdf.bak')
+        self.assertEqual(backup.read_bytes(), original)
+        current = self.shortcuts.read_bytes()
+        self.assertFalse(steam.add_to(self.shortcuts, self.entry))
+        self.assertEqual(self.shortcuts.read_bytes(), current)
+        self.assertEqual(backup.read_bytes(), original)
+
+    def test_existing_backup_is_preserved(self):
+        self.shortcuts.write_bytes(b'\x00shortcuts\x00\x08\x08')
+        backup = self.shortcuts.with_name('shortcuts.vdf.bak')
+        backup.write_bytes(b'previous backup')
+        self.assertTrue(steam.add_to(self.shortcuts, self.entry))
+        self.assertEqual(backup.read_bytes(), b'previous backup')
+
+    def test_dry_run_does_not_create_or_change_steam_files(self):
+        self.assertFalse(steam.add_to(self.shortcuts, self.entry, dry_run=True))
+        self.assertFalse(self.shortcuts.exists())
+        original = b'\x00shortcuts\x00\x08\x08'
+        self.shortcuts.write_bytes(original)
+        self.assertFalse(steam.add_to(self.shortcuts, self.entry, dry_run=True))
+        self.assertEqual(self.shortcuts.read_bytes(), original)
+        self.assertFalse(self.shortcuts.with_name('shortcuts.vdf.bak').exists())
+
+    def test_unknown_or_truncated_vdf_is_preserved(self):
+        for original in (b'\x00shortcuts\x00\x03unknown\x00abcd\x08\x08',
+                         b'\x00shortcuts\x00\x000\x00\x02appid\x00\x01',
+                         b'\x00shortcuts\x00\x08\x08trailing'):
+            with self.subTest(original=original):
+                self.shortcuts.write_bytes(original)
+                with self.assertRaises(ValueError):
+                    steam.add_to(self.shortcuts, self.entry)
+                self.assertEqual(self.shortcuts.read_bytes(), original)
+                self.assertFalse(self.shortcuts.with_name('shortcuts.vdf.bak').exists())
+
+    def test_multiple_users_require_explicit_selection(self):
+        second = self.userdata / '456/config/shortcuts.vdf'
+        second.parent.mkdir(parents=True)
+        with self.assertRaises(SystemExit) as raised:
+            steam.main(['--root', str(self.root), '--steam-userdata', str(self.userdata)])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertFalse(self.shortcuts.exists())
+        self.assertFalse(second.exists())
+        self.assertEqual(steam.main([str(self.shortcuts), '--root', str(self.root)]), 0)
+        self.assertTrue(self.shortcuts.exists())
+        self.assertFalse(second.exists())
 
 
 class CodecSourceTests(unittest.TestCase):

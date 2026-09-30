@@ -20,7 +20,9 @@ using Result=std::array<float,40>;
 static void put(uint8_t* p,uint32_t x) {for(unsigned i=0;i<4;++i)p[i]=uint8_t(x>>(24-i*8));}
 #include "darkness_vision_tests.h"
 #include "world_palette_usage_tests.h"
+#include "world_shadow_input_tests.h"
 #include "world_position_usage_tests.h"
+#include "world_water_usage_tests.h"
 #include "world_vertex_validation_tests.h"
 static void formats() {
     StoredGeometry g;g.vertexCount=1;g.stride=12;g.formats[0]=15;g.formats[1]=10;g.formats[9]=14;
@@ -190,6 +192,23 @@ static EngineVertexBindingSnapshot fixture(unsigned weights,bool normalizing) {
         EngineVector v{};v[row]=float(row+2);v[3]=float(bone+row)/8;constant(96+bone*3+row,v);
     }
     return b;
+}
+// Synthetic pixel fixtures need fixed coordinates. Use the original linear
+// texgen with constant affine rows; mode 7 extrudes shadow volumes.
+static void constantTexgen(EngineVertexBindingSnapshot& binding,unsigned stage,EngineVector value) {
+    const unsigned base=32+stage*4;
+    binding.descriptor.modes[stage]=1;
+    binding.descriptor.parameters[stage][0]=uint8_t(base);
+    for(unsigned row=0;row<4;++row)for(unsigned lane=0;lane<4;++lane)
+        put(binding.constantBytes.data()+(base+row)*16+lane*4,
+            std::bit_cast<uint32_t>(lane==3?value[row]:0.0f));
+}
+static void constantTexgen(WorldDraw& draw,unsigned stage,EngineVector value) {
+    const unsigned base=32+stage*4;
+    draw.options.modes[stage]=1;
+    draw.options.conversions[stage]=draw.options.matrices[stage]=false;
+    draw.constants.references[stage+1][2]=base;
+    for(unsigned row=0;row<4;++row)draw.constants.vectors[base+row]={0,0,0,value[row]};
 }
 static void constantCopyContract() {
     auto b=fixture(8,false);WorldVertexOptions options;WorldVertexConstants constants;
@@ -387,9 +406,7 @@ static void retainedAttachmentPair(WorldRendererD3D11& renderer,ID3D11DeviceCont
         depth.depth=.25f;depth.stencil=0xA6;renderer.clear(depth);
         const auto oldDepth=renderer.readSurface(depthId,true);
         auto draw=queryDraw;draw.targets={colorId,0,0,0,depthId};draw.material=WorldMaterial::motion;
-        draw.options.modes[0]=draw.options.modes[1]=7;
-        draw.constants.references[1][2]=draw.constants.references[2][2]=20;
-        draw.constants.vectors[20]={0,0,1,1};
+        constantTexgen(draw,0,{0,0,1,1});constantTexgen(draw,1,{0,0,1,1});
         put(draw.attributes.data()+92,0x01100002);draw.attributes[96]=draw.attributes[97]=8;
         require(renderer.draw(draw),"Retained target motion draw was rejected");
         ComPtr<ID3D11RenderTargetView> boundColor;ComPtr<ID3D11DepthStencilView> boundDepth;
@@ -935,9 +952,17 @@ static void immediateCanonicalContract(WorldRendererD3D11& renderer) {
 }
 #include "darkness_effect_tests.h"
 #include "world_alpha_coverage_tests.h"
+#include "world_projected_texture_tests.h"
+#include "world_material_tests.h"
+#include "world_video_tests.h"
 #include "world_shadow_projection_tests.h"
+#include "world_shadow_bias_tests.h"
+#include "world_shadow_camera_tests.h"
+#include "world_shadow_volume_tests.h"
+#include "world_shadow_capture_tests.h"
 #include "world_color_lookup_tests.h"
 #include "world_resolve_fringe_tests.h"
+static void shadowExtrusionRasterPass(WorldRendererD3D11& renderer,const WorldDraw& seed,unsigned scale);
 static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
     context->ClearState();WorldRendererD3D11 renderer(device,context);
     WorldClear clear;clear.targets={1,0,0,0,2};clear.viewport={0,0,64,64};clear.flags=49;renderer.clear(clear);
@@ -1000,8 +1025,7 @@ static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
     require((center>>24)==128,"Stencil GREATER rejected a reference above the stored value");
     // Motion pass reads the same depth surface; constant generated coordinates
     // make its analytic velocity (.5,.5), independent of triangle interpolation.
-    b.descriptor.modes[0]=b.descriptor.modes[1]=7;b.descriptor.parameters[0][0]=b.descriptor.parameters[1][0]=20;
-    put(b.constantBytes.data()+20*16+8,std::bit_cast<uint32_t>(1.0f));
+    constantTexgen(b,0,{0,0,1,0});constantTexgen(b,1,{0,0,1,0});
     const auto motionBytes=encodeEngineVertexDescriptor(b.descriptor);b.key={};
     for(unsigned i=0;i<5;++i)for(unsigned n=0;n<4;++n)b.key[i+1]=(b.key[i+1]<<8)|motionBytes[i*4+n];
     require(prepareWorldVertexProgram(b,draw.options,draw.constants),"Motion binding");
@@ -1012,9 +1036,8 @@ static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
     // Full NDSP: original diffuse, specular, reconstructed normal, attenuation
     // and cube projection with an independent scalar lighting oracle.
     b.descriptor.modes.fill(4);
-    for(unsigned s:{0u,1u,3u,4u,7u}) {b.descriptor.modes[s]=7;b.descriptor.parameters[s][0]=uint8_t(20+s);}
-    auto constant=[&](unsigned n,EngineVector v){for(unsigned l=0;l<4;++l)put(b.constantBytes.data()+n*16+l*4,std::bit_cast<uint32_t>(v[l]));};
-    constant(20,{.5f,.5f,0,1});constant(21,{0,0,0,1});constant(23,{1,0,0,0});constant(24,{1,0,0,0});constant(27,{1,0,0,0});
+    constantTexgen(b,0,{.5f,.5f,0,1});constantTexgen(b,1,{0,0,0,1});
+    for(unsigned s:{3u,4u,7u})constantTexgen(b,s,{1,0,0,0});
     const auto litBytes=encodeEngineVertexDescriptor(b.descriptor);b.key={};
     for(unsigned i=0;i<5;++i)for(unsigned n=0;n<4;++n)b.key[i+1]=(b.key[i+1]<<8)|litBytes[i*4+n];
     require(prepareWorldVertexProgram(b,draw.options,draw.constants),"Lighting binding");
@@ -1055,7 +1078,7 @@ static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
     }
     {
         auto optional=draw;optional.material=WorldMaterial::post;optional.fragmentName="XRShader_FP20_NDSEATP";
-        optional.options.modes[2]=7;optional.constants.references[3][2]=22;optional.constants.vectors[22]={1,0,0,0};
+        constantTexgen(optional,2,{1,0,0,0});
         for(unsigned slot=3;slot<16;++slot)optional.textures[slot].reset();
         require(renderer.draw(optional),"Inactive original material fetch required an unbound texture");
         optional.fragmentFlags=4;
@@ -1157,7 +1180,7 @@ static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
             if(mode==8)descriptor[3]=(1<<19)|(1<<21);
             sampled.samplers[0]=decodeWorldSampler(descriptor);
             require(sampled.samplers[0].valid,"Original sampler descriptor rejected");
-            sampled.constants.vectors[20]={mode==8?.5f:1.25f,.5f,0,1};
+            constantTexgen(sampled,0,{mode==8?.5f:1.25f,.5f,0,1});
             renderer.clear(clear);require(renderer.draw(sampled),"Native sampler draw rejected");
             const auto pixels=renderer.readSurface(1,false);std::memcpy(h,pixels.data()+(32*64+32)*8,8);
             const float red=mode==0?1:mode==8?.5f:0,blue=1-red;
@@ -1207,7 +1230,7 @@ static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
         auto image=std::make_shared<ColorImage>();
         require(!decodeWorldTextureImage(b,resource,*image),"Authored mip fixture decode rejected");
         auto sampled=draw;sampled.textureObjects[0]={};sampled.textures[0]=image;
-        sampled.constants.vectors[20]={.5f,.5f,0,1};
+        constantTexgen(sampled,0,{.5f,.5f,0,1});
         for(unsigned mip=0;mip<colors.size();++mip) {
             sampled.samplers[0]=decodeWorldSampler({2,0,0,0,(mip<<2)|(mip<<6),0});
             renderer.clear(clear);require(renderer.draw(sampled),"Authored mip draw rejected");
@@ -1397,7 +1420,7 @@ static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
     }
     draw=lightingDraw;draw.textureObjects[4]=resolve.destination;draw.textures[4].reset();
     for(unsigned face=0;face<2;++face) {
-        clear.color={0,0,0,0};renderer.clear(clear);draw.constants.vectors[27]={face?-1.0f:1.0f,0,0,0};
+        clear.color={0,0,0,0};renderer.clear(clear);constantTexgen(draw,7,{face?-1.0f:1.0f,0,0,0});
         require(renderer.draw(draw),"Resolved cube projection rejected");const auto cube=renderer.readSurface(1,false);
         std::memcpy(h,cube.data()+(32*64+32)*8,8);
         require(halfFloat(h[face])>.01 && halfFloat(h[1-face])==0 && halfFloat(h[2])==0,"Resolved cube faces alias or select wrong axis");
@@ -1414,7 +1437,7 @@ static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
         draw=lightingDraw;draw.textureObjects[4]={};draw.textures[4]=cube;
         draw.samplers[4]=decodeWorldSampler({2,0,0,0,(1u<<2)|(1u<<6),0});
         for(unsigned face=0;face<2;++face) {
-            renderer.clear(clear);draw.constants.vectors[27]={face?-1.0f:1.0f,0,0,0};
+            renderer.clear(clear);constantTexgen(draw,7,{face?-1.0f:1.0f,0,0,0});
             require(renderer.draw(draw),"Resident cube draw rejected");const auto pixels=renderer.readSurface(1,false);
             std::memcpy(h,pixels.data()+(32*64+32)*8,8);
             require(halfFloat(h[face])>.01f && halfFloat(h[1-face])==0 && halfFloat(h[2])==0,"Resident cube face/mip indexing differs");
@@ -1489,7 +1512,15 @@ static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
     partialClears(renderer,context,histogramDraw);
     deeperResources(renderer,device,context,histogramDraw);
     alphaCoveragePass(renderer,histogramDraw,1);
+    projectedTexturePass(renderer,1);
+    waterMaterialPass(renderer,1);
+    worldVideoPass(renderer,1);
+    projectedMarkPass(renderer,1);
     shadowProjectionPass(renderer,histogramDraw,1);
+    shadowBiasPass(renderer,histogramDraw,1);
+    shadowCameraPass(renderer,histogramDraw,1);
+    shadowVolumePass(renderer,histogramDraw,1);
+    shadowExtrusionRasterPass(renderer,histogramDraw,1);
     colorLookupUpscalePass(renderer,1);
     resolvePartialTilePass(renderer,device,context,1);
     // A diagonal must resolve to different coverage values inside individual
@@ -1531,10 +1562,19 @@ static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
         require(matched,"Resolve/present lost native subpixel edge coverage");
         std::printf("PhysicalRaster%u: %u covered pixels, %u mixed logical edge blocks retained through resolve/present.\n",scale,physicalCoverage,mixedBlocks);
         alphaCoveragePass(scaled,histogramDraw,scale);
+        projectedTexturePass(scaled,scale);
+        waterMaterialPass(scaled,scale);
+        worldVideoPass(scaled,scale);
+        projectedMarkPass(scaled,scale);
         shadowProjectionPass(scaled,histogramDraw,scale);
+        shadowBiasPass(scaled,histogramDraw,scale);
+        shadowCameraPass(scaled,histogramDraw,scale);
+        shadowVolumePass(scaled,histogramDraw,scale);
+        shadowExtrusionRasterPass(scaled,histogramDraw,scale);
         colorLookupUpscalePass(scaled,scale);
         resolvePartialTilePass(scaled,device,context,scale);
     }
+    shadowCapturePass(device,context,histogramDraw);
 }
 // Page-in pacing: a burst of fresh large uploads in one frame must defer the
 // overflow (not freeze decoding it all), complete it in later frames, and
@@ -1657,6 +1697,7 @@ static std::vector<Result> captureWorldPositions(ID3D11Device* device,ID3D11Devi
     context->GSSetShader(nullptr,nullptr,0);context->ClearState();
     return actual;
 }
+#include "world_shadow_extrusion_tests.h"
 static void format19GpuContract(ID3D11Device* device,ID3D11DeviceContext* context) {
     const uint32_t xs[3]{10,100,1},ys[3]{20,200,2},zs[3]{30,300,3};
     StoredGeometry packed;packed.vertexCount=3;packed.stride=4;packed.formats[0]=19;packed.vertices.resize(12);
@@ -1698,7 +1739,7 @@ int main(int argc,char** argv) {
     promptWorldContract();
     ComPtr<ID3D11Device> device;
     try {
-        formats();paletteUsageContract();paletteArithmeticContract();worldPositionUsageContract();
+        formats();paletteUsageContract();paletteArithmeticContract();worldPositionUsageContract();worldWaterUsageContract();worldShadowInputContract();
         worldVertexValidationContract();immediateIndexOwnershipContract();
         if(argc>1 && std::strcmp(argv[1],"--cpu-only")==0) {
             std::puts("World vertex preparation CPU contracts passed; no D3D device created.");
@@ -1857,6 +1898,7 @@ int main(int argc,char** argv) {
             }
         }
         format19GpuContract(device.Get(),context.Get());
+        shadowExtrusionGpuContract(device.Get(),context.Get());
         passes(device.Get(),context.Get());
         budgetContract(device.Get(),context.Get());
         darknessVisionContract(device.Get(),context.Get());

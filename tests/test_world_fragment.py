@@ -13,6 +13,42 @@ from compile_world_fragment import ASSETS, VARIANTS, compile_source, compile_fix
 
 
 class WorldFragmentTests(unittest.TestCase):
+    def test_water_variants_keep_reflection_refraction_and_fog(self):
+        directory = ROOT / 'Darkness/System/Gl/ARB_fragment_program'
+        includes = {'Include_XREngine_Fog.fph': (directory / 'Include_XREngine_Fog.fph').read_text(encoding='latin-1')}
+        for name in ('VBOp_FP20_Water', 'VBOp_FP20_CubeWater', 'VBOp_FP20_Water2', 'VBOp_FP20_CubeWater2'):
+            source = (directory / (name + '.fp')).read_text(encoding='latin-1')
+            for flags in VARIANTS[name]:
+                code, metadata = compile_source(select_template(source, flags, includes))
+                slots = {0: 'CUBE' if 'Cube' in name else '2D', 1: '2D', 2: '2D', 4: '2D'}
+                if flags & 2: slots[7] = 'CUBE'
+                if flags & 4: slots[6] = '2D'
+                self.assertEqual(metadata['textures'], slots)
+                self.assertIn('texture4.Sample(', code)
+                self.assertNotIn('@', code)
+
+    def test_decals_preserve_projection_kills_lights_and_high_constants(self):
+        directory = ROOT / 'Darkness/System/Gl/ARB_fragment_program'
+        source = (directory / 'XRShader_FP20_Decal.fp').read_text(encoding='latin-1')
+        self.assertEqual(len(VARIANTS['XRShader_FP20_Decal']), 20)
+        for flags in VARIANTS['XRShader_FP20_Decal']:
+            code, metadata = compile_source(select_template(source, flags))
+            slots = {0: '2D', 1: '2D', 2: '2D'}
+            for bit, slot in ((16, 3), (32, 4), (64, 5)):
+                if flags & bit: slots[slot] = 'CUBE'
+            self.assertEqual(metadata['textures'], slots)
+            self.assertEqual('clip(' in code, bool(flags & 1))
+            if flags == 127:
+                self.assertIn('env[33]', code)
+                self.assertIn('abs((r2.xxxx))', code)
+        code, metadata = compile_source((directory / 'XRShader_DecalTMProj.fp').read_text(encoding='latin-1'))
+        self.assertEqual(metadata['textures'], {0: '2D'})
+        self.assertEqual(code.count('clip('), 3)
+        code, _ = compile_source('OUTPUT o = result.color; PARAM c = program.env[0]; ABS_SAT o.xz, -c; MOV o.yw, 1; END')
+        self.assertIn('o.xz = (saturate(abs((-c)))).xz;', code)
+        with self.assertRaises(ValueError):
+            compile_source('OUTPUT o = result.color; ABS o, 1, 2; END')
+
     def test_darkness_vision_permutations_and_xenon_depth(self):
         directory = ROOT / 'Darkness/System/Gl/ARB_fragment_program'
         for stage in (0, 1):
@@ -71,7 +107,9 @@ END''')
         self.assertEqual(metadata['textures'], {0: '2D', 1: '2D'})
         self.assertIn('position.xy + env[9].xy * float2(x - 1.5, y - 1.5)', code)
         self.assertIn('texture0.SampleLevel(sampler0, uv, 0)', code)
-        self.assertIn('position.z >= depth', code)
+        # Original ShadowMapStep is step(receiver, sampledDepth). Its result
+        # is shadow coverage: cleared reversed depth (zero) must remain lit.
+        self.assertIn('depth >= position.z', code)
         self.assertNotIn('@', code)
 
     def test_original_programs_and_texture_dimensions(self):
@@ -88,6 +126,23 @@ END''')
             self.assertEqual(metadata['instruction_count'], count)
             self.assertEqual(metadata['textures'], textures)
             self.assertNotIn('@', code)
+
+    def test_original_projected_texture_divides_by_q_and_keeps_color(self):
+        source = (ROOT / 'Darkness/System/Gl/ARB_fragment_program/TexEnvProj1.fp').read_text(encoding='latin-1')
+        code, metadata = compile_source(select_template(source, 0))
+        self.assertEqual(VARIANTS['TexEnvProj1'], [0])
+        self.assertEqual(metadata['textures'], {0: '2D'})
+        self.assertEqual(metadata['instruction_count'], 2)
+        self.assertIn('texture0.Sample(sampler0, ((tc0).xy / (tc0).w)) * sampleScale[0]', code)
+        self.assertIn('oCol = ((tex0) * (v0));', code)
+        self.assertNotIn('max(', code)  # Negative Q is not clamped by TXP.
+        # Projection follows source swizzling; masked writes retain all other
+        # destination lanes, just as they do for ordinary texture fetches.
+        code, metadata = compile_source('OUTPUT o = result.color; ATTRIB tc = fragment.texcoord[0]; '
+                                        'TXP o.rg, tc.wzyx, texture[3], 2D; END')
+        self.assertEqual(metadata['textures'], {3: '2D'})
+        self.assertIn('texture3.Sample(sampler3, ((tc.wzyx).xy / (tc.wzyx).w))', code)
+        self.assertRegex(code, r'o\.xy = .*\.xy;')
 
     def test_sparse_constants_and_masked_output(self):
         code, _ = compile_source('OUTPUT o = result.color; PARAM a = program.env[19]; '
@@ -250,6 +305,8 @@ END''')
         prefix = 'OUTPUT o = result.color; TEMP t; '
         for tail in ('BAD o, t;', 'ADD o, t;', 'MOV o, missing;', 'PARAM a = program.env[256];',
                      'TEX o, t, texture[16], 2D;', 'TEX o, t, texture[4], CUBE; TEX o, t, texture[4], 2D;',
+                     'TXP o, t, texture[16], 2D;', 'TXP o, t, texture[0], CUBE;',
+                     'TXP o, t, texture[0], PCF4X42D;', 'TXP o, t, texture[0];',
                      '\n@if unknown\nMOV o, t;\n@endif', '\n@else', '\n@if dynmip'):
             with self.subTest(tail=tail), self.assertRaises(ValueError):
                 compile_source(prefix + tail)

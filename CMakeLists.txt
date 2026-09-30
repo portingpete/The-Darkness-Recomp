@@ -44,6 +44,8 @@ if(DARK_NATIVE_SSSE3)
     target_compile_definitions(DarkRecompPPC PUBLIC DARK_NATIVE_SSSE3=1)
 endif()
 add_library(DarkRuntime STATIC runtime/native/runtime.cpp runtime/native/kernel.cpp runtime/native/dispatcher.cpp runtime/native/filesystem.cpp runtime/native/storage.cpp runtime/native/guest_runner.cpp runtime/native/audio_driver.cpp runtime/native/input.cpp runtime/native/xma_bridge.cpp renderer/d3d11/display_context_d3d11.cpp)
+target_sources(DarkRuntime PRIVATE runtime/native/language_settings.cpp)
+
 target_sources(DarkRuntime PRIVATE runtime/native/fov_settings.cpp runtime/native/fov_camera.cpp)
 target_sources(DarkRuntime PRIVATE runtime/native/graphics_settings.cpp runtime/native/video_settings_menu.cpp)
 target_sources(DarkRuntime PRIVATE runtime/native/mouse_look.cpp)
@@ -85,7 +87,22 @@ add_custom_command(OUTPUT "${DARK_SHADER_DIR}/engine_world_fragments.generated.h
     "${DARK_SHADER_DIR}/XRShader_FP20_NDSP.native.hlsl" "${DARK_SHADER_DIR}/XRShader_MotionMap.native.hlsl"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/compile_world_fragment.py"
         --game-dir "${CMAKE_SOURCE_DIR}/Darkness" --output-dir "${DARK_SHADER_DIR}"
-    DEPENDS tools/compile_world_fragment.py tools/compile_vertex_template.py Darkness/System/Gl/ARB_fragment_program/XRShader_FP20_NDSP.fp
+    DEPENDS tools/compile_world_fragment.py tools/compile_vertex_template.py
+        Darkness/System/Gl/ARB_fragment_program/VBOp_FP20_Water.fp
+        Darkness/System/Gl/ARB_fragment_program/VBOp_FP20_Water2.fp
+        Darkness/System/Gl/ARB_fragment_program/VBOp_FP20_CubeWater.fp
+        Darkness/System/Gl/ARB_fragment_program/VBOp_FP20_CubeWater2.fp
+        Darkness/System/Gl/ARB_fragment_program/XRShader_FP20_Decal.fp
+        Darkness/System/Gl/ARB_fragment_program/XRShader_DecalTMProj.fp
+        Darkness/System/Gl/ARB_fragment_program/XRShader_DecalTM.fp
+        Darkness/System/Gl/ARB_fragment_program/XRShader_DecalNormalTransform.fp
+        Darkness/System/Gl/ARB_fragment_program/XRShader_DecalNormalTransformTM.fp
+        Darkness/System/Gl/ARB_fragment_program/WModel_FXRenderSurface.fp
+        Darkness/System/Gl/ARB_fragment_program/WModel_FXBlackHole.fp
+        Darkness/System/Gl/ARB_fragment_program/WModel_FXHeatHazeMask.fp
+        Darkness/System/Gl/ARB_fragment_program/GUIRGB2Grey.fp
+        Darkness/System/Gl/ARB_fragment_program/CMWnd_ModTexture_PaintVideo_YUV2RGB.fp
+        Darkness/System/Gl/ARB_fragment_program/XRShader_FP20_NDSP.fp
         Darkness/System/Gl/ARB_fragment_program/XRShader_FP20_NDS.fp
         Darkness/System/Gl/ARB_fragment_program/WClientMod_DV5_0.fp
         Darkness/System/Gl/ARB_fragment_program/WClientMod_DV5_1.fp
@@ -100,6 +117,7 @@ add_custom_command(OUTPUT "${DARK_SHADER_DIR}/engine_world_fragments.generated.h
         Darkness/System/Gl/ARB_fragment_program/XREngine_GaussClampedHurt.fp
         Darkness/System/Gl/ARB_fragment_program/XREngine_Histogram.fp
         Darkness/System/Gl/ARB_fragment_program/XREngine_ShadowProj.fp
+        Darkness/System/Gl/ARB_fragment_program/TexEnvProj1.fp
         Darkness/System/Gl/ARB_fragment_program/XRUtil_RenderSurface.fp
         Darkness/System/Gl/ARB_fragment_program/Include_XREngine_Fog.fph
         Darkness/System/Gl/ARB_fragment_program/XREngine_GaussClamped.fp
@@ -147,7 +165,17 @@ endfunction()
 stage_dark_xma(DarkRecomp)
 add_executable(DarkRecompPreview WIN32 app/windows/preview_launcher.cpp)
 target_compile_definitions(DarkRecompPreview PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_link_libraries(DarkRecompPreview PRIVATE shell32)
 add_dependencies(DarkRecompPreview DarkRecomp)
+add_executable(DarkRecompSettings WIN32
+    app/windows/video_settings_launcher.cpp
+    app/windows/display_settings.cpp
+    runtime/native/graphics_settings.cpp
+    runtime/native/fov_settings.cpp)
+target_include_directories(DarkRecompSettings PRIVATE "${CMAKE_SOURCE_DIR}")
+target_compile_definitions(DarkRecompSettings PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
+target_link_libraries(DarkRecompSettings PRIVATE user32 gdi32 shell32 comctl32)
+add_dependencies(DarkRecompSettings DarkRecompPreview)
 if(BUILD_TESTING)
     add_executable(DisplaySettingsTests tests/display_settings_tests.cpp app/windows/display_settings.cpp)
     target_link_libraries(DisplaySettingsTests PRIVATE DarkRuntime comctl32)
@@ -185,7 +213,9 @@ if(BUILD_TESTING)
     add_test(NAME WorldRendererWarpContract COMMAND WorldRendererTests --warp)
     add_test(NAME WorldVertexPreparationContract COMMAND WorldRendererTests --cpu-only)
     set_tests_properties(WorldVertexPreparationContract PROPERTIES TIMEOUT 30)
-    set_tests_properties(WorldRendererContract WorldRendererWarpContract PROPERTIES TIMEOUT 60)
+    # A template change invalidates every vertex permutation in the disk cache.
+    # Allow the expanded material suite to compile its shaders on a cold run.
+    set_tests_properties(WorldRendererContract WorldRendererWarpContract PROPERTIES TIMEOUT 120)
     add_executable(WorldTextureBindingTests tests/world_texture_binding_tests.cpp)
     target_link_libraries(WorldTextureBindingTests PRIVATE DarkRuntime)
     stage_dark_xma(WorldTextureBindingTests)
@@ -313,6 +343,12 @@ if(BUILD_TESTING)
     add_test(NAME KernelObjectOutputContract COMMAND NativeTests "${CMAKE_SOURCE_DIR}/Darkness" --object-outputs)
     set_tests_properties(KernelObjectOutputContract PROPERTIES TIMEOUT 30)
     add_test(NAME InputContract COMMAND "$<TARGET_FILE:NativeTests>" "${CMAKE_SOURCE_DIR}/Darkness" "--input")
+    add_executable(LanguageSettingsTests tests/language_settings_tests.cpp runtime/native/language_settings.cpp)
+    target_include_directories(LanguageSettingsTests PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_compile_definitions(LanguageSettingsTests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    add_test(NAME LanguageSettingsContract COMMAND LanguageSettingsTests)
+    add_test(NAME NativeLanguageContract COMMAND NativeTests "${CMAKE_SOURCE_DIR}/Darkness" --language)
+    set_tests_properties(LanguageSettingsContract NativeLanguageContract PROPERTIES TIMEOUT 30)
     add_test(NAME VideoSettingsContract COMMAND NativeTests "${CMAKE_SOURCE_DIR}/Darkness" --video-settings)
     set_tests_properties(VideoSettingsContract PROPERTIES TIMEOUT 30)
     set_tests_properties(AudioDriverContract DispatcherContract PROPERTIES TIMEOUT 60)

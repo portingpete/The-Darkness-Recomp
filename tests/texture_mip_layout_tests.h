@@ -71,8 +71,8 @@ static void testTextureMipLayout(PPCContext& ctx) {
     auto run = [&](uint32_t width, uint32_t height, uint32_t format,
                    bool cube, bool packed, uint32_t extraPitchTiles, bool tiled = true) {
         ++caseCount;
-        const uint32_t block = format == 2 || format == 6 ? 1 : 4;
-        const uint32_t bytes = format == 2 ? 1 : format == 6 ? 4 : format == 18 ? 8 : 16;
+        const uint32_t block = format == 2 || format == 6 || format == 10 ? 1 : 4;
+        const uint32_t bytes = format == 2 ? 1 : format == 6 ? 4 : format == 10 ? 2 : format == 18 ? 8 : 16;
         // Table actually read by 82863F68/82863848 in the original image.
         check(base[0x8209caa9u + 2 * format] == bytes * 8 / (block * block),
               "Original texture format table is absent or unexpected");
@@ -194,14 +194,14 @@ static void testTextureMipLayout(PPCContext& ctx) {
             const auto& pixels=mip?image.mips[mip-1]:image.pixels;
             check(pixels.size()==size_t(w)*h*faces*4,"Decoded authored mip has incorrect dimensions/face count");
             ownedBytes+=pixels.size();
-            if(format==2 || format==6)for(uint32_t face=0;face<faces;++face)
+            if(format==2 || format==6 || format==10)for(uint32_t face=0;face<faces;++face)
                 for(uint32_t y=0;y<h;++y)for(uint32_t x=0;x<w;++x) {
                     const auto* pixel=pixels.data()+((size_t(face)*h+y)*w+x)*4;
                     // Resource selectors 2,1,0,1-constant; RGBA endian mode
                     // reverses each source word before applying selectors.
                     const uint8_t expected[4]{format==6?value(caseCount,face,mip,x,y,1):uint8_t(0),
-                        format==6?value(caseCount,face,mip,x,y,2):uint8_t(0),
-                        value(caseCount,face,mip,x,y,format==6?3:0),255};
+                        format==6?value(caseCount,face,mip,x,y,2):format==10?value(caseCount,face,mip,x,y,0):uint8_t(0),
+                        value(caseCount,face,mip,x,y,format==6?3:format==10?1:0),255};
                     check(!std::memcmp(pixel,expected,4),"Authored mip decode lost original level/face/swizzle/endian pixels");
                 }
             if(w==1 && h==1)break;
@@ -248,7 +248,7 @@ static void testTextureMipLayout(PPCContext& ctx) {
         }
     }
 
-    for (unsigned format : {2, 6, 18, 20, 49}) for (bool packed : {false, true}) {
+    for (unsigned format : {2, 6, 10, 18, 20, 49}) for (bool packed : {false, true}) {
         for (const auto size : std::initializer_list<std::array<uint32_t, 2>>{
                 {1, 1}, {4, 4}, {8, 16}, {16, 8}, {16, 16}, {16, 256}, {256, 16},
                 {32, 32}, {64, 32}, {32, 64}, {64, 64}, {128, 128}, {256, 256},

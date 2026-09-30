@@ -52,7 +52,7 @@ struct ColorImage {
 };
 struct VideoFrame {
     uint32_t width = 0, height = 0;
-    std::vector<uint8_t> luma, chroma; // Full-size Y; half-size BE A8L8 bytes V,U.
+    std::vector<uint8_t> luma, chroma; // Full-size Y; half-size decoder bytes U,V.
     double timestampSeconds = 0;
 };
 struct SimpleMesh {

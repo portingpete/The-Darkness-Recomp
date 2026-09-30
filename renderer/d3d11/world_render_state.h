@@ -1,8 +1,29 @@
 #pragma once
 #include <d3d11.h>
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <limits>
 
 namespace DarkRecomp::WorldRenderState {
+inline bool depthBias(uint32_t flags,float slope,float units,unsigned scale,D3D11_RASTERIZER_DESC& raster) {
+    raster.DepthBias=0;raster.SlopeScaledDepthBias=0;
+    if(!(flags&0x40000))return true;
+    // Original822487D0 negates the slope and multiplies units by the fixed
+    // context+17064 value initialized from8209F114: -2^-19.8285F490's
+    // factor16 is canceled by Xenos's 1/16-pixel slope unit. D24 needs an
+    // integer count of representable depth steps, rounded away from zero.
+    const float offset=units*-0x1p-19f;
+    const float scaledSlope=-slope*float(scale);
+    if(!std::isfinite(offset) || !std::isfinite(scaledSlope))return false;
+    const double steps=std::copysign(std::ceil(std::abs(double(offset))*16777215.0),offset);
+    raster.DepthBias=int(std::clamp(steps,double((std::numeric_limits<int>::min)()),
+        double((std::numeric_limits<int>::max)())));
+    // Higher resolution reduces the slope per physical pixel; preserve the
+    // guest's bias per logical pixel at every rendering scale.
+    raster.SlopeScaledDepthBias=scaledSlope;
+    return true;
+}
 // Original 82066B20 reverses comparison ordering for the engine's reversed Z.
 constexpr D3D11_COMPARISON_FUNC depthComparison(unsigned c) {
     constexpr D3D11_COMPARISON_FUNC table[]{D3D11_COMPARISON_NEVER,D3D11_COMPARISON_NEVER,

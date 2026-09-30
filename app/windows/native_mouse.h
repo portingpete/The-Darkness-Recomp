@@ -70,6 +70,7 @@ public:
                     L"E: use / confirm    R: reload    Ctrl or C: crouch\n"
                     L"Left click: fire right weapon    Right click: fire left weapon\n"
                     L"Middle click or Shift: zoom    Wheel or 1/2: switch weapons\n"
+                    L"Wheel: previous/next dialogue choice or menu item\n"
                     L"Q: manifest Darkness    G: use Darkness power\n"
                     L"3/4: switch power    F: redirect Darkling\n"
                     L"Tab: journal    Enter: pause / Start\n\n"

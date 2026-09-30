@@ -33,9 +33,11 @@ extern "C" PPC_FUNC(__imp__sub_82793C48);
 namespace {
 constexpr uint32_t renderContext = 0x82A69B00;
 std::atomic<bool> enabled{false};
+std::atomic<bool> ownedEnabled{false};
 std::atomic<unsigned> requestedInspection{0};
 std::mutex traceMutex;
 std::filesystem::path traceDirectory;
+uint64_t captureGeneration=0;
 std::ofstream traceLog;
 uint64_t sequence = 0, writtenBytes = 0, epoch = 0;
 uint64_t generalBytes = 0, geometryBytes = 0, textureConstantBytes = 0;
@@ -660,38 +662,46 @@ void captureStoredDraw(uint64_t call, uint8_t* base, const StoredRequest& reques
 void DarkRecomp::Native::inspectNextEngineFrame() noexcept {
     if(enabled && requestedInspection.load(std::memory_order_relaxed)<16)++requestedInspection;
 }
+namespace {
+struct OwnedWorldDump {
+    unsigned inspection=0;
+    uint64_t generation=0;
+    size_t geometryBytes=0,imageBytes=0,metadataBytes=0,offset=0;
+    std::unordered_set<const DarkRecomp::Native::StoredGeometry*> geometry;
+    std::unordered_set<const DarkRecomp::ColorImage*> images;
+    std::ofstream metadata,blobs;
+    bool failed=false,truncated=false;
+};
+std::array<OwnedWorldDump,2>& ownedWorldDumps() {static std::array<OwnedWorldDump,2> dumps;return dumps;}
+}
 void DarkRecomp::Native::traceOwnedWorldDraw(const WorldDraw& draw,unsigned inspection,unsigned ordinal,bool effect) noexcept {
-    // Two explicit host-frame inspections (512 draws), or four effect probes
+    // Two explicit host-frame inspections (8192 draws), or four effect probes
     // explicitly enabled by DARK_EFFECT_PROBE. Neither reads guest/GPU memory.
-    if(!enabled.load(std::memory_order_relaxed) || !inspection || inspection>2 || ordinal>=(effect?4u:512u))return;
+    if(!ownedEnabled.load(std::memory_order_relaxed) || !inspection || inspection>2)return;
     try {
         std::lock_guard lock(traceMutex);
-        struct Dump {
-            unsigned inspection=0;
-            size_t geometryBytes=0,imageBytes=0,metadataBytes=0,offset=0;
-            std::unordered_set<const StoredGeometry*> geometry;
-            std::unordered_set<const ColorImage*> images;
-            std::ofstream metadata,blobs;
-            bool failed=false;
-        };
         // Explicit effect probing gets a separate bounded budget, so a busy
         // world frame cannot consume it before the late composite is reached.
-        static Dump dumps[2];
-        auto& dump=dumps[effect?1:0];
-        if(dump.inspection!=inspection) {
-            dump=Dump{};dump.inspection=inspection;
+        auto& dump=ownedWorldDumps()[effect?1:0];
+        if(dump.inspection!=inspection || dump.generation!=captureGeneration) {
+            dump=OwnedWorldDump{};dump.inspection=inspection;dump.generation=captureGeneration;
             const auto stem=std::string(effect?"owned-effect-":"owned-inspection-")+std::to_string(inspection);
             dump.metadata.open(traceDirectory/(stem+".jsonl"),std::ios::binary|std::ios::trunc);
             dump.blobs.open(traceDirectory/(stem+".bin"),std::ios::binary|std::ios::trunc);
             dump.failed=!dump.metadata || !dump.blobs;
-            std::fprintf(stderr,"[OwnedWorldDump] inspection=%u path=%s maxMiB=96 maxDraws=%u\n",
-                inspection,(traceDirectory/(stem+".jsonl")).string().c_str(),effect?4u:512u);
+            std::fprintf(stderr,"[OwnedWorldDump] inspection=%u path=%s maxMiB=216 maxDraws=%u\n",
+                inspection,(traceDirectory/(stem+".jsonl")).string().c_str(),effect?4u:8192u);
         }
         if(dump.failed)return;
         // Separate budgets preserve geometry evidence even when texture data
         // exceeds its allowance. Omitted resources are explicitly labelled.
-        constexpr size_t geometryLimit=24*1024*1024,imageLimit=64*1024*1024,metadataLimit=8*1024*1024;
-        if(dump.metadataBytes+65536>metadataLimit)return;
+        constexpr size_t geometryLimit=24*1024*1024,imageLimit=64*1024*1024,metadataLimit=128*1024*1024;
+        auto truncate=[&](const char* reason) {
+            if(!dump.truncated) {dump.metadata<<"{\"event\":\"truncated\",\"inspection\":"<<inspection
+                <<",\"draw\":"<<ordinal<<",\"reason\":"<<std::quoted(reason)<<"}\n";dump.metadata.flush();dump.truncated=true;}
+        };
+        if(ordinal>=(effect?4u:8192u)){truncate("draw-limit");return;}
+        if(dump.metadataBytes+65536>metadataLimit){truncate("metadata-budget");return;}
         std::ostringstream out;
         auto hex=[&](const void* source,size_t count) {
             constexpr char digits[]="0123456789abcdef";
@@ -729,6 +739,14 @@ void DarkRecomp::Native::traceOwnedWorldDraw(const WorldDraw& draw,unsigned insp
            <<",\"fragmentFlags\":"<<draw.fragmentFlags<<",\"attributesBE\":";
         hex(draw.attributes.data(),draw.attributes.size());
         out<<",\"viewport\":";numbers(draw.viewport);out<<",\"targets\":";numbers(draw.targets);
+        out<<",\"surfaceBindings\":[";
+        for(unsigned slot=0;slot<5;++slot) {
+            if(slot)out<<',';
+            const auto& binding=draw.surfaceBindings[slot];
+            out<<"{\"layout\":"<<binding.layout<<",\"info\":"<<binding.info<<",\"completed\":"<<unsigned(binding.completed)
+               <<",\"keyHex\":\""<<std::hex<<draw.surfaceKey(slot)<<std::dec<<"\"}";
+        }
+        out<<']';
         out<<",\"depthRangeLEFloat\":";hex(draw.depthRange.data(),sizeof(draw.depthRange));
         out<<",\"constantsLEFloat\":";hex(draw.constants.vectors.data(),sizeof(draw.constants.vectors));
         out<<",\"referencesLE32\":";hex(draw.constants.references.data(),sizeof(draw.constants.references));
@@ -776,13 +794,116 @@ void DarkRecomp::Native::traceOwnedWorldDraw(const WorldDraw& draw,unsigned insp
         }
         out<<"]}\n";
         const auto line=out.str();
-        if(line.size()>metadataLimit-dump.metadataBytes){dump.failed=true;return;}
+        if(line.size()>metadataLimit-dump.metadataBytes){truncate("metadata-budget");return;}
         dump.metadata<<line;dump.metadataBytes+=line.size();
         dump.metadata.flush();dump.blobs.flush();
         if(!dump.metadata || !dump.blobs)dump.failed=true;
     } catch (...) {
         // Diagnostic failures must never affect draw acceptance or rendering.
     }
+}
+namespace {
+struct HostFrameDump {
+    unsigned inspection=0;
+    uint64_t generation=0;
+    size_t metadataBytes=0,gpuBytes=0;
+    bool truncated=false;
+    std::ofstream metadata,gpu;
+};
+HostFrameDump& hostFrameDump() {static HostFrameDump dump;return dump;}
+template<class Values> void captureNumbers(std::ostream& out,const Values& values) {
+    out<<'[';bool first=true;for(auto value:values){if(!first)out<<',';first=false;out<<+value;}out<<']';
+}
+void captureTargets(std::ostream& out,const DarkRecomp::Native::WorldSurfaceTargets& targets) {
+    out<<",\"targets\":";captureNumbers(out,targets.targets);out<<",\"surfaceBindings\":[";
+    for(unsigned slot=0;slot<5;++slot) {
+        if(slot)out<<',';const auto& b=targets.surfaceBindings[slot];
+        out<<"{\"layout\":"<<b.layout<<",\"info\":"<<b.info<<",\"completed\":"<<unsigned(b.completed)
+           <<",\"keyHex\":\""<<std::hex<<targets.surfaceKey(slot)<<std::dec<<"\"}";
+    }
+    out<<']';
+}
+void captureTexture(std::ostream& out,const DarkRecomp::Native::WorldTexture& t) {
+    out<<"{\"object\":"<<t.object<<",\"storage\":"<<t.storage<<",\"keyHex\":\""<<std::hex<<t.key()<<std::dec
+       <<"\",\"width\":"<<t.width<<",\"height\":"<<t.height<<",\"format\":"<<t.format
+       <<",\"faces\":"<<t.faces<<",\"mipLevels\":"<<t.mipLevels<<",\"firstMip\":"<<t.firstMip<<",\"exponent\":"<<t.exponent<<'}';
+}
+template<class Write> void hostRecord(unsigned inspection,Write write) noexcept {
+    if(!ownedEnabled.load(std::memory_order_relaxed) || !inspection || inspection>2)return;
+    try {
+        std::lock_guard lock(traceMutex);
+        auto& dump=hostFrameDump();
+        if(dump.inspection!=inspection || dump.generation!=captureGeneration) {
+            dump=HostFrameDump{};dump.inspection=inspection;dump.generation=captureGeneration;
+            const auto stem="inspection-"+std::to_string(inspection);
+            dump.metadata.open(traceDirectory/(stem+"-commands.jsonl"),std::ios::binary|std::ios::trunc);
+            dump.gpu.open(traceDirectory/(stem+"-gpu.bin"),std::ios::binary|std::ios::trunc);
+        }
+        if(!dump.metadata || !dump.gpu)return;
+        constexpr size_t metadataLimit=128*1024*1024;
+        if(dump.metadataBytes+8192>metadataLimit) {
+            if(!dump.truncated) {dump.metadata<<"{\"event\":\"truncated\",\"reason\":\"command-metadata-budget\"}\n";dump.metadata.flush();dump.truncated=true;}
+            return;
+        }
+        std::ostringstream out;out<<"{\"version\":1,\"inspection\":"<<inspection;
+        write(out,dump);out<<"}\n";
+        const auto line=out.str();dump.metadata<<line;dump.metadataBytes+=line.size();
+        dump.metadata.flush();dump.gpu.flush();
+    } catch(...) { /* Diagnostic failure must not change rendering. */ }
+}
+}
+void DarkRecomp::Native::traceWorldFrame(unsigned inspection,bool begin,uint64_t present,unsigned scale,unsigned commands,unsigned draws) noexcept {
+    hostRecord(inspection,[&](auto& out,auto&) {
+        out<<",\"event\":"<<std::quoted(begin?"begin":"end")<<",\"present\":"<<present<<",\"scale\":"<<scale
+           <<",\"commands\":"<<commands<<",\"draws\":"<<draws;
+        if(begin)out<<",\"scope\":\"complete-host-frame\",\"maxDraws\":8192,\"maxShadowPasses\":8,\"maxGpuBytes\":134217728";
+    });
+}
+void DarkRecomp::Native::traceWorldClear(const WorldClear& c,unsigned inspection,unsigned command,unsigned attachments) noexcept {
+    hostRecord(inspection,[&](auto& out,auto&) {
+        out<<",\"event\":\"clear\",\"command\":"<<command<<",\"attachmentsCleared\":"<<attachments;
+        captureTargets(out,c);out<<",\"viewport\":";captureNumbers(out,c.viewport);
+        out<<",\"flags\":"<<c.flags<<",\"stencil\":"<<c.stencil<<",\"depth\":"<<c.depth<<",\"color\":";captureNumbers(out,c.color);
+        out<<",\"rectangle\":";if(c.rectangle)captureNumbers(out,*c.rectangle);else out<<"null";
+    });
+}
+void DarkRecomp::Native::traceWorldResolve(const WorldResolve& r,unsigned inspection,unsigned command,unsigned reason,const std::array<uint32_t,4>* copied) noexcept {
+    hostRecord(inspection,[&](auto& out,auto&) {
+        out<<",\"event\":\"resolve\",\"command\":"<<command<<",\"reason\":"<<reason;
+        captureTargets(out,r);out<<",\"destination\":";captureTexture(out,r.destination);
+        out<<",\"viewport\":";captureNumbers(out,r.viewport);out<<",\"rectangle\":";captureNumbers(out,r.rectangle);
+        out<<",\"copied\":";if(copied)captureNumbers(out,*copied);else out<<"null";
+        out<<",\"offset\":";captureNumbers(out,r.offset);out<<",\"flags\":"<<r.flags<<",\"stencil\":"<<r.stencil
+           <<",\"depth\":"<<r.depth<<",\"face\":"<<r.face<<",\"mip\":"<<r.mip<<",\"exponent\":"<<r.exponent<<",\"color\":";captureNumbers(out,r.color);
+    });
+}
+void DarkRecomp::Native::traceWorldPresent(const WorldTexture& t,unsigned inspection,unsigned command,unsigned reason) noexcept {
+    hostRecord(inspection,[&](auto& out,auto&) {
+        out<<",\"event\":\"present\",\"command\":"<<command<<",\"reason\":"<<reason<<",\"texture\":";captureTexture(out,t);
+    });
+}
+void DarkRecomp::Native::traceWorldDrawResult(unsigned inspection,unsigned command,unsigned draw,unsigned reason,unsigned flags,unsigned textureMask,unsigned resolvedMask) noexcept {
+    hostRecord(inspection,[&](auto& out,auto&) {
+        out<<",\"event\":\"draw\",\"command\":"<<command<<",\"draw\":"<<draw<<",\"reason\":"<<reason
+           <<",\"effectiveFragmentFlags\":"<<flags<<",\"textureMask\":"<<textureMask<<",\"resolvedTextureMask\":"<<resolvedMask;
+    });
+}
+void DarkRecomp::Native::traceWorldGpu(unsigned inspection,unsigned command,unsigned draw,unsigned pass,std::string_view stage,std::string_view role,
+    uint64_t key,unsigned slot,unsigned width,unsigned height,unsigned format,unsigned subresource,unsigned rowBytes,
+    std::string_view encoding,const void* bytes,size_t size,std::string_view omitted) noexcept {
+    hostRecord(inspection,[&](auto& out,auto& dump) {
+        out<<",\"event\":\"gpu\",\"command\":"<<command<<",\"draw\":"<<draw<<",\"pass\":"<<pass<<",\"stage\":"<<std::quoted(stage)
+           <<",\"role\":"<<std::quoted(role)<<",\"keyHex\":\""<<std::hex<<key<<std::dec<<"\",\"slot\":"<<slot
+           <<",\"width\":"<<width<<",\"height\":"<<height<<",\"sourceFormat\":"<<format<<",\"subresource\":"<<subresource
+           <<",\"rowBytes\":"<<rowBytes<<",\"encoding\":"<<std::quoted(encoding);
+        constexpr size_t limit=128*1024*1024;
+        if(!omitted.empty())out<<",\"omitted\":"<<std::quoted(omitted);
+        else if(size>limit-dump.gpuBytes)out<<",\"omitted\":\"gpu-byte-budget\"";
+        else {
+            out<<",\"binary\":{\"offset\":"<<dump.gpuBytes<<",\"bytes\":"<<size<<'}';
+            dump.gpu.write(static_cast<const char*>(bytes),static_cast<std::streamsize>(size));dump.gpuBytes+=size;
+        }
+    });
 }
 uint64_t sampleFrameQueue(uint32_t function,uint32_t caller) noexcept {
     if(!enabled.load(std::memory_order_relaxed))return 0;
@@ -896,16 +1017,30 @@ void captureClientGate(uint64_t sequence,uint32_t function,bool returned,uint32_
 }
 
 bool DarkRecomp::Native::renderTraceEnabled() noexcept {return enabled.load(std::memory_order_relaxed);}
+bool DarkRecomp::Native::worldCaptureEnabled() noexcept {return ownedEnabled.load(std::memory_order_relaxed);}
+void DarkRecomp::Native::configureShadowCapture(const std::filesystem::path& directory) {
+    std::lock_guard lock(traceMutex);
+    if(directory.empty()) {
+        ownedEnabled=false;++captureGeneration;hostFrameDump()=HostFrameDump{};
+        for(auto& dump:ownedWorldDumps())dump=OwnedWorldDump{};
+        return;
+    }
+    if(!std::filesystem::create_directory(directory))throw std::runtime_error("Shadow capture directory must be new");
+    traceDirectory=directory;++captureGeneration;ownedEnabled=true;
+    std::puts("[ShadowCapture] Two explicit host-frame captures enabled; guest startup tracing is disabled.");
+}
 void DarkRecomp::Native::configureRenderTrace(const std::filesystem::path& directory) {
     if (directory.empty()) return;
     // Refuse to overwrite existing evidence.
     if (!std::filesystem::create_directory(directory))
         throw std::runtime_error("Renderer trace directory must be new");
     traceDirectory = directory;
+    ++captureGeneration;
     traceLog.open(directory / "events.jsonl", std::ios::binary);
     if (!traceLog) throw std::runtime_error("Cannot create renderer trace metadata");
     epoch = GetTickCount64();
     enabled = true;
+    ownedEnabled = true;
     std::puts("[RenderTrace] Read-only engine captures enabled; original rendering functions remain active.");
 }
 

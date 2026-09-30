@@ -296,6 +296,22 @@ static void testMouseLookContract(PPCContext& ctx) {
         tick(); input.mouseMotion(1, 1); tick();
         check(commands.empty(), "Returning from menu must replay neither counts nor fractional carry");
     }
+    // The production wrapper must publish original GUI ownership, not just
+    // discard camera movement. Wheel input reaches the same original SDK ABI.
+    auto wheelButtons = [&] {
+        check(input.getState(*memory, 0, 0, decoded) == ERROR_SUCCESS, "GUI wheel SDK query failed");
+        return PPC_LOAD_U16(decoded + 4);
+    };
+    newEpoch();
+    memory->write32(client + 7360, block + 0xA500);
+    tick();
+    input.windowMessage(window, WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), 0);
+    check((wheelButtons() & XINPUT_GAMEPAD_DPAD_UP) != 0,
+          "Original active GUI did not route captured mouse wheel to dialogue choices");
+    memory->write32(client + 7360, 0); tick();
+    input.windowMessage(window, WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), 0);
+    check((wheelButtons() & XINPUT_GAMEPAD_DPAD_RIGHT) != 0,
+          "Original GUI exit did not restore gameplay weapon wheel input");
     newEpoch(); base[client + 8816] = 2;
     std::array<uint8_t, 64> cameraBefore{};
     std::memcpy(cameraBefore.data(), base + client + 8880, cameraBefore.size());

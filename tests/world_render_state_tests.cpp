@@ -1,5 +1,6 @@
 #include "renderer/d3d11/world_render_state.h"
 #include <array>
+#include <bit>
 #include <cstdio>
 #include <fstream>
 #include <stdexcept>
@@ -36,6 +37,14 @@ static bool accepts(D3D11_COMPARISON_FUNC comparison,unsigned reference,unsigned
     }
 }
 
+static float originalFloat(std::ifstream& image,std::streamoff offset) {
+    std::array<unsigned char,4> bytes{};
+    image.seekg(offset);image.read(reinterpret_cast<char*>(bytes.data()),bytes.size());
+    require(bool(image),"Cannot read original raster-bias constant");
+    return std::bit_cast<float>(uint32_t(bytes[0])<<24|uint32_t(bytes[1])<<16|
+        uint32_t(bytes[2])<<8|bytes[3]);
+}
+
 int main(int argc,char** argv) {
     try {
         require(argc==2,"Supply the original Darkness/basefile.exe path");
@@ -47,6 +56,23 @@ int main(int argc,char** argv) {
         const auto stencil=originalTable<9>(image,0x66AFC);
         const auto depth=originalTable<9>(image,0x66B20);
         const auto operations=originalTable<8>(image,0x66B44);
+        const auto originalBiasUnit=originalFloat(image,0x9F114);
+        const auto originalSlopeUnit=originalFloat(image,0xA480C4)*originalFloat(image,0x5BE40);
+        for(unsigned scale=1;scale<=3;++scale) {
+            D3D11_RASTERIZER_DESC raster{};
+            require(depthBias(0x41a36,5,5,scale,raster),"Captured shadow-caster bias rejected");
+            // Ten captured character-caster draws request slope5 / units5.
+            // Compare their normalized host offset to constants in the game
+            // image, including D24 quantization and physical-pixel scaling.
+            require(std::abs(double(raster.DepthBias)/16777215.0-5*originalBiasUnit)<=1.0/16777215.0,
+                "Shadow depth offset differs from original game units");
+            require(raster.SlopeScaledDepthBias/float(scale)==-5*originalSlopeUnit,
+                "Shadow slope offset differs from original logical-pixel units");
+            require(depthBias(0x40000,-.5f,-.5f,scale,raster) && raster.DepthBias>0 && raster.SlopeScaledDepthBias>0,
+                "Negative engine bias did not reverse the native depth offset");
+            require(depthBias(0x1005a1a,5,5,scale,raster) && raster.DepthBias==0 && raster.SlopeScaledDepthBias==0,
+                "Shadow projector inherited caster depth bias after the flag was disabled");
+        }
         unsigned faces=0;
         for(unsigned comparison=0;comparison<stencil.size();++comparison) {
             require(unsigned(depthComparison(comparison))==depth[comparison]+1,

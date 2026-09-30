@@ -38,9 +38,22 @@ static void shadowProjectionPass(WorldRendererD3D11& renderer,const WorldDraw& s
         const unsigned e=(h>>10)&31,m=h&1023;
         return std::ldexp(double(e?1024+m:m),int(e?e:1)-25)*(h&0x8000?-1:1);
     };
-    for(unsigned pattern=0;pattern<5;++pattern) {
-        shadow.depth=pattern==1?.75f:.25f;renderer.clear(shadow);
-        if(pattern>=2) {
+    auto checkProjection=[&](double expected,const char* message) {
+        renderer.clear(target);require(renderer.draw(draw),"Original shadow projector draw rejected");
+        const auto pixels=renderer.readSurface(3103,false);
+        const unsigned side=64*scale;require(pixels.size()==size_t(side)*side*8,"Shadow output scale differs");
+        uint16_t rgba[4]{};std::memcpy(rgba,pixels.data()+(size_t(side/2)*side+side/2)*8,8);
+        require(std::abs(halfFloat(rgba[0])-expected)<.01 &&
+                std::abs(halfFloat(rgba[3])-(1-expected))<.01,message);
+    };
+    // ShadowMapStep in FPInclude_Xenon returns step(receiver, sampledDepth).
+    // With reversed depth, zero is empty/far and a larger depth is an occluder.
+    // Red is shadow coverage; alpha is the remaining light, not the reverse.
+    const float depths[]{.25f,.75f,.25f,.25f,.25f,0.0f,1.0f};
+    const double coverage[]{0.0,1.0,.5,.25,.75,0.0,1.0};
+    for(unsigned pattern=0;pattern<std::size(depths);++pattern) {
+        shadow.depth=depths[pattern];renderer.clear(shadow);
+        if(pattern>=2 && pattern<=4) {
             auto right=shadow;right.rectangle=std::array<int32_t,4>{32,0,64,64};right.depth=.75f;
             renderer.clear(right);
         }
@@ -48,14 +61,24 @@ static void shadowProjectionPass(WorldRendererD3D11& renderer,const WorldDraw& s
         // One logical pixel off the seam must still see the opposite side at
         // 2x/3x. A filter accidentally measured in physical pixels will not.
         draw.fragmentConstants[3][3]=pattern==3?-1.0f/64:pattern==4?1.0f/64:0;
-        renderer.clear(target);require(renderer.draw(draw),"Original shadow projector draw rejected");
-        const auto pixels=renderer.readSurface(3103,false);
-        const unsigned side=64*scale;require(pixels.size()==size_t(side)*side*8,"Shadow output scale differs");
-        uint16_t rgba[4]{};std::memcpy(rgba,pixels.data()+(size_t(side/2)*side+side/2)*8,8);
-        const double expected=pattern==0?1.0:pattern==1?0.0:pattern==2?0.5:pattern==3?0.75:0.25;
-        require(std::abs(halfFloat(rgba[0])-expected)<.01 &&
-                std::abs(halfFloat(rgba[3])-(1-expected))<.01,
-                "Shadow PCF/lighting differs between logical and physical resolutions");
+        checkProjection(coverage[pattern],"Shadow comparison or logical PCF coverage differs from Xenon");
     }
-    std::printf("ShadowProjection%u: lit, occluded and three 4x4 penumbra positions passed.\n",scale);
+    // Equality must retain step()'s inclusive comparison. Use exact endpoint
+    // depths so D24 quantization cannot turn equality into an ordered case.
+    for(float depth:{0.0f,1.0f}) {
+        shadow.depth=depth;renderer.clear(shadow);
+        require(renderer.resolve(shadowCopy),"Equal-depth shadow resolve rejected");
+        draw.fragmentConstants[5][3]=1-depth;
+        checkProjection(1,"Shadow comparison lost inclusive equality");
+    }
+    draw.fragmentConstants[5][3]=.5f;
+    // An isolated caster must not darken the cleared rectangle around it.
+    shadow.depth=0;renderer.clear(shadow);
+    auto caster=shadow;caster.rectangle=std::array<int32_t,4>{24,24,40,40};caster.depth=.75f;
+    renderer.clear(caster);require(renderer.resolve(shadowCopy),"Isolated caster resolve rejected");
+    for(const auto& offset:std::array<std::array<float,2>,5>{{{0,0},{-.25f,0},{.25f,0},{0,-.25f},{0,.25f}}}) {
+        draw.fragmentConstants[3][3]=offset[0];draw.fragmentConstants[4][3]=offset[1];
+        checkProjection(offset[0]==0 && offset[1]==0?1:0,"Cleared shadow atlas casts a rectangular shadow");
+    }
+    std::printf("ShadowProjection%u: depth polarity, equality, isolated caster and logical PCF edges passed.\n",scale);
 }

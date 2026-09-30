@@ -10,11 +10,11 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 BINARIES = (
-    'DarkRecomp.exe', 'DarkRecompPreview.exe',
+    'DarkRecomp.exe', 'DarkRecompPreview.exe', 'DarkRecompSettings.exe',
     'avcodec-darkxma-62.dll', 'avutil-darkxma-60.dll', 'libwinpthread-1.dll',
     'CubeWnd.pc.xcr', 'GameContext_Create.pc.xdf',
 )
-DOCUMENTS = ('Launch.cmd', 'START_HERE.txt', 'README.md', 'CONTROLS.md', 'RENDERING.md', 'COPYING')
+DOCUMENTS = ('Launch.cmd', 'LaunchWithSettings.cmd', 'START_HERE.txt', 'README.md', 'CONTROLS.md', 'RENDERING.md', 'STEAM_DECK.md', 'COPYING')
 CRT_REQUIRED = ('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')
 
 
@@ -35,6 +35,7 @@ def find_crt(root: Path) -> Path:
 
 def collect_files(root: Path, crt: Path) -> dict[str, Path]:
     files = {name: root / name for name in DOCUMENTS}
+    files['tools/add_steam_shortcut.py'] = root / 'tools/add_steam_shortcut.py'
     for name in BINARIES:
         files[f'build_native/Release/{name}'] = root / 'build_native/Release' / name
     for name in CRT_REQUIRED:

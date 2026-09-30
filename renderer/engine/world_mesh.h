@@ -89,7 +89,8 @@ struct WorldDraw : WorldSurfaceTargets {
     std::string fragmentName;
     uint32_t fragmentFlags=0;
     EngineVector depthRange{0,1,0,0};
-    std::array<EngineVector,16> fragmentConstants{};
+    // Lit projected decals use env[0..33]; retain the complete supported bank.
+    std::array<EngineVector,64> fragmentConstants{};
     std::array<uint16_t,16> textureIds{};
     uint16_t textureMask=0xFFFF; // Conservative original-source usage; manual draws retain all slots.
     std::array<WorldTexture,16> textureObjects{};

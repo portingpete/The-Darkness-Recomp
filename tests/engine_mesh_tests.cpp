@@ -21,6 +21,9 @@ using namespace DarkRecomp;
 using namespace DarkRecomp::Native;
 extern "C" PPC_FUNC(__imp__sub_8225F320);
 extern "C" PPC_FUNC(__imp__sub_82864F20);
+extern "C" PPC_FUNC(__imp__sub_822478C0);
+extern "C" PPC_FUNC(__imp__sub_8223AFE8);
+extern "C" PPC_FUNC(__imp__sub_8224DAE0);
 static void require(bool result, const char* reason) { if (!result) throw std::runtime_error(reason); }
 static void testDecodedDrawRequest() {
     DecodedDrawRequest request;
@@ -76,6 +79,9 @@ static void nearByte(uint32_t pixel, unsigned channel, int expected) {
 #include "preview_antialiasing_tests.h"
 #include "preview_clear_state_tests.h"
 #include "preview_video_upload_tests.h"
+#include "world_video_capture_tests.h"
+#include "world_source_recovery_tests.h"
+#include "world_decal_capture_tests.h"
 #include "prompt_icon_tests.h"
 #include "preview_output_tests.h"
 // Synthetic source provider called by the actual original 82256008 refresh.
@@ -703,6 +709,16 @@ static void testPreviewBridge(Memory& memory, PPCContext& threadContext, EngineP
     put32(base,device+6024,0xFFFFFFFF);
     require(snapshotWorldDraw(base,world,validated) && std::bit_cast<uint32_t>(validated.fragmentConstants[0][2])==0xFFFFFFFF,
             "Original shader-data NaN was changed or caused the whole GUI draw to be dropped");
+    // Projected lit decals upload up to 34 constants; retain values beyond
+    // the old 16-vector limit, and reject bank overflow before reading it.
+    put32(base,program+16,34);
+    for(unsigned vector=0;vector<34;++vector)for(unsigned lane=0;lane<4;++lane)
+        putFloat(base,device+6016+vector*16+lane*4,float(vector*4+lane));
+    require(snapshotWorldDraw(base,world,validated) && validated.fragmentConstants[33]==EngineVector{132,133,134,135},
+            "Projected decal constants beyond vector15 were omitted");
+    put32(base,program+16,65);
+    require(!snapshotWorldDraw(base,world,validated),"Fragment constant bank overflow was accepted");
+    put32(base,program+16,1);
     put32(base,attributes,0);
     // Complete the original device binding after selecting each fixture
     // resource. Editing a wrapper alone does not rebind an unchanged ID.
@@ -719,6 +735,9 @@ static void testPreviewBridge(Memory& memory, PPCContext& threadContext, EngineP
         guest.r3.u64=device;guest.r4.u64=slot;guest.r5.u64=object;guest.r6.u64=uint64_t(1)<<(31-slot);
         __imp__sub_82864F20(guest,base);
     };
+    testWorldVideoCapture(memory,world,device,program,name,bindTexture,finish);
+    testWorldSourceRecovery(memory,world,device,program,name,bindTexture,finish);
+    testWorldDecalCapture(memory,threadContext,device,bindTexture,finish);
     textureHeader(primary,0x01000000);textureHeader(alternate,0x02000000);
     put32(base,resource+84,primary);put32(base,resource+164,alternate);
     put32(base,resource+172,0x10000000);
@@ -892,6 +911,99 @@ static void testPreviewBridge(Memory& memory, PPCContext& threadContext, EngineP
         previewPrepareTexture(1);putFloat(base,resource+176,0);put32(base,resource+180,0);
         std::memcpy(base+device+1152,oldSampler.data(),oldSampler.size());
         std::puts("TextureCacheResidency: guarded leading mips, four selected header forms, sampler changes and immutable completed generations passed.");
+    }
+    // DV5 mixes GPU-produced scene/depth/atlas inputs with CPU-owned noise.
+    // Recover a missed or evicted noise upload without decoding stale backing
+    // memory for the GPU inputs. All six stand-ins are deliberately decodable,
+    // so an overbroad recovery whitelist makes the excluded slots observable.
+    {
+        const auto scratch=memory.allocate(65536),storage=memory.allocate(65536);
+        require(scratch && storage,"Darkness noise capture fixture allocation failed");
+        struct ReleaseNoise {decltype(memory)& memory;uint32_t a,b;~ReleaseNoise(){memory.release(a);memory.release(b);}} releaseNoise{memory,scratch,storage};
+        std::memset(base+scratch,0,65536);std::memset(base+storage,0,65536);
+        std::array<uint8_t,160> oldAttributes{};
+        std::array<uint8_t,144> oldSamplers{};
+        std::array<char,96> oldName{};
+        std::array<uint32_t,6> oldObjects{};
+        std::memcpy(oldAttributes.data(),base+attributes,oldAttributes.size());
+        std::memcpy(oldSamplers.data(),base+device+1152,oldSamplers.size());
+        std::memcpy(oldName.data(),base+name,oldName.size());
+        const auto oldTable=memory.read32(context+17964),oldProgramFlags=memory.read32(program+16);
+        for(unsigned slot=0;slot<6;++slot)oldObjects[slot]=memory.read32(device+12536+slot*4);
+        std::array<std::vector<uint8_t>,6> expected;
+        std::array<uint32_t,6> objects{},ids{};
+        put32(base,context+17964,scratch);put32(base,attributes,program);
+        for(unsigned slot=0;slot<16;++slot)put16(base,attributes+8+slot*2,0);
+        for(unsigned slot=0;slot<6;++slot) {
+            ids[slot]=0x700+slot;objects[slot]=scratch+0x4000+slot*0x100;
+            const uint32_t wrapper=scratch+0x3000+slot*0x100;
+            put32(base,scratch+(ids[slot]+1)*4,wrapper);
+            put32(base,wrapper+84,objects[slot]);put32(base,wrapper+172,0x10000000);
+            put16(base,attributes+8+slot*2,uint16_t(ids[slot]));
+            const uint32_t fetch[]{2u|(1u<<22),(storage+slot*0x1000)|6u,3u|(3u<<13),0xd10u,0u,0x200u};
+            for(unsigned word=0;word<6;++word)put32(base,objects[slot]+28+word*4,fetch[word]);
+            TextureMipLayout layout;require(!getTextureMipLayout(fetch,0,0,layout),"Darkness noise layout failed");
+            for(unsigned y=0;y<4;++y)for(unsigned x=0;x<4;++x) {
+                const std::array<uint8_t,4> pixel{uint8_t((x+1)*17+slot*7),uint8_t(y*31+slot*11),
+                    uint8_t((x+y)*19+slot*13),uint8_t(255-x*13-y*7)};
+                expected[slot].insert(expected[slot].end(),pixel.begin(),pixel.end());
+                std::memcpy(base+layout.allocationAddress+layout.surfaceOffsetBytes+y*layout.rowPitchBytes+x*4,pixel.data(),4);
+            }
+            ColorImage check;
+            require(!decodeWorldTextureImage(base,objects[slot],check) && check.pixels==expected[slot],
+                    "Darkness noise fixture does not independently decode to its expected pixels");
+            bindTexture(slot,objects[slot]);previewPrepareTexture(ids[slot]);
+        }
+        std::strcpy(reinterpret_cast<char*>(base+name),"WClientMod_DV5_0");
+        auto captureNoise=[&](unsigned flags) {
+            put32(base,program+16,flags<<8);
+            previewObserveWorld(base,world);const auto commands=finish();
+            require(commands.size()==1 && commands[0].world &&
+                    commands[0].world->fragmentName=="WClientMod_DV5_0" && commands[0].world->fragmentFlags==flags &&
+                    commands[0].world->textureMask==(flags?0x37u:0x17u),"Darkness noise capture lost its original pass");
+            const auto& captured=commands[0].world;
+            for(unsigned slot:{0u,1u,3u,5u})
+                require(!captured->textures[slot],"Darkness noise recovery decoded a GPU-only or unused slot");
+            for(unsigned slot:{0u,1u,2u,4u,5u})if(captured->textureMask&(1u<<slot))
+                require(captured->textureObjects[slot].object==objects[slot] && captured->textureIds[slot]==ids[slot],
+                        "Darkness noise recovery changed a completed texture binding");
+            for(unsigned slot:{2u,4u})
+                require(captured->textures[slot] && captured->textures[slot]->valid() &&
+                        captured->textures[slot]->width==4 && captured->textures[slot]->height==4 &&
+                        captured->textures[slot]->pixels==expected[slot],
+                        "Darkness noise cache miss did not recover the nonuniform source pixels");
+            return captured;
+        };
+        const auto recovered=captureNoise(0);
+        {
+            struct ProtectNoise {
+                uint8_t* address;DWORD old{};
+                explicit ProtectNoise(uint8_t* p):address(p){require(VirtualProtect(address,65536,PAGE_NOACCESS,&old)!=0,"Darkness noise cache guard failed");}
+                ~ProtectNoise(){DWORD ignored{};VirtualProtect(address,65536,old,&ignored);}
+            } protectNoise(base+storage);
+            for(unsigned flags:{1u,2u}) {
+                const auto reused=captureNoise(flags);
+                require(reused->textures[2]==recovered->textures[2] && reused->textures[4]==recovered->textures[4],
+                        "Darkness noise variants redecoded or replaced an unchanged cache entry");
+            }
+        }
+        const auto oldNoise=expected;
+        for(unsigned slot:{2u,4u}) {
+            for(auto& byte:expected[slot])byte^=0x5a;
+            for(unsigned y=0;y<4;++y)
+                std::memcpy(base+storage+slot*0x1000+y*128,expected[slot].data()+y*16,16);
+            previewPrepareTexture(ids[slot]);
+        }
+        const auto refreshed=captureNoise(2);
+        for(unsigned slot:{2u,4u})
+            require(refreshed->textures[slot]!=recovered->textures[slot] && recovered->textures[slot]->pixels==oldNoise[slot],
+                    "Darkness noise recovery mutated a retained generation after cache invalidation");
+        for(unsigned slot=0;slot<6;++slot) {previewPrepareTexture(ids[slot]);bindTexture(slot,oldObjects[slot]);}
+        put32(base,context+17964,oldTable);put32(base,program+16,oldProgramFlags);
+        std::memcpy(base+attributes,oldAttributes.data(),oldAttributes.size());
+        std::memcpy(base+device+1152,oldSamplers.data(),oldSamplers.size());
+        std::memcpy(base+name,oldName.data(),oldName.size());
+        std::puts("DarknessNoiseCapture: nonuniform slot2/4 recovery, guarded cache reuse, immutable refresh and GPU-slot exclusions passed.");
     }
     // Direct82256008 bypasses initial-upload publication. Updating pixels in
     // the same allocation must evict the old CPU image even if every descriptor
@@ -1376,11 +1488,12 @@ int main(int argc, char** argv) {
 
             videoMesh.projection=mesh.projection;
             auto movie=std::make_shared<VideoFrame>(); movie->width=movie->height=2;
-            movie->luma={81,81,81,81}; movie->chroma={240,90}; videoMesh.video=movie;
+            movie->luma={81,81,81,81}; movie->chroma={90,240}; videoMesh.video=movie;
             renderer.render({videoMesh}); pixel=renderer.readPixel(32,32);
-            // BE A8L8 stores V before U. Original ARB uses UV-0.5 and alpha zero.
+            // Original decoder's CPU conversion proves U,V byte order before
+            // upload. Original ARB uses UV-0.5 and alpha zero.
             nearByte(pixel,0,254); nearByte(pixel,1,0); nearByte(pixel,2,0); nearByte(pixel,3,0);
-            movie=std::make_shared<VideoFrame>(*movie); movie->chroma={90,240}; videoMesh.video=movie;
+            movie=std::make_shared<VideoFrame>(*movie); movie->chroma={240,90}; videoMesh.video=movie;
             renderer.render({videoMesh}); pixel=renderer.readPixel(32,32);
             nearByte(pixel,0,16); nearByte(pixel,1,62); nearByte(pixel,2,255); nearByte(pixel,3,0);
             movie=std::make_shared<VideoFrame>(*movie); movie->luma={235,235,235,235}; movie->chroma={128,128}; videoMesh.video=movie;

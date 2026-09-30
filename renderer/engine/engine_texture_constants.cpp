@@ -63,7 +63,7 @@ bool readInput(uint8_t* base, bool enabled, uint32_t matrices, uint32_t attribut
     const uint32_t parameters = be32(attrs.data() + 32);
     result.hasParameters = parameters != 0;
     for (unsigned s = 0; s < 8; ++s) {
-        if (result.modes[s] > 22) return false;
+        if (result.modes[s] > 24) return false;
         const uint32_t address = be32(pointers.data() + s * 4);
         if (!address) continue;
         // Matrix lfs reads are word based; vector parameter loads align down.
@@ -96,7 +96,7 @@ bool buildEngineTextureConstants(const EngineTextureInput& input, EngineTextureC
     for (unsigned s = 0; s < 8; ++s) {
         auto& stage = result.stages[s];
         stage.mode = input.modes[s];
-        if (stage.mode > 22) return false;
+        if (stage.mode > 24) return false;
         if (input.matrices[s]) {
             stage.matrixColumns.emplace();
             for (unsigned r = 0; r < 4; ++r) for (unsigned c = 0; c < 4; ++c) {

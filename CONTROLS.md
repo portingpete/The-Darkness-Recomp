@@ -1,7 +1,10 @@
 # Native keyboard and mouse controls
 
 Run `Launch.cmd` for audio, or `Launch.cmd mute` for a muted game.
-Both run until you close the game window. `Launch.cmd preview` and
+Run `LaunchWithSettings.cmd` to choose the same video options before the game
+opens, then play with audio. It reads and saves `DarkRecomp.settings.ini`, so
+the pre-game launcher and in-game Video Settings share your choices.
+The game runs until you close its window. `Launch.cmd preview` and
 `build_native/Release/DarkRecompPreview.exe` still default to muted;
 the preview executable also accepts `--sound` or `--mute`.
 
@@ -34,6 +37,7 @@ preserving aspect at the width limit and rounding to even guest dimensions.
 
 Open **Options > Video Settings** for the game's native graphics rows:
 
+- **Brightness:** 50% to 200%, with 100% neutral.
 - **Gamma:** 0.50 to 1.50, with 1.00 neutral. Lower values darken the image;
   changes apply immediately and save automatically.
 - **Field of view:** Original or **60�120 horizontal degrees at 16:9**;
@@ -43,9 +47,10 @@ Open **Options > Video Settings** for the game's native graphics rows:
 - **Frame limit:** 30, 60 (default), 90, 120, 144, 165, 240, 360, or Unlimited.
 - **Resolution:** 360p, 480p, 720p, 1080p, 1440p or 2160p; requires a restart.
 - **Display:** windowed or borderless fullscreen.
+- **Motion blur:** Off (default) or On.
 - **Antialiasing:** Off (default) or FXAA; smooths edges immediately and saves automatically.
 
-Motion blur is disabled. Use the normal menu navigation: Up/Down selects a row,
+Use the normal menu navigation: Up/Down selects a row,
 Left/Right changes its value, and confirm cycles forward. The controller D-pad
 and A work through the same original menu controls. Escape/Backspace or B goes
 back. Changes save automatically to `DarkRecomp.settings.ini` beside `Darkness`
@@ -57,6 +62,22 @@ override their saved values for that run. `--fov 0` selects Original. Editing a
 menu option saves the current selection, including overrides. Valid custom
 values remain unchanged until you adjust their row.
 
+Game text follows the Windows UI language when it is English, German, French,
+Spanish, or Italian; other UI languages use English. To choose a language,
+add this section to `DarkRecomp.settings.ini` beside `Darkness` and restart:
+
+```ini
+[Game]
+Language=en
+```
+
+Use `en`, `de`, `fr`, `es`, or `it`; `auto` restores automatic selection.
+The matching language content must be present in your own dump. Run
+`Launch.cmd play --language en` to choose English for one run. When launching
+`DarkRecomp.exe` directly, use the same `--language en` option; full English
+language names are also accepted. Video Settings saves preserve the language
+choice.
+
 Click inside the game to capture the mouse. The first click only captures it.
 Press **F1** for the controls guide, **F2** to toggle capture, or **Escape**
 to pause and release the cursor. Alt-Tab, loss of focus, and closing the window
@@ -67,7 +88,8 @@ also release it. Click again after returning to the game.
 - **E:** use / confirm; **R:** reload; **Ctrl** or **C:** crouch.
 - **Left click:** fire the right weapon; **right click:** fire the left weapon.
 - **Middle click** or **Shift:** zoom.
-- **Wheel** or **1 / 2:** cycle weapons.
+- **Wheel:** previous/next choice in dialogue and menus, even with the mouse
+  captured; during gameplay, cycle weapons. **1 / 2:** cycle weapons.
 - **Q:** manifest Darkness; **G:** use Darkness power; **3 / 4:** cycle powers.
 - **F:** redirect Darkling; **Tab:** journal; **Enter:** Start / pause.
 - **Menus:** arrows to navigate, **E** or released **Space** to confirm,

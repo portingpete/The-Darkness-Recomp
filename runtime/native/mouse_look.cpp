@@ -70,6 +70,10 @@ PPC_FUNC(sub_823FC650) {
         uint64_t(client) + 8844 > PPC_MEMORY_SIZE) return;
     const uint32_t vtable = PPC_LOAD_U32(client);
     if (vtable != 0x820807E0 && vtable != 0x82081BF0) return;
+    // The original update immediately before this call routes an active GUI
+    // through client+7360 and mirrors it in flag 0x40. Dialogue choices use
+    // vertical menu navigation even while the Win32 mouse remains captured.
+    DarkRecomp::Native::nativeInput().setGuestMenuActive(PPC_LOAD_U32(client + 7360) != 0);
     const auto delta = DarkRecomp::Native::nativeInput().consumeMouseLook();
     if (stream.base != base || stream.client != client || stream.epoch != delta.epoch) {
         stream.quantizer.reset();
