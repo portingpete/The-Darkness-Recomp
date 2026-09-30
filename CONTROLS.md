@@ -104,6 +104,21 @@ mouse multiplier (0.1 to 10). Add `--mute --timeout-ms 0 --engine-preview` for a
 muted interactive run. The play modes supply the interactive flags; the default
 mode plays with sound instead of `--mute`.
 
+## Developer tools
+
+Press **F5** to open or close the developer panel. Select a campaign destination
+and press **Load**, choose a player speed from **0.25× to 4×**, or toggle
+**Invincible**. Player controls become available once a player is active.
+**Restore defaults** returns to 1× speed with invincibility off.
+**Load** closes the panel before the mission's opening sequence; press F5 to reopen it.
+
+Loading a mission restarts the current session, then loads the destination
+through the game's commands. It can write an autosave. Back up your checkpoint
+before jumping between missions if you want to preserve your current progress.
+The panel releases mouse capture and
+blocks gameplay input while open; close it, then click the game or press F2
+to resume mouse control.
+
 ## Implementation
 
 Keyboard input uses Win32 window messages. Mouse look uses foreground Raw Input

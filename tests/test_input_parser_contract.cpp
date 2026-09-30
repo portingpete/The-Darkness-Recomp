@@ -50,10 +50,12 @@ int main() {
         requireAccept("8", 8, 250);
         requireAccept("16", 16, 250);
         requireAccept("17", 17, 250);
+        requireAccept("116", VK_F5, 250);
         // Explicit bounded holds, including both edges.
         requireAccept("87 1", 87, 1);
         requireAccept("32 10000", 32, 10000);
         requireAccept("73 500", 73, 500);
+        requireAccept("116 500", VK_F5, 500);
         requireAccept("  69   2000  ", 69, 2000);
         requireAccept("32 ", 32, 250);
         requireAccept(std::string("32") + std::string(254, ' '), 32, 250);
@@ -77,6 +79,11 @@ int main() {
         requireReject("256");
         requireReject("999");
         requireReject("7");
+        requireReject("115"); // Adjacent F4/F6 keys remain outside the allowlist.
+        requireReject("117");
+        requireReject("116 0");
+        requireReject("116 10001");
+        requireReject("116 close");
         requireReject("");
         requireReject("   ");
         requireReject("4294967296");
@@ -84,7 +91,7 @@ int main() {
         requireReject(std::string("32") + std::string(255, ' '));
         require(!isTestInputKey(0) && !isTestInputKey(255) && !isTestInputKey(7),
                 "allowlist admits an unmapped key");
-        require(isTestInputKey('W') && isTestInputKey(VK_TAB) && isTestInputKey(VK_CONTROL),
+        require(isTestInputKey('W') && isTestInputKey(VK_TAB) && isTestInputKey(VK_CONTROL) && isTestInputKey(VK_F5),
                 "allowlist lost a mapped key");
         puts("Test input parser contract: historical holds, explicit 1/10000, "
              "rejected bad/trailing/sign/overflow, unchanged outputs, and "

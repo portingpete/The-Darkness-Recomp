@@ -16,6 +16,28 @@ restgprlr_14_address = 0x82899A40
 savefpr_14_address = 0x8289A190
 restfpr_14_address = 0x8289A1DC
 
+# Evaluate the original god-mode predicates for the selected server player.
+# Only the loaded register changes; actor flags and checkpoints remain intact.
+[[midasm_hook]]
+name = "ApplyDeveloperInvincibilityMidAsmHook"
+address = 0x8214EC50
+registers = ["r31", "r29", "r11"]
+
+[[midasm_hook]]
+name = "ApplyDeveloperInvincibilityMidAsmHook"
+address = 0x82154660
+registers = ["r31", "r29", "r11"]
+
+[[midasm_hook]]
+name = "ApplyDeveloperInvincibilityMidAsmHook"
+address = 0x82162204
+registers = ["r26", "r30", "r11"]
+
+[[midasm_hook]]
+name = "ApplyDeveloperInvincibilityMidAsmHook"
+address = 0x82189B08
+registers = ["r30", "r15", "r11"]
+
 
 [[midasm_hook]]
 name = "CompleteGpuFenceMidAsmHook"
@@ -64,3 +86,31 @@ registers = ["r31", "r29", "r30", "r21", "f1"]
 name = "ApplyNativeMouseLookMidAsmHook"
 address = 0x823FD07C
 registers = ["r31", "r1", "f13", "f12"]
+
+# Original player-control movement values, after their authored state loads.
+# Scale horizontal movement registers without changing state or elapsed time.
+[[midasm_hook]]
+name = "ApplyDeveloperHorizontalSpeedMidAsmHook"
+address = 0x82134474
+registers = ["r31", "r21", "f13", "f11"]
+
+# Walking interpolates state+10020 and +10024; scale each endpoint once.
+[[midasm_hook]]
+name = "ApplyDeveloperHorizontalSpeedMidAsmHook"
+address = 0x82135018
+registers = ["r31", "r21", "f13", "f0"]
+
+[[midasm_hook]]
+name = "ApplyDeveloperForwardSpeedMidAsmHook"
+address = 0x82135020
+registers = ["r31", "r21", "f12"]
+
+[[midasm_hook]]
+name = "ApplyDeveloperHorizontalSpeedMidAsmHook"
+address = 0x82135B08
+registers = ["r31", "r21", "f0", "f13"]
+
+[[midasm_hook]]
+name = "ApplyDeveloperHorizontalSpeedMidAsmHook"
+address = 0x82135C8C
+registers = ["r31", "r21", "f0", "f13"]

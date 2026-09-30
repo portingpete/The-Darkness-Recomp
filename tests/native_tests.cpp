@@ -45,6 +45,12 @@ static void check(bool success, const char* message) { if (!success) throw std::
 #include "native_storage_tests.h"
 #include "fov_camera_tests.h"
 #include "video_settings_tests.h"
+#include "developer_tools_tests.h"
+#include "developer_invincibility_tests.h"
+#include "developer_player_lookup_tests.h"
+#include "developer_player_tests.h"
+#include "developer_missions_tests.h"
+#include "developer_update_tests.h"
 static PPC_FUNC(threadProbe) {
     uint32_t argument = ctx.r3.u32;
     memory->write32(argument + 24, base[ctx.r13.u32 + 0x10c]);
@@ -1517,6 +1523,15 @@ int main(int argc, char** argv) {
         addressSpace.load(argv[1]);
         PPCContext ctx{};
         addressSpace.initThread(ctx);
+        if (argc == 3 && strcmp(argv[2], "--developer-tools") == 0) {
+            testDeveloperToolsRequests();
+            testDeveloperInvincibility(ctx);
+            testDeveloperPlayerLookup(ctx);
+            testDeveloperPlayer(ctx);
+            testDeveloperMissions(ctx);
+            testDeveloperUpdate(ctx);
+            return 0;
+        }
         if (argc == 3 && strcmp(argv[2], "--video-settings") == 0) {
             testVideoSettings(ctx);
             return 0;

@@ -63,7 +63,8 @@ public:
                 release();
                 MessageBoxW(window_,
                     L"Click in the window to play. Escape pauses and releases the mouse.\n"
-                    L"F2 captures/releases the mouse. Alt-Tab releases it automatically.\n\n"
+                    L"F2 captures/releases the mouse. Alt-Tab releases it automatically.\n"
+                    L"F5: developer tools (mission, player speed and invincibility).\n\n"
                     L"Options > Video Settings: graphics    Alt+Enter: fullscreen\n"
                     L"Bloom, motion blur, VSync, frame cap, resolution, fullscreen and field of view.\n\n"
                     L"WASD: move    Mouse: look    Space: jump\n"

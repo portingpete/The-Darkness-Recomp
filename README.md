@@ -35,6 +35,9 @@ Click the game window to capture the mouse. **F1** shows controls, **F2** toggle
 capture, and **Esc** releases it. Graphics options are in **Options > Video Settings**
 and in the video settings launcher. Both use the same saved settings.
 The mouse wheel selects dialogue and menu choices; **E** confirms.
+Press **F5** to open developer tools for mission selection, player speed,
+and invincibility. Mission loading can autosave; see
+[CONTROLS.md](CONTROLS.md#developer-tools) before selecting a destination.
 Text language follows supported Windows UI languages. Set `[Game] Language=en`
 in `DarkRecomp.settings.ini` to choose English, or use `de`, `fr`, `es`, `it`, or
 `auto`; restart to apply it. See [CONTROLS.md](CONTROLS.md) for language overrides

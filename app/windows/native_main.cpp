@@ -4,6 +4,7 @@
 #include "runtime/native/audio_driver.h"
 #include "runtime/native/input.h"
 #include "native_mouse.h"
+#include "developer_tools_window.h"
 #include "display_options.h"
 #include "display_window.h"
 #include "display_settings.h"
@@ -11,6 +12,7 @@
 #include "runtime/native/fov_settings.h"
 #include "runtime/native/language_settings.h"
 #include "runtime/native/video_settings_menu.h"
+#include "runtime/native/developer_tools.h"
 #include "test_input_parser.h"
 #include "frame_metrics.h"
 #include "renderer/engine/engine_performance.h"
@@ -32,6 +34,7 @@
 
 using namespace DarkRecomp::Native;
 static NativeMouseWindow* mouseWindow = nullptr;
+static DeveloperToolsWindow* developerToolsWindow = nullptr;
 static bool displayResizePending = false;
 static bool fullscreenTogglePending = false;
 // Flush buffered logs on a fatal Windows exception before WER terminates the
@@ -68,7 +71,10 @@ static LRESULT CALLBACK NativeWindowProc(HWND window, UINT message, WPARAM wPara
     }
     if (message == WM_SIZE && wParam != SIZE_MINIMIZED) displayResizePending = true;
     nativeInput().windowMessage(window, message, wParam, lParam);
-    if (mouseWindow && mouseWindow->message(message, wParam, lParam)) return 0;
+    // The modeless panel keeps rendering/engine updates running, but game
+    // input and mouse capture stay suspended even if the owner gets focus.
+    if (mouseWindow && (!developerToolsWindow || !developerToolsWindow->isOpen()) &&
+        mouseWindow->message(message, wParam, lParam)) return 0;
     if (message == WM_CLOSE) { DestroyWindow(window); return 0; }
     if (message == WM_DESTROY) { PostQuitMessage(0); return 0; }
     return DefWindowProcW(window, message, wParam, lParam);
@@ -182,7 +188,7 @@ int wmain(int argc, wchar_t** argv) {
         else if (arg == L"--preview-frame" && i + 1 < argc) previewFrame = argv[++i];
         else {
             fputs("Usage: DarkRecomp --game-dir <directory> [--timeout-ms 30000 (0 disables deadline)] [--renderer-smoke] [--trace-renderer <new directory>] [--engine-preview] [--mute] [--fps 60 (default; 0 uncapped)] [--profile-engine] [--sample-engine] [--mouse-sensitivity 1.0] [--language auto|en|de|fr|es|it] [--preview-frame <new BMP path>] [--test-input <file>] [--test-start] [--test-skip-intros]\n", stderr);
-            fputs("  --test-input file lines (max 64, own-process diagnostics only): numeric '<key> [<holdMs 1..10000>]' (bare menu keys hold 250ms, I/J/K/L hold 2000ms; gameplay keys WASD/E/R/F/X/Z/C/Q/G/1-4/Tab/Back/Shift/Ctrl plus arrows/Space/Return/Esc/IJKL); 'mouse <dx> <dy>' (+/-10000, held 2000ms); 'capture' screenshots; '0' inspects; an invalid line blocks later commands until that line is fixed.\n", stderr);
+            fputs("  --test-input file lines (max 64, own-process diagnostics only): numeric '<key> [<holdMs 1..10000>]' (bare menu keys hold 250ms, I/J/K/L hold 2000ms; gameplay keys WASD/E/R/F/X/Z/C/Q/G/1-4/Tab/Back/Shift/Ctrl plus arrows/Space/Return/Esc/IJKL; 116=F5 panel); 'mouse <dx> <dy>' (+/-10000, held 2000ms); 'capture' game screenshots; '0' inspects; 'dev open|close|status', 'dev mission <ID>', 'dev speed <preset>', 'dev invincible on|off', 'dev capture <absolute BMP path>'; an invalid line blocks later commands until that line is fixed.\n", stderr);
             fputs("  Display: --fullscreen or --windowed; --width W --height H selects window/aspect size; --render-height H controls internal resolution (180..2160, default 720). Alt+Enter toggles borderless fullscreen.\n", stderr);
             fputs("  Options > Video Settings contains native PC graphics controls. Saved settings apply unless explicitly overridden. --vsync / --no-vsync overrides vertical sync; --fov 0 (Original) or 60..120 overrides horizontal FOV at 16:9 for this run.\n", stderr);
             fputs("  --trace-frame-hitches records bounded slow-frame stage timings without enabling per-draw profiling or instruction sampling.\n", stderr);
@@ -209,6 +215,7 @@ int wmain(int argc, wchar_t** argv) {
         if (overrideVsync) activeGraphics.verticalSync = verticalSync;
         setGraphicsSettings(activeGraphics);
         initializeVideoSettingsMenu();
+        initializeDeveloperTools();
         targetFps = activeGraphics.frameRateLimit;
         fullscreen = activeGraphics.fullscreen;
         renderHeight = activeGraphics.renderHeight;
@@ -275,12 +282,14 @@ int wmain(int argc, wchar_t** argv) {
         if (fullscreen) displayWindow.toggleFullscreen();
         nativeInput().attachWindow(window);
         nativeInput().windowMessage(window, WM_ACTIVATEAPP, GetForegroundWindow() == window, 0);
-        struct ClearMouseWindow { ~ClearMouseWindow() { mouseWindow = nullptr; } } clearMouseWindow;
+        struct ClearMouseWindow { ~ClearMouseWindow() { mouseWindow = nullptr; developerToolsWindow = nullptr; } };
         NativeMouseWindow mouse(window); mouseWindow = &mouse;
         if (!mouse.registered()) throw std::runtime_error("Cannot register native raw mouse input");
-        puts("[Input] Native Win32 keyboard/raw mouse ready. Click to capture, Esc releases, F1 controls. WASD=move; E=use; R=reload; captured Space=jump; menu Space=confirm/skip.");
+        DeveloperToolsWindow developerTools(window, mouse); developerToolsWindow = &developerTools;
+        ClearMouseWindow clearMouseWindow;
+        puts("[Input] Native Win32 keyboard/raw mouse ready. Click to capture, Esc releases, F1 controls, F5 developer tools. WASD=move; E=use; R=reload; captured Space=jump; menu Space=confirm/skip.");
         if (!testInputPath.empty())
-            puts("[InputTest] Opt-in script active: '<key> [<holdMs 1..10000>]' (bare menu 250ms, I/J/K/L 2000ms), 'mouse <dx> <dy>', 'capture', '0' inspect; an invalid line blocks later commands until fixed; release lines report poll/nonneutral/change deltas.");
+            puts("[InputTest] Opt-in script active: '<key> [<holdMs 1..10000>]' (bare menu 250ms, I/J/K/L 2000ms; 116=F5 panel), 'mouse <dx> <dy>', 'capture', '0' inspect; 'dev open|close|status', 'dev mission <ID>', 'dev speed <preset>', 'dev invincible on|off', 'dev capture <absolute BMP path>'; an invalid line blocks later commands until fixed; release lines report poll/nonneutral/change deltas.");
 
         DarkRecomp::CDisplayContextD3D11 display;
         RECT actualClient{}; GetClientRect(window, &actualClient);
@@ -405,6 +414,7 @@ int wmain(int argc, wchar_t** argv) {
                 outlier.onLoopTop(loopTop);
             }
             while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+                if (developerTools.handleMessage(message)) continue;
                 if(manualShadowCapture && message.hwnd==window && message.message==WM_KEYDOWN &&
                    message.wParam==VK_F8 && !(message.lParam&(LPARAM(1)<<30))) {
                     if(preview && !shadowCapturePending && !shadowCaptureActive && shadowCaptureCount<2) {
@@ -459,7 +469,9 @@ int wmain(int argc, wchar_t** argv) {
             // exercised by InputContract. It sends no input to another process.
             const auto inputNow=GetTickCount64();
             if(testKey && inputNow>=keyRelease) {
-                nativeInput().windowMessage(window,WM_KEYUP,testKey,0);
+                MSG keyMessage{window, WM_KEYUP, WPARAM(testKey), 0};
+                if (!developerTools.handleMessage(keyMessage))
+                    nativeInput().windowMessage(window,WM_KEYUP,testKey,0);
                 nativeInput().windowMessage(window,WM_ACTIVATEAPP,GetForegroundWindow()==window,0);
                 const auto released=nativeInput().counters();
                 std::printf("[InputTest] released key=%u elapsed=%llu polls=+%llu nonneutral=+%llu changes=+%llu\n",testKey,inputNow-inputTestEpoch,
@@ -498,6 +510,10 @@ int wmain(int argc, wchar_t** argv) {
                             inputCaptureAt=inputNow;inspectNextEngineFrame();if(preview)preview->inspectNextWorldFrame();
                         }
                         break;}
+                    if(command.starts_with("dev ") && developerTools.handleTestCommand(command)) {
+                        liveInputCount=count;
+                        continue;
+                    }
                     unsigned key=0;ULONGLONG hold=kTestInputMenuHoldMs;
                     if(!parseTestInputKeyLine(command,key,hold)) {
                         if(testInputInvalidLogs<8) {
@@ -522,8 +538,10 @@ int wmain(int argc, wchar_t** argv) {
                 }
             }
             if(testKey && inputNow>=keyRelease) {
-                nativeInput().windowMessage(window,WM_SETFOCUS,0,0);
-                nativeInput().windowMessage(window,WM_KEYDOWN,testKey,0);
+                if (testKey != VK_F5) nativeInput().windowMessage(window,WM_SETFOCUS,0,0);
+                MSG keyMessage{window, WM_KEYDOWN, WPARAM(testKey), 0};
+                if (!developerTools.handleMessage(keyMessage))
+                    nativeInput().windowMessage(window,WM_KEYDOWN,testKey,0);
                 testKeyBase=nativeInput().counters();
                 keyRelease=inputNow+testKeyHoldMs;
                 std::printf("[InputTest] pressed key=%u hold=%llums elapsed=%llu\n",testKey,testKeyHoldMs,inputNow-inputTestEpoch);
@@ -723,6 +741,7 @@ int wmain(int argc, wchar_t** argv) {
         setPreviewFrameBackpressure(false);
         timerResolution.stop();
         sampler.stop();
+        developerTools.close();
         mouse.release();
         nativeInput().attachWindow(nullptr);
         printAudioHealth();

@@ -49,6 +49,10 @@ target_sources(DarkRuntime PRIVATE runtime/native/language_settings.cpp)
 target_sources(DarkRuntime PRIVATE runtime/native/fov_settings.cpp runtime/native/fov_camera.cpp)
 target_sources(DarkRuntime PRIVATE runtime/native/graphics_settings.cpp runtime/native/video_settings_menu.cpp)
 target_sources(DarkRuntime PRIVATE runtime/native/mouse_look.cpp)
+target_sources(DarkRuntime PRIVATE runtime/native/developer_tools.cpp
+    runtime/native/developer_player.cpp runtime/native/developer_missions.cpp
+    runtime/native/developer_invincibility.cpp runtime/native/developer_player_lookup.cpp
+    runtime/native/developer_update.cpp)
 target_include_directories(DarkRuntime PUBLIC "${CMAKE_SOURCE_DIR}")
 target_sources(DarkRuntime PRIVATE renderer/engine/render_trace.cpp)
 target_sources(DarkRuntime PRIVATE renderer/engine/stored_geometry.cpp)
@@ -135,7 +139,8 @@ add_custom_command(OUTPUT "${DARK_SHADER_DIR}/engine_world_fragments.generated.h
 target_sources(DarkRuntime PRIVATE "${DARK_SHADER_DIR}/engine_world_fragments.generated.h" "${DARK_SHADER_DIR}/engine_world_fragment_bindings.generated.h")
 target_link_libraries(DarkRuntime PUBLIC DarkRecompPPC bcrypt dbghelp d3d11 dxgi xaudio2 ole32 xinput)
 target_compile_options(DarkRuntime PRIVATE /Zi)
-add_executable(DarkRecomp app/windows/native_main.cpp app/windows/display_settings.cpp)
+add_executable(DarkRecomp app/windows/native_main.cpp app/windows/display_settings.cpp
+    app/windows/developer_tools_window.cpp)
 set(DARK_VIDEO_MENU "${CMAKE_BINARY_DIR}/native_assets/CubeWnd.pc.xcr")
 set(DARK_VIDEO_ARCHIVE "${CMAKE_BINARY_DIR}/native_assets/GameContext_Create.pc.xdf")
 add_custom_command(OUTPUT "${DARK_VIDEO_MENU}" "${DARK_VIDEO_ARCHIVE}"
@@ -348,6 +353,8 @@ if(BUILD_TESTING)
     target_compile_definitions(LanguageSettingsTests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
     add_test(NAME LanguageSettingsContract COMMAND LanguageSettingsTests)
     add_test(NAME NativeLanguageContract COMMAND NativeTests "${CMAKE_SOURCE_DIR}/Darkness" --language)
+    add_test(NAME DeveloperToolsContract COMMAND NativeTests "${CMAKE_SOURCE_DIR}/Darkness" --developer-tools)
+    set_tests_properties(DeveloperToolsContract PROPERTIES TIMEOUT 30)
     set_tests_properties(LanguageSettingsContract NativeLanguageContract PROPERTIES TIMEOUT 30)
     add_test(NAME VideoSettingsContract COMMAND NativeTests "${CMAKE_SOURCE_DIR}/Darkness" --video-settings)
     set_tests_properties(VideoSettingsContract PROPERTIES TIMEOUT 30)
