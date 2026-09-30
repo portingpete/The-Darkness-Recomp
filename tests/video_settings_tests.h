@@ -2,6 +2,7 @@
 #include "runtime/native/graphics_settings.h"
 #include "runtime/native/video_settings_menu.h"
 #include "runtime/native/fov_settings.h"
+#include "runtime/native/language_settings.h"
 #include <fstream>
 
 // Read through the guest's real file imports, including the startup archive.
@@ -101,7 +102,9 @@ static void testVideoSettings(PPCContext& ctx) {
 
     const uint32_t block = memory->allocate(0x10000);
     check(block != 0, "menu fixture allocation failed");
-    struct Cleanup { uint32_t block; ~Cleanup() { setGraphicsSettings({}); setFieldOfViewSetting(0); memory->release(block); } } cleanup{block};
+    struct Cleanup { uint32_t block; GameLanguage language; ~Cleanup() {
+        setGraphicsSettings({}); setFieldOfViewSetting(0); setGameLanguageSetting(language); memory->release(block);
+    } } cleanup{block, gameLanguageSetting()};
     auto* base = memory->base();
     std::memset(base + block, 0, 0x10000);
     const uint32_t button = block, parent = block + 0x1000, message = block + 0x2000;
@@ -249,6 +252,46 @@ static void testVideoSettings(PPCContext& ctx) {
     for (int i=0;i<40;++i) changeVideoSetting("darkrecomp.brightness",1);
     check(graphicsSettings().brightnessPercent==200,"brightness upper bound wrapped");
     setGraphicsSettings(before);
+    // Select the language through the original CubeButton property parser,
+    // directional messages, Confirm dispatch and pressed callback. Preference
+    // changes must request persistence without changing any graphics setting.
+    string(block + 0x3800, "darkrecomp.language");
+    call = ctx;
+    call.r3.u64 = button; call.r4.u64 = block + 0x3200;
+    call.r5.u64 = block + 0x3000; call.r6.u64 = block + 0x3800;
+    sub_8239F0E0(call, base);
+    setGameLanguageSetting(GameLanguage::System);
+    while (takeDisplaySettingsSaveRequest()) {}
+    for (const auto language : {GameLanguage::English, GameLanguage::German, GameLanguage::French,
+                               GameLanguage::Spanish, GameLanguage::Italian, GameLanguage::System}) {
+        key(227);
+        check(gameLanguageSetting() == language && graphicsSettings() == before && takeDisplaySettingsSaveRequest(),
+              "language row skipped a supported language, failed to wrap or changed graphics settings");
+        const auto display = language == GameLanguage::System ? std::wstring_view(L"System") : gameLanguageDisplayName(language);
+        check(videoSettingLabel("darkrecomp.language").find(std::string(display.begin(), display.end())) != std::string::npos,
+              "language row label differs from the selected preference");
+        key(227 | 0x8000);
+        check(gameLanguageSetting() == language && !takeDisplaySettingsSaveRequest(),
+              "language release event changed or saved the selection twice");
+    }
+    key(226);
+    check(gameLanguageSetting() == GameLanguage::Italian && takeDisplaySettingsSaveRequest(),
+          "Left did not wrap System language to Italian");
+    key(228);
+    check(gameLanguageSetting() == GameLanguage::System && takeDisplaySettingsSaveRequest(),
+          "original Confirm did not cycle the language preference");
+    call = ctx; call.r3.u64 = button; call.r4.u64 = message;
+    sub_823981D8(call, base);
+    check(gameLanguageSetting() == GameLanguage::English && call.r3.u32 == 1 && takeDisplaySettingsSaveRequest(),
+          "mouse/pressed callback did not change and save language");
+    memory->write32(button + 84, 0);
+    key(227);
+    check(gameLanguageSetting() == GameLanguage::English && !takeDisplaySettingsSaveRequest(),
+          "inactive language row consumed directional input");
+    memory->write32(button + 84, 1);
+    check(!changeVideoSetting("darkrecomp.language", 0) && gameLanguageSetting() == GameLanguage::English &&
+          !takeDisplaySettingsSaveRequest() && graphicsSettings() == before,
+          "invalid language direction changed settings");
     check(!changeVideoSetting("cg_prevmenu()", 1) && graphicsSettings() == before,
           "non-PC script was consumed by native settings");
     for (const auto action : {"darkrecomp.vsync", "darkrecomp.mode", "darkrecomp.fps", "darkrecomp.resolution"}) {
@@ -278,7 +321,7 @@ static void testVideoSettings(PPCContext& ctx) {
     // The engine gives small text two glyphs per cell. Dynamic values must
     // fit the authored eight-cell column without a font change or word wrap.
     for (const auto action : {"darkrecomp.fov", "darkrecomp.bloom", "darkrecomp.vsync",
-                              "darkrecomp.fps", "darkrecomp.resolution", "darkrecomp.mode", "darkrecomp.motionblur", "darkrecomp.antialiasing", "darkrecomp.gamma", "darkrecomp.brightness"}) {
+                              "darkrecomp.fps", "darkrecomp.resolution", "darkrecomp.mode", "darkrecomp.motionblur", "darkrecomp.antialiasing", "darkrecomp.gamma", "darkrecomp.brightness", "darkrecomp.language"}) {
         for (int i = 0; i < 128; ++i) {
             for (bool saved : {true, false}) {
                 reportDisplaySettingsSave(saved);

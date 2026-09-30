@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cwchar>
 #include <algorithm>
+#include <optional>
 
 namespace DarkRecomp {
 using namespace Native;
@@ -78,8 +79,11 @@ GraphicsSettings loadGraphicsSettings(const std::filesystem::path& path) noexcep
             readUnsigned(path, L"BrightnessPercent", defaults.brightnessPercent, 50, 200)};
 }
 
-bool saveDisplaySettings(const std::filesystem::path& path, float fov, const GraphicsSettings& settings) noexcept {
-    if (!isValidConfiguredHorizontalFovDegrees(fov) || !validGraphicsSettings(settings)) return false;
+namespace {
+bool saveSettings(const std::filesystem::path& path, float fov, const GraphicsSettings& settings,
+                  std::optional<GameLanguage> language) noexcept {
+    if (!isValidConfiguredHorizontalFovDegrees(fov) || !validGraphicsSettings(settings) ||
+        (language && !validGameLanguage(*language))) return false;
     try {
         // Commit the complete selection together. Work on a private adjacent
         // copy so a write failure cannot leave half of the settings saved.
@@ -100,10 +104,21 @@ bool saveDisplaySettings(const std::filesystem::path& path, float fov, const Gra
             !writeUnsigned(staging, L"MotionBlur", settings.motionBlur) ||
             !writeUnsigned(staging, L"Antialiasing", settings.antialiasing) ||
             !writeUnsigned(staging, L"GammaPercent", settings.gammaPercent) ||
-            !writeUnsigned(staging, L"BrightnessPercent", settings.brightnessPercent)) return false;
+            !writeUnsigned(staging, L"BrightnessPercent", settings.brightnessPercent) ||
+            (language && !saveGameLanguage(staging, *language))) return false;
         WritePrivateProfileStringW(nullptr, nullptr, nullptr, temporary);
         return MoveFileExW(temporary, path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != FALSE;
     } catch (...) { return false; }
+}
+}
+
+bool saveDisplaySettings(const std::filesystem::path& path, float fov, const GraphicsSettings& settings) noexcept {
+    return saveSettings(path, fov, settings, std::nullopt);
+}
+
+bool saveDisplaySettings(const std::filesystem::path& path, float fov, const GraphicsSettings& settings,
+                         GameLanguage language) noexcept {
+    return saveSettings(path, fov, settings, language);
 }
 
 }

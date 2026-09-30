@@ -12,8 +12,14 @@ enum class GameLanguage : uint32_t {
 bool validGameLanguage(GameLanguage language) noexcept;
 bool parseGameLanguage(std::wstring_view text, GameLanguage& language) noexcept;
 std::wstring_view gameLanguageName(GameLanguage language) noexcept;
+std::wstring_view gameLanguageDisplayName(GameLanguage language) noexcept;
+// The editable preference applies on the next launch. Guest localization
+// remains on the effective language latched before game initialization.
 GameLanguage gameLanguageSetting() noexcept;
 bool setGameLanguageSetting(GameLanguage language) noexcept;
+bool initializeGameLanguageSetting(GameLanguage language) noexcept;
+// A command-line override affects only this run, not the saved preference.
+bool overrideGameLanguageForRun(GameLanguage language) noexcept;
 uint32_t consoleLanguageFor(GameLanguage language, uint16_t windowsUiLanguage) noexcept;
 uint32_t configuredConsoleLanguage() noexcept;
 

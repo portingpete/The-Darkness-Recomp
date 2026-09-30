@@ -6,6 +6,7 @@
 namespace DarkRecomp::Native {
 namespace {
 std::atomic<GameLanguage> selected{GameLanguage::System};
+std::atomic<uint32_t> effective{consoleLanguageFor(GameLanguage::System, GetUserDefaultUILanguage())};
 bool equals(std::wstring_view text, std::wstring_view expected) noexcept {
     if (text.size() != expected.size()) return false;
     for (size_t i = 0; i < text.size(); ++i) {
@@ -50,10 +51,32 @@ std::wstring_view gameLanguageName(GameLanguage language) noexcept {
     default: return {};
     }
 }
+std::wstring_view gameLanguageDisplayName(GameLanguage language) noexcept {
+    switch (language) {
+    case GameLanguage::System: return L"System default";
+    case GameLanguage::English: return L"English";
+    case GameLanguage::German: return L"German";
+    case GameLanguage::French: return L"French";
+    case GameLanguage::Spanish: return L"Spanish";
+    case GameLanguage::Italian: return L"Italian";
+    default: return {};
+    }
+}
 GameLanguage gameLanguageSetting() noexcept { return selected.load(std::memory_order_relaxed); }
 bool setGameLanguageSetting(GameLanguage language) noexcept {
     if (!validGameLanguage(language)) return false;
     selected.store(language, std::memory_order_relaxed);
+    return true;
+}
+bool initializeGameLanguageSetting(GameLanguage language) noexcept {
+    if (!validGameLanguage(language)) return false;
+    effective.store(consoleLanguageFor(language, GetUserDefaultUILanguage()), std::memory_order_relaxed);
+    selected.store(language, std::memory_order_relaxed);
+    return true;
+}
+bool overrideGameLanguageForRun(GameLanguage language) noexcept {
+    if (!validGameLanguage(language)) return false;
+    effective.store(consoleLanguageFor(language, GetUserDefaultUILanguage()), std::memory_order_relaxed);
     return true;
 }
 uint32_t consoleLanguageFor(GameLanguage language, uint16_t windowsUiLanguage) noexcept {
@@ -67,7 +90,7 @@ uint32_t consoleLanguageFor(GameLanguage language, uint16_t windowsUiLanguage) n
     }
 }
 uint32_t configuredConsoleLanguage() noexcept {
-    return consoleLanguageFor(gameLanguageSetting(), GetUserDefaultUILanguage());
+    return effective.load(std::memory_order_relaxed);
 }
 GameLanguage loadGameLanguage(const std::filesystem::path& path) noexcept {
     wchar_t text[32]{};

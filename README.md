@@ -38,9 +38,9 @@ The mouse wheel selects dialogue and menu choices; **E** confirms.
 Press **F5** to open developer tools for mission selection, player speed,
 and invincibility. Mission loading can autosave; see
 [CONTROLS.md](CONTROLS.md#developer-tools) before selecting a destination.
-Text language follows supported Windows UI languages. Set `[Game] Language=en`
-in `DarkRecomp.settings.ini` to choose English, or use `de`, `fr`, `es`, `it`, or
-`auto`; restart to apply it. See [CONTROLS.md](CONTROLS.md) for language overrides
+Choose **Language** in **Options > Video Settings** or the settings launcher:
+System default, English, German, French, Spanish, or Italian. In-game changes
+take effect after restarting. See [CONTROLS.md](CONTROLS.md) for language overrides
 and the full input guide.
 
 ## Steam Deck and Linux

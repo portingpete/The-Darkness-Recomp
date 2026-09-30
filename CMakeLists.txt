@@ -177,7 +177,8 @@ add_executable(DarkRecompSettings WIN32
     app/windows/video_settings_launcher.cpp
     app/windows/display_settings.cpp
     runtime/native/graphics_settings.cpp
-    runtime/native/fov_settings.cpp)
+    runtime/native/fov_settings.cpp
+    runtime/native/language_settings.cpp)
 target_include_directories(DarkRecompSettings PRIVATE "${CMAKE_SOURCE_DIR}")
 target_compile_definitions(DarkRecompSettings PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
 target_link_libraries(DarkRecompSettings PRIVATE user32 gdi32 shell32 comctl32)

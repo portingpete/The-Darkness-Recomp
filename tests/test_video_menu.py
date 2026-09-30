@@ -86,7 +86,22 @@ class VideoMenu(unittest.TestCase):
             self.assertEqual(buttons, ["darkrecomp." + key for key in SETTINGS])
             self.assertIn("darkrecomp.antialiasing", buttons)
             self.assertIn("darkrecomp.gamma", buttons)
+            self.assertIn("darkrecomp.language", buttons)
             self.assertEqual(buttons[:2], ["darkrecomp.brightness", "darkrecomp.gamma"])
+
+    def test_language_selection_is_visible_with_restart_help(self):
+        for registry, _ in registries(self.output):
+            page, = [n for n in registry.roots if registry.decode(n) == ("WINDOW", "options_video")]
+            controls = [dict(registry.decode(c) for c in window.children)
+                        for window in page.children if registry.decode(window)[0] == "WINDOW"]
+            label, = [c for c in controls if c["TEXT"] == "sc, Language"]
+            button, = [c for c in controls if c.get("SCRIPT_PRESSED") == "darkrecomp.language"]
+            self.assertEqual(label["RGN"], "1,14,10,1")
+            self.assertEqual(button["RGN"], "11,14,8,1")
+            self.assertEqual(button["TEXT"], "sc, <    System    >")
+            self.assertEqual(button["CLASSNAME"], "CubeButton")
+            self.assertEqual(button["ALWAYSPAINT"], "1")
+            self.assertIn("sc, Resolution/language: restart to apply", [c["TEXT"] for c in controls])
 
     def test_value_columns_and_help_fit_the_original_cell_grid(self):
         for registry, _ in registries(self.output):

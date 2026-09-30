@@ -1,5 +1,6 @@
 #include "graphics_settings.h"
 #include "fov_settings.h"
+#include "language_settings.h"
 #include "video_settings_menu.h"
 #include "runtime.h"
 #include "ppc_recomp_shared.h"
@@ -25,6 +26,14 @@ template<size_t N> unsigned step(unsigned value, int direction, const std::array
 
 bool changeVideoSetting(std::string_view action, int direction) noexcept {
     if (direction != -1 && direction != 1) return false;
+    if (action == "darkrecomp.language") {
+        const auto next = step(unsigned(gameLanguageSetting()), direction,
+            std::array{unsigned(GameLanguage::System), unsigned(GameLanguage::English), unsigned(GameLanguage::German),
+                       unsigned(GameLanguage::French), unsigned(GameLanguage::Spanish), unsigned(GameLanguage::Italian)});
+        if (!setGameLanguageSetting(GameLanguage(next))) return false;
+        requestDisplaySettingsSave();
+        return true;
+    }
     auto settings = graphicsSettings();
     if (action == "darkrecomp.bloom") settings.bloom = !settings.bloom;
     else if (action == "darkrecomp.motionblur") settings.motionBlur = !settings.motionBlur;
@@ -71,6 +80,13 @@ std::string videoSettingLabel(std::string_view action) {
         const auto value = fieldOfViewSetting();
         std::snprintf(fov, sizeof(fov), "%g", double(value));
         result = value == 0 ? "Original" : fov;
+    }
+    else if (action == "darkrecomp.language") {
+        const auto language = gameLanguageSetting();
+        // The original value column allows twelve glyphs between the arrows.
+        // Use the compact System label; all explicit language names fit.
+        const auto name = language == GameLanguage::System ? std::wstring_view(L"System") : gameLanguageDisplayName(language);
+        result.assign(name.begin(), name.end());
     }
     if (!result.empty()) {
         // The original TEXT callback sizes the button from its first label.

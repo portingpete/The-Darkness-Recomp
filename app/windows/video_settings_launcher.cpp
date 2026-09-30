@@ -17,11 +17,12 @@
 namespace {
 namespace fs = std::filesystem;
 using DarkRecomp::Native::GraphicsSettings;
+using DarkRecomp::Native::GameLanguage;
 
 constexpr int kPlayButton = IDOK;
 constexpr int kCancelButton = IDCANCEL;
 constexpr int kClientWidth = 620;
-constexpr int kClientHeight = 570;
+constexpr int kClientHeight = 610;
 
 enum Row : size_t {
     Brightness,
@@ -34,12 +35,13 @@ enum Row : size_t {
     Display,
     MotionBlur,
     Antialiasing,
+    Language,
     RowCount,
 };
 
 constexpr std::array<const wchar_t*, RowCount> kRowNames{
     L"Brightness", L"Gamma", L"Field of view", L"Bloom", L"Vertical sync",
-    L"Frame limit", L"Resolution", L"Display", L"Motion blur", L"Antialiasing",
+    L"Frame limit", L"Resolution", L"Display", L"Motion blur", L"Antialiasing", L"Language",
 };
 
 struct Choice {
@@ -59,6 +61,7 @@ struct Launcher {
     fs::path settingsPath;
     GraphicsSettings settings;
     float fieldOfView = 0;
+    GameLanguage language = GameLanguage::System;
     std::array<RowControl, RowCount> rows;
 };
 
@@ -180,6 +183,10 @@ void populateChoices(Launcher& launcher) {
     addChoice(rows[MotionBlur], L"On", 1);
     addChoice(rows[Antialiasing], L"Off", 0);
     addChoice(rows[Antialiasing], L"FXAA", 1);
+    for (const auto language : {GameLanguage::System, GameLanguage::English, GameLanguage::German,
+                               GameLanguage::French, GameLanguage::Spanish, GameLanguage::Italian})
+        addChoice(rows[Language], std::wstring(DarkRecomp::Native::gameLanguageDisplayName(language)),
+                  unsigned(language));
 
     const auto& settings = launcher.settings;
     selectValue(launcher, Brightness, settings.brightnessPercent);
@@ -192,10 +199,11 @@ void populateChoices(Launcher& launcher) {
     selectValue(launcher, Display, settings.fullscreen);
     selectValue(launcher, MotionBlur, settings.motionBlur);
     selectValue(launcher, Antialiasing, settings.antialiasing);
+    selectValue(launcher, Language, unsigned(launcher.language));
 }
 
 void createControls(HWND window, Launcher& launcher) {
-    control(window, L"STATIC", L"Choose video settings, then click Play.", 0,
+    control(window, L"STATIC", L"Choose game settings, then click Play.", 0,
             26, 17, 565, 20);
     control(window, L"STATIC", L"Your current settings are loaded automatically.", 0,
             26, 40, 565, 20);
@@ -209,11 +217,11 @@ void createControls(HWND window, Launcher& launcher) {
     populateChoices(launcher);
     control(window, L"STATIC",
             L"Settings save when you click Play. Internal resolution takes effect at startup.",
-            0, 26, 486, 565, 36);
+            0, 26, 526, 565, 36);
     control(window, L"BUTTON", L"Play", BS_DEFPUSHBUTTON | WS_TABSTOP,
-            384, 529, 95, 29, kPlayButton);
+            384, 569, 95, 29, kPlayButton);
     control(window, L"BUTTON", L"Cancel", BS_PUSHBUTTON | WS_TABSTOP,
-            485, 529, 95, 29, kCancelButton);
+            485, 569, 95, 29, kCancelButton);
 }
 
 double chosenValue(const Launcher& launcher, Row row) {
@@ -236,8 +244,9 @@ void saveAndLaunch(HWND window, Launcher& launcher) {
     settings.fullscreen = chosenValue(launcher, Display) != 0;
     settings.motionBlur = chosenValue(launcher, MotionBlur) != 0;
     settings.antialiasing = chosenValue(launcher, Antialiasing) != 0;
+    const auto language = GameLanguage(unsigned(chosenValue(launcher, Language)));
 
-    if (!DarkRecomp::saveDisplaySettings(launcher.settingsPath, fov, settings))
+    if (!DarkRecomp::saveDisplaySettings(launcher.settingsPath, fov, settings, language))
         throw std::runtime_error("Could not save DarkRecomp.settings.ini. "
                                  "Check that the game folder is writable, then retry.");
 
@@ -247,7 +256,7 @@ void saveAndLaunch(HWND window, Launcher& launcher) {
     PROCESS_INFORMATION process{};
     if (!CreateProcessW(launcher.preview.c_str(), command.data(), nullptr, nullptr,
                         FALSE, 0, nullptr, launcher.root.c_str(), &startup, &process)) {
-        throw std::runtime_error("Video settings were saved, but the game could not start "
+        throw std::runtime_error("Settings were saved, but the game could not start "
                                  "(Windows error " + std::to_string(GetLastError()) + ").");
     }
     CloseHandle(process.hThread);
@@ -268,7 +277,7 @@ LRESULT CALLBACK launcherWindowProc(HWND window, UINT message, WPARAM wParam, LP
         if (LOWORD(wParam) == kPlayButton && HIWORD(wParam) == BN_CLICKED && launcher) {
             try { saveAndLaunch(window, *launcher); }
             catch (const std::exception& error) {
-                MessageBoxA(window, error.what(), "Video settings launch failed", MB_OK | MB_ICONERROR);
+                MessageBoxA(window, error.what(), "Settings launch failed", MB_OK | MB_ICONERROR);
             }
             return 0;
         }
@@ -299,6 +308,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         checkGameFiles(launcher);
         launcher.settings = DarkRecomp::loadGraphicsSettings(launcher.settingsPath);
         launcher.fieldOfView = DarkRecomp::loadFieldOfView(launcher.settingsPath);
+        launcher.language = DarkRecomp::Native::loadGameLanguage(launcher.settingsPath);
 
         constexpr auto className = L"DarkRecompVideoSettingsLauncher";
         WNDCLASSEXW windowClass{sizeof(windowClass)};
@@ -314,7 +324,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         RECT bounds{0, 0, kClientWidth, kClientHeight};
         if (!AdjustWindowRectEx(&bounds, style, FALSE, exStyle))
             throw std::runtime_error("Cannot size the video settings window.");
-        HWND window = CreateWindowExW(exStyle, className, L"The Darkness - Video Settings",
+        HWND window = CreateWindowExW(exStyle, className, L"The Darkness - Settings",
             style, CW_USEDEFAULT, CW_USEDEFAULT,
             bounds.right - bounds.left, bounds.bottom - bounds.top,
             nullptr, nullptr, instance, &launcher);

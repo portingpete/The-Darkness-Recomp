@@ -43,15 +43,56 @@ int main() {
             check(parseGameLanguage(alias.name, parsed) && parsed == alias.language,
                   "language name/code is not ASCII case insensitive");
         }
+        const struct { GameLanguage language; std::wstring_view label; } labels[]{
+            {GameLanguage::System, L"System default"}, {GameLanguage::English, L"English"},
+            {GameLanguage::German, L"German"}, {GameLanguage::French, L"French"},
+            {GameLanguage::Spanish, L"Spanish"}, {GameLanguage::Italian, L"Italian"}
+        };
+        for (const auto& label : labels) {
+            check(gameLanguageDisplayName(label.language) == label.label, "shared language display label changed");
+            for (const wchar_t c : label.label)
+                check(c > 0 && c < 128, "language label contains characters outside the menu font's ASCII repertoire");
+        }
         check(saveGameLanguage(path, GameLanguage::English), "restore English language selection");
         for (const auto bad : {L"", L"1", L"2", L"en-US", L"english!", L" en", L"en ", L"japanese"}) {
             GameLanguage parsed = GameLanguage::French;
             check(!parseGameLanguage(bad, parsed) && parsed == GameLanguage::French,
                   "invalid language text changed the caller's selection");
         }
+        check(initializeGameLanguageSetting(GameLanguage::English) &&
+              gameLanguageSetting() == GameLanguage::English && configuredConsoleLanguage() == 1,
+              "startup did not latch the saved language");
+        check(overrideGameLanguageForRun(GameLanguage::German) &&
+              gameLanguageSetting() == GameLanguage::English && configuredConsoleLanguage() == 3,
+              "command-line override changed the editable language preference");
+        check(saveGameLanguage(path, gameLanguageSetting()) && loadGameLanguage(path) == GameLanguage::English,
+              "saving preferences persisted the command-line language override");
+        check(setGameLanguageSetting(GameLanguage::French) &&
+              gameLanguageSetting() == GameLanguage::French && configuredConsoleLanguage() == 3,
+              "pending menu preference changed this run's localized resources");
+        check(saveGameLanguage(path, gameLanguageSetting()) && loadGameLanguage(path) == GameLanguage::French &&
+              configuredConsoleLanguage() == 3,
+              "pending language could not persist independently of the effective guest language");
+        check(initializeGameLanguageSetting(loadGameLanguage(path)) && configuredConsoleLanguage() == 4,
+              "next launch did not activate the saved language preference");
+        check(initializeGameLanguageSetting(GameLanguage::System) &&
+              gameLanguageSetting() == GameLanguage::System && configuredConsoleLanguage() ==
+                  consoleLanguageFor(GameLanguage::System, GetUserDefaultUILanguage()),
+              "automatic startup language did not resolve the Windows UI language");
+        const auto systemLanguage = configuredConsoleLanguage();
+        check(setGameLanguageSetting(GameLanguage::Italian) && configuredConsoleLanguage() == systemLanguage,
+              "automatic effective language followed a later explicit menu preference");
+        check(initializeGameLanguageSetting(gameLanguageSetting()) && configuredConsoleLanguage() == 6,
+              "reinitialization did not latch the next launch's explicit language");
+        check(saveGameLanguage(path, GameLanguage::English), "restore persisted English preference");
         const auto invalid = static_cast<GameLanguage>(2);
         check(!setGameLanguageSetting(invalid) && gameLanguageSetting() == GameLanguage::Italian,
               "unsupported retail language ID changed runtime selection");
+        check(!initializeGameLanguageSetting(invalid) && !overrideGameLanguageForRun(invalid) &&
+              gameLanguageSetting() == GameLanguage::Italian && configuredConsoleLanguage() == 6,
+              "invalid startup or CLI language changed preferred/effective state");
+        check(gameLanguageName(invalid).empty() && gameLanguageDisplayName(invalid).empty(),
+              "unsupported language has a persistence code or UI label");
         check(!saveGameLanguage(path, invalid) && loadGameLanguage(path) == GameLanguage::English,
               "unsupported language save changed existing preferences");
         for (const auto bad : {L"japanese", L"1", L"english!", L"abcdefghijklmnopqrstuvwxyz0123456789"}) {
@@ -73,8 +114,8 @@ int main() {
         wchar_t other[16]{};
         GetPrivateProfileStringW(L"Display", L"FrameRateLimit", L"", other, 16, path.c_str());
         check(std::wstring_view(other) == L"144", "saving language changed display preferences");
-        setGameLanguageSetting(GameLanguage::System);
-        std::puts("Language settings: explicit host-independent IDs, automatic regional fallback, strict parsing and persistence passed.");
+        initializeGameLanguageSetting(GameLanguage::System);
+        std::puts("Language settings: startup latch, pending preferences, run-only overrides, labels, parsing and persistence passed.");
         return 0;
     } catch (const std::exception& error) { std::fprintf(stderr, "%s\n", error.what()); return 1; }
 }

@@ -206,7 +206,8 @@ int wmain(int argc, wchar_t** argv) {
     puts("DarkRecomp native Windows AOT runtime - development build, gameplay incomplete");
     try {
         const auto settingsPath = std::filesystem::absolute(gameDir).parent_path() / L"DarkRecomp.settings.ini";
-        setGameLanguageSetting(overrideLanguage ? commandLineLanguage : loadGameLanguage(settingsPath));
+        initializeGameLanguageSetting(loadGameLanguage(settingsPath));
+        if (overrideLanguage) overrideGameLanguageForRun(commandLineLanguage);
         setFieldOfViewSetting(overrideFov ? commandLineFov : DarkRecomp::loadFieldOfView(settingsPath));
         auto activeGraphics = DarkRecomp::loadGraphicsSettings(settingsPath);
         if (overrideFps) activeGraphics.frameRateLimit = targetFps;
@@ -438,9 +439,10 @@ int wmain(int argc, wchar_t** argv) {
                         requestDisplaySettingsSave();
                     }
                     if (takeDisplaySettingsSaveRequest()) {
-                        const bool saved = DarkRecomp::saveDisplaySettings(settingsPath, fieldOfViewSetting(), graphicsSettings());
+                        const bool saved = DarkRecomp::saveDisplaySettings(settingsPath, fieldOfViewSetting(), graphicsSettings(),
+                                                                          gameLanguageSetting());
                         reportDisplaySettingsSave(saved);
-                        if (!saved) std::fputs("[Display] Could not save video settings.\n", stderr);
+                        if (!saved) std::fputs("[Settings] Could not save display/language settings.\n", stderr);
                     }
                     const auto selected = graphicsSettings();
                     if (selected.frameRateLimit != activeGraphics.frameRateLimit)
