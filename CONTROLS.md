@@ -89,7 +89,8 @@ also release it. Click again after returning to the game.
 - **Left click:** fire the right weapon; **right click:** fire the left weapon.
 - **Middle click** or **Shift:** zoom.
 - **Wheel:** previous/next choice in dialogue and menus, even with the mouse
-  captured; during gameplay, cycle weapons. **1 / 2:** cycle weapons.
+  captured; during gameplay with mouse capture, cycle weapons. Releasing
+  capture with **F2** disables gameplay wheel input. **1 / 2:** cycle weapons.
 - **Q:** manifest Darkness; **G:** use Darkness power; **3 / 4:** cycle powers.
 - **F:** redirect Darkling; **Tab:** journal; **Enter:** Start / pause.
 - **Menus:** arrows to navigate, **E** or released **Space** to confirm,

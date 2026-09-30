@@ -53,6 +53,7 @@ public:
     void setMouseLookEnabled(bool enabled);
     bool mouseLookEnabled();
     // The original client owns dialogue/menu focus independently of capture.
+    // Before its first signal, released capture permits startup menu input.
     void setGuestMenuActive(bool active);
     bool setMouseSensitivity(float sensitivity);
     void mouseMotion(LONG dx, LONG dy);
@@ -90,6 +91,7 @@ private:
     bool rightMouse_ = false;
     bool middleMouse_ = false;
     bool mouseLook_ = false, escapePauses_ = false, guestMenuActive_ = false;
+    bool guestMenuContextKnown_ = false;
     float mouseSensitivity_ = 1;
     int64_t mouseX_ = 0, mouseY_ = 0;
     uint64_t mouseEpoch_ = 0;

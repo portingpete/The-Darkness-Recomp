@@ -312,6 +312,15 @@ static void testMouseLookContract(PPCContext& ctx) {
     input.windowMessage(window, WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), 0);
     check((wheelButtons() & XINPUT_GAMEPAD_DPAD_RIGHT) != 0,
           "Original GUI exit did not restore gameplay weapon wheel input");
+    input.setMouseLookEnabled(false);
+    input.windowMessage(window, WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), 0);
+    check(wheelButtons() == 0,"Original gameplay signal allowed power cycling after F2 capture release");
+    memory->write32(client + 7360, block + 0xA500); tick();
+    input.windowMessage(window, WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), 0);
+    check((wheelButtons() & XINPUT_GAMEPAD_DPAD_UP) != 0,
+          "Original active GUI did not accept released mouse wheel input");
+    memory->write32(client + 7360, 0); tick();
+    check(wheelButtons() == 0,"Original released GUI exit retained wheel input");
     newEpoch(); base[client + 8816] = 2;
     std::array<uint8_t, 64> cameraBefore{};
     std::memcpy(cameraBefore.data(), base + client + 8880, cameraBefore.size());

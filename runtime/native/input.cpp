@@ -216,7 +216,6 @@ void NativeInput::clearKeysLocked() {
     haveMenuPos_ = false;
     escapePauses_ = false;
     mouseLook_ = false;
-    guestMenuActive_ = false;
     clearMouseLocked();
 }
 void NativeInput::clearMouseLocked() {
@@ -241,7 +240,8 @@ bool NativeInput::mouseLookEnabled() {
 }
 void NativeInput::setGuestMenuActive(bool active) {
     std::lock_guard lock(mutex_);
-    if (guestMenuActive_ == active) return;
+    if (guestMenuContextKnown_ && guestMenuActive_ == active) return;
+    guestMenuContextKnown_ = true;
     guestMenuActive_ = active;
     // A detent belongs to the UI/gameplay context in which it arrived. Never
     // replay a dialogue choice as a weapon switch when the dialogue closes.
@@ -293,6 +293,7 @@ void NativeInput::attachWindow(HWND window) {
     stopVibrationLocked();
     clearKeysLocked();
     resetPromptLocked();
+    guestMenuActive_ = guestMenuContextKnown_ = false;
     window_ = window;
     focused_ = false;
     settingsOpen_ = false;
@@ -323,6 +324,7 @@ void NativeInput::windowMessage(HWND window, UINT message, WPARAM key, LPARAM de
         clearKeysLocked();
         stopVibrationLocked();
         resetPromptLocked();
+        guestMenuActive_ = guestMenuContextKnown_ = false;
         window_ = nullptr;
         focused_ = false;
     } else if (message == WM_CAPTURECHANGED) {
@@ -358,7 +360,7 @@ void NativeInput::windowMessage(HWND window, UINT message, WPARAM key, LPARAM de
             middleMouse_ = message == WM_MBUTTONDOWN;
             if (middleMouse_) promptSource_.store(PromptInputSource::KeyboardMouse, std::memory_order_release);
         }
-        else if (message == WM_MOUSEWHEEL) {
+        else if (message == WM_MOUSEWHEEL && (mouseLook_ || guestMenuActive_ || !guestMenuContextKnown_)) {
             promptSource_.store(PromptInputSource::KeyboardMouse, std::memory_order_release);
             wheelRemainder_ += GET_WHEEL_DELTA_WPARAM(key);
             wheelPending_ = std::clamp(wheelPending_ + wheelRemainder_ / WHEEL_DELTA, -16, 16);
@@ -410,7 +412,7 @@ XINPUT_GAMEPAD NativeInput::keyboardLocked() {
     if (now >= wheelNext_) {
         if (wheelButton_) { wheelButton_ = 0; wheelNext_ = now + 20; }
         else if (wheelPending_) {
-            const bool menu = guestMenuActive_ || !mouseLook_;
+            const bool menu = guestMenuActive_ || (!mouseLook_ && !guestMenuContextKnown_);
             wheelButton_ = wheelPending_ > 0
                 ? (menu ? XINPUT_GAMEPAD_DPAD_UP : XINPUT_GAMEPAD_DPAD_RIGHT)
                 : (menu ? XINPUT_GAMEPAD_DPAD_DOWN : XINPUT_GAMEPAD_DPAD_LEFT);

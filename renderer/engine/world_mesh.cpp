@@ -193,8 +193,8 @@ bool locateImmediateNonfinite(const StoredGeometry& g,ImmediateCaptureReason& ou
 }
 // Task-62b recovery: NaN/Inf allocator leftovers in immediate vertices that no
 // index references must not reject visible triangles (all-zero bytes decode
-// finite in every format). Zeroes every unreferenced vertex â€” tail and
-// interior holes alike â€” in a still-unpublished owned copy, preserving live
+// finite in every format). Zeroes every unreferenced vertex, including tail and
+// interior holes, in a still-unpublished owned copy, preserving live
 // bytes; indices are untouched, so order, winding and duplicates survive.
 // Takes the SAME owned index snapshot that the caller validated OOB-free and
 // will publish, so canonicalization and submission cannot disagree; OOB
