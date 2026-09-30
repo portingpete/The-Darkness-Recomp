@@ -1407,7 +1407,7 @@ static void testFiles(PPCContext& ctx, uint32_t scratch) {
     };
     check(open("game:\\..\\CMakeLists.txt") == 0xc0000033, "File path escaped its guest mount");
     check(open("game:\\__native_test_missing_file__") == 0xc0000034, "Missing file did not return its native status");
-    check(open("game:\\basefile.exe") == 0, "Original image could not be opened through the guest file ABI");
+    check(open("game:\\default.xex") == 0, "Original image could not be opened through the guest file ABI");
     uint32_t file = memory->read32(scratch + 80);
     // This title's SDK passes ShareAccess in r7 and OpenOptions in r8.
     // Original callers at 0x828A8B88 and 0x828A9C0C set both registers.
@@ -1438,7 +1438,7 @@ static void testFiles(PPCContext& ctx, uint32_t scratch) {
     __imp__NtQueryInformationFile(ctx, base);
     check(ctx.r3.u32 == 0, "File size query failed");
     uint64_t size = _byteswap_uint64(*reinterpret_cast<uint64_t*>(base + scratch + 136));
-    check(size == std::filesystem::file_size(memory->gameDirectory() / "basefile.exe"), "File size endian translation failed");
+    check(size == std::filesystem::file_size(memory->gameDirectory() / "default.xex"), "File size endian translation failed");
     auto read = [&](uint64_t offset) {
         *reinterpret_cast<uint64_t*>(base + scratch + 48) = _byteswap_uint64(offset);
         ctx.r3.u64 = file; ctx.r4.u64 = 0; ctx.r5.u64 = 0; ctx.r6.u64 = 0;
@@ -1448,7 +1448,7 @@ static void testFiles(PPCContext& ctx, uint32_t scratch) {
     };
     check(read(0) == 0 && memory->read32(scratch + 68) == 32, "Native file read failed");
     char expected[32];
-    std::ifstream actual(memory->gameDirectory() / "basefile.exe", std::ios::binary);
+    std::ifstream actual(memory->gameDirectory() / "default.xex", std::ios::binary);
     actual.read(expected, sizeof(expected));
     check(memcmp(expected, base + scratch + 512, sizeof(expected)) == 0, "File read changed the original bytes");
     auto original = PPC_LOOKUP_FUNC(base, PPC_CODE_BASE);
@@ -1639,11 +1639,11 @@ int main(int argc, char** argv) {
                   "Bare-relative null-root query acquired implicit volume");
             check(query("D:\\Content", 0xfffffffd) == 0,
                   "Explicit mounted Content query failed");
-            check(query("\\Device\\CdRom0\\basefile.exe", 0xfffffffd) == 0 &&
+            check(query("\\Device\\CdRom0\\default.xex", 0xfffffffd) == 0 &&
                   query("/dEvIcE/cDrOm0/Content", 0xfffffffd) == 0,
                   "CD-ROM mount lost case-insensitive or slash-normalized lookup");
-            check(query("\\Device\\CdRom0basefile.exe", 0xfffffffd) == 0xc000000e &&
-                  query("\\Device\\CdRom00\\basefile.exe", 0xfffffffd) == 0xc000000e,
+            check(query("\\Device\\CdRom0default.xex", 0xfffffffd) == 0xc000000e &&
+                  query("\\Device\\CdRom00\\default.xex", 0xfffffffd) == 0xc000000e,
                   "Device name prefix was incorrectly accepted as the CD-ROM mount");
             size_t dirLength = strlen("D:\\Content");
             memcpy(resolveBase + scratch + 1024, "D:\\Content", dirLength + 1);

@@ -2,6 +2,7 @@
 #include "audio_driver.h"
 #include "xma_bridge.h"
 #include "ppc_image_metadata.h"
+#include "xex_image.h"
 #include <bcrypt.h>
 #include <array>
 #include <dbghelp.h>
@@ -341,17 +342,25 @@ static std::string digest(const std::vector<uint8_t>& bytes) {
 }
 void Memory::load(const std::filesystem::path& gameDir) {
     gameDir_ = std::filesystem::weakly_canonical(gameDir);
-    std::ifstream file(gameDir / "basefile.exe", std::ios::binary);
-    if (!file) throw std::runtime_error("Game directory must contain the original basefile.exe memory image");
-    std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(file)), {});
+    std::ifstream file(gameDir / "default.xex", std::ios::binary | std::ios::ate);
+    if (!file) throw std::runtime_error("Game directory must contain the original default.xex");
+    const auto fileSize = file.tellg();
+    if (fileSize < 24 || fileSize > 64 * 1024 * 1024)
+        throw std::runtime_error("Invalid default.xex size");
+    std::vector<uint8_t> original(static_cast<size_t>(fileSize));
+    file.seekg(0);
+    if (!file.read(reinterpret_cast<char*>(original.data()), original.size()))
+        throw std::runtime_error("Cannot read default.xex");
+    if (digest(original) != kGameXexSha256)
+        throw std::runtime_error("default.xex differs from the supported AOT revision");
+    auto decoded = decodeXex(original);
+    const auto& bytes = decoded.image;
     if (digest(bytes) != kGameImageSha256) throw std::runtime_error("Game image differs from the image used for AOT generation");
     if (bytes.size() > PPC_IMAGE_SIZE || !commit(PPC_IMAGE_BASE, PPC_IMAGE_SIZE))
         throw std::runtime_error("Cannot map the game image");
     memcpy(base_ + PPC_IMAGE_BASE, bytes.data(), bytes.size());
-    std::ifstream xexFile(gameDir / "_uncrypted.xex", std::ios::binary);
-    std::vector<uint8_t> xex((std::istreambuf_iterator<char>(xexFile)), {});
-    if (digest(xex) != kGameXexSha256) throw std::runtime_error("XEX differs from the AOT input");
-    headerSize_ = _byteswap_ulong(*reinterpret_cast<const uint32_t*>(xex.data() + 8));
+    const auto& xex = decoded.header;
+    headerSize_ = uint32_t(xex.size());
     if (headerSize_ > xex.size() || headerSize_ > 0x100000 || !commit(xexHeader, headerSize_))
         throw std::runtime_error("Invalid XEX header size");
     memcpy(base_ + xexHeader, xex.data(), headerSize_);

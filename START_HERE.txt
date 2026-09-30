@@ -4,15 +4,12 @@ THE DARKNESS RECOMP - START HERE
    Open the extracted folder. Do not run the game from inside the ZIP.
 
 2. Copy your own Xbox 360 game dump into the Darkness folder.
-   If _uncrypted.xex or basefile.exe is missing, generate them using the
-   PREPARING THE TWO MISSING FILES steps below. This is normal for a disc dump.
+   Only the original extracted files are needed. No XexTool preparation is needed.
    The finished folder should look like this:
 
      Launch.cmd
      LaunchWithSettings.cmd
      Darkness\
-       _uncrypted.xex
-       basefile.exe
        default.xex
        Content\
        System\
@@ -26,9 +23,8 @@ THE DARKNESS RECOMP - START HERE
 
    Put the game files directly inside Darkness, not Darkness\Darkness.
    Game files are not included. An ISO alone will not work: use the extracted
-   dump, including its decrypted _uncrypted.xex and basefile.exe images.
-   The release supports the same game revision used to build it. Renaming an
-   ISO or default.xex does not create the required decrypted images.
+   dump, including its original default.xex. The game decodes it in memory.
+   This build supports the same game revision used to build it.
 
 3. Double-click Launch.cmd to play immediately, or LaunchWithSettings.cmd to
    choose video settings before the game opens. No build or developer tools
@@ -42,45 +38,20 @@ the complete Windows folder. Deck gameplay and performance are not verified.
 This release supports The Darkness revision listed below. Other Xbox games
 and updated executables need their own port; changing a hash will not add support.
 
-PREPARING THE TWO MISSING FILES
-You need your own default.xex and xorloser's XexTool (v6.3 was tested).
-XexTool is a separate preparation tool and is not included in the release.
-basefile.exe is an extracted Xbox 360 memory image, not a Windows program.
+CHECKING YOUR GAME VERSION
+Open Darkness in File Explorer, type powershell into the address bar, and run:
 
-1. Put xextool.exe beside default.xex inside the Darkness folder.
-2. Open that folder in File Explorer. Type powershell into the address bar
-   and press Enter. Run these commands one at a time:
+   Get-FileHash .\default.xex -Algorithm SHA256 | Format-List
 
-   .\xextool.exe -e u -c u -o _uncrypted.xex default.xex
-   .\xextool.exe -b basefile.exe default.xex
-
-3. Confirm both commands report success. Keep default.xex and both new files
-   in Darkness, then run Launch.cmd from the parent folder.
-
-These commands preserve default.xex. Keep the -o option on the first command.
-Do not rename default.xex or apply region/devkit patches. Back up any existing
-generated files before regenerating them.
-
-CHECKING YOUR GAME VERSION (v0.1.1)
-Run this in the same PowerShell window:
-
-   Get-FileHash .\_uncrypted.xex, .\basefile.exe -Algorithm SHA256 | Format-List
-
-Expected SHA-256 values (uppercase/lowercase does not matter):
-_uncrypted.xex:
-  a7ccd87860889fa082d62dcc24382467d59c8031f6e99d2ed9f3dbddaa7d535e
-basefile.exe:
-  180b7fc8f57462f6bac3404ecab061a8d79914c7a3e9a12c238bd3449e72d049
+Expected original default.xex SHA-256 (uppercase/lowercase does not matter):
+  aace35a8f9bcdc7f28aeab9ff8cf3bdf200353f5c83705f6284487347acb3c5f
 
 The tested dump reports Title ID 545407EE, Media ID 0F213645, version 0.0.0.1,
 and All Regions. USA/Canada/international labels alone do not prove a match.
-The generated hashes must match this release. If they differ, report the
-hashes and the Title ID, Media ID, and version shown by:
-
-   .\xextool.exe -l default.xex
-
-Share only those fields, not the game files or the full tool output. Different
-hashes can mean a different revision, modified files, or a preparation problem.
+The original hash must match this build. If it differs, report the hash and
+your disc revision. Share only those details, not the game files.
+Previously published releases may require prepared files; use a build containing
+the original-file loader. Existing _uncrypted.xex and basefile.exe are not read.
 
 CONTROLS
 Click inside the game to use the mouse. Press F1 for the controls guide.

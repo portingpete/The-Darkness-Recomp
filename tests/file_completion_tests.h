@@ -24,7 +24,7 @@ static void testFileCompletion(PPCContext& ctx, uint32_t file, uint32_t fixture)
         ctx.r3.u64 = event; __imp__NtClose(ctx, base);
     };
     try {
-        const auto size = std::filesystem::file_size(memory->gameDirectory() / "basefile.exe");
+        const auto size = std::filesystem::file_size(memory->gameDirectory() / "default.xex");
         const uint64_t eof = (size + 4095) & ~uint64_t(4095);
         struct ReadCase { uint64_t offset; uint32_t length, status, bytes; bool completes; };
         // Native NtReadFile completes EOF requests (including an APC), but

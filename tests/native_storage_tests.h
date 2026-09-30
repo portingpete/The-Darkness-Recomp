@@ -665,9 +665,9 @@ static void testNativeStorage(PPCContext& ctx) {
 
         check(storageOpenFile(ctx, base, "savet1:\\..\\other.bin", 0xC0000000, 2, &handle) == 0xc0000033,
               "mount escape not rejected");
-        check(storageOpenFile(ctx, base, "game:\\basefile.exe", 0xC0000000, 1, &handle) == 0xc00000a2,
+        check(storageOpenFile(ctx, base, "game:\\default.xex", 0xC0000000, 1, &handle) == 0xc00000a2,
               "read-only game asset opened writable");
-        check(storageOpenFile(ctx, base, "game:\\basefile.exe", 0x80000000, 1, &handle) == 0,
+        check(storageOpenFile(ctx, base, "game:\\default.xex", 0x80000000, 1, &handle) == 0,
               "game asset read open failed");
         *reinterpret_cast<uint64_t*>(base + scratch + 48) = _byteswap_uint64(0);
         ctx.r3.u64 = handle;
@@ -850,7 +850,7 @@ static void testNativeStorage(PPCContext& ctx) {
         ctx.r3.u64 = eofHandle;
         __imp__NtClose(ctx, base);
         // Read-only game asset: size changes blocked, seeks still work.
-        check(storageOpenFile(ctx, base, "game:\\basefile.exe", 0x80000000, 1, &handle) == 0,
+        check(storageOpenFile(ctx, base, "game:\\default.xex", 0x80000000, 1, &handle) == 0,
               "game asset read open failed");
         uint32_t roHandle = handle;
         uint64_t roSize = queryEof(roHandle);
@@ -999,7 +999,7 @@ static void testNativeStorage(PPCContext& ctx) {
         ctx.r3.u64 = dispHandle;
         __imp__NtClose(ctx, base);
         // Read-only game asset: disposition delete blocked, asset intact.
-        check(storageOpenFile(ctx, base, "game:\\basefile.exe", 0x80000000, 1, &handle) == 0,
+        check(storageOpenFile(ctx, base, "game:\\default.xex", 0x80000000, 1, &handle) == 0,
               "game asset read open failed");
         roHandle = handle;
         roSize = queryEof(roHandle);

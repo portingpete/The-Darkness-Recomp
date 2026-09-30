@@ -17,7 +17,7 @@ static void testFileInformation(PPCContext& ctx) {
     check(scratch != 0, "File information fixture allocation failed");
     const uint32_t ios = scratch + 64, value = scratch + 80;
     const uint32_t data = scratch + 4096, guard = scratch + 8192;
-    const char* path = "game:\\basefile.exe";
+    const char* path = "game:\\default.xex";
     std::strcpy(reinterpret_cast<char*>(base + scratch + 256), path);
     memory->write32(scratch, 0xfffffffd); memory->write32(scratch + 4, scratch + 16);
     memory->write32(scratch + 8, 0x40);
@@ -146,7 +146,7 @@ static void testFileInformation(PPCContext& ctx) {
             prepare(out, 0, classes[i], sizes[i]); __imp__NtQueryInformationFile(call, base);
             check(call.r3.u32 == 0 && memory->read32(ios + 4) == sizes[i], "Valid split file information query failed");
             if (classes[i] == 14) check(PPC_LOAD_U64(out) == 53, "File position endian conversion changed");
-            if (classes[i] == 5) check(PPC_LOAD_U64(out + 8) == std::filesystem::file_size(memory->gameDirectory() / "basefile.exe"),
+            if (classes[i] == 5) check(PPC_LOAD_U64(out + 8) == std::filesystem::file_size(memory->gameDirectory() / "default.xex"),
                                        "File standard information length changed");
         }
         report("query", "all-classes-split-writable", true);
@@ -165,7 +165,7 @@ static void testFileInformation(PPCContext& ctx) {
         call = ctx; call.r3.u64 = file; call.r4.u64 = 0; call.r5.u64 = 0; call.r6.u64 = 0;
         call.r7.u64 = ios; call.r8.u64 = data; call.r9.u64 = 16; call.r10.u64 = 0;
         __imp__NtReadFile(call, base);
-        std::ifstream source(memory->gameDirectory() / "basefile.exe", std::ios::binary);
+        std::ifstream source(memory->gameDirectory() / "default.xex", std::ios::binary);
         char expected[16]; source.seekg(53); source.read(expected, sizeof(expected));
         report("read", "implicit-offset-after-seek", call.r3.u32 == 0 && std::memcmp(base + data, expected, 16) == 0 && position() == 69);
     } catch (...) { cleanup(); throw; }

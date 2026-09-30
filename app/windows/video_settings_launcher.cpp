@@ -75,7 +75,7 @@ fs::path findProjectRoot(fs::path directory) {
     // same layout. Also accept a launcher placed directly beside Darkness.
     fs::path incompleteRoot;
     for (unsigned depth = 0; depth < 4; ++depth) {
-        if (fs::is_regular_file(directory / L"Darkness/basefile.exe")) return directory;
+        if (fs::is_regular_file(directory / L"Darkness/default.xex")) return directory;
         if (incompleteRoot.empty() && fs::is_directory(directory / L"Darkness"))
             incompleteRoot = directory;
         const auto parent = directory.parent_path();
@@ -93,7 +93,7 @@ void checkGameFiles(const Launcher& launcher) {
         throw std::runtime_error("DarkRecompPreview.exe is missing. Extract the complete release ZIP.");
     if (!fs::is_regular_file(launcher.preview.parent_path() / L"DarkRecomp.exe"))
         throw std::runtime_error("DarkRecomp.exe is missing. Extract the complete release ZIP.");
-    for (const auto* name : {L"basefile.exe", L"_uncrypted.xex", L"default.xex"}) {
+    for (const auto* name : {L"default.xex"}) {
         if (!fs::is_regular_file(launcher.game / name))
             throw std::runtime_error("Required game files are missing from Darkness. "
                                      "See START_HERE.txt for the required folder layout.");

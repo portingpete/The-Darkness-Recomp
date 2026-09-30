@@ -3,6 +3,7 @@ import hashlib
 from pathlib import Path
 import re
 import struct
+from xex_image import decode_xex
 
 
 def generate(root: Path, out: Path) -> None:
@@ -14,8 +15,8 @@ def generate(root: Path, out: Path) -> None:
     (out / "ppc_imports.cpp").write_text('#include "ppc_context.h"\n' + "".join(
         f'PPC_FUNC({name}) {{ PPC_RECOMP_FAILURE(ctx, uint32_t(ctx.lr), "unimplemented import {name}"); }}\n'
         for name in missing))
-    image = (root / "Darkness/basefile.exe").read_bytes()
-    xex = (root / "Darkness/_uncrypted.xex").read_bytes()
+    xex = (root / "Darkness/default.xex").read_bytes()
+    _, image = decode_xex(xex)
     count = struct.unpack_from(">I", xex, 20)[0]
     optional = dict(struct.iter_unpack(">II", xex[24:24 + count * 8]))
     start = optional[0x103FF]

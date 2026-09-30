@@ -7,7 +7,7 @@ Linux port.
 
 [Valve's Proton](https://github.com/ValveSoftware/Proton) runs Windows programs
 through Steam on Linux. Use the complete Windows release folder and your own
-supported game dump, including the prepared `_uncrypted.xex` and `basefile.exe`.
+supported game dump, including the original `default.xex`.
 Keep the audio and Visual C++ DLLs beside the executables in
 `build_native/Release`; copying only an EXE leaves required dependencies behind.
 

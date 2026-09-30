@@ -56,11 +56,11 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         auto root = binaryDirectory;
         bool found = false;
         if(!requestedGameDirectory.empty()) {
-            found=std::filesystem::is_regular_file(requestedGameDirectory/L"basefile.exe");
+            found=std::filesystem::is_regular_file(requestedGameDirectory/L"default.xex");
             root=requestedGameDirectory.parent_path();
         }
         else for (unsigned i = 0; i < 4; ++i) {
-            if (std::filesystem::is_regular_file(root / L"Darkness/basefile.exe")) { found = true; break; }
+            if (std::filesystem::is_regular_file(root / L"Darkness/default.xex")) { found = true; break; }
             root = root.parent_path();
         }
         if (!found || !std::filesystem::is_regular_file(executable))
