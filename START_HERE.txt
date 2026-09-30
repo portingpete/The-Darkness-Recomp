@@ -8,6 +8,7 @@ THE DARKNESS RECOMP - START HERE
    The finished folder should look like this:
 
      Launch.cmd
+     LaunchWithSettings.cmd
      Darkness\
        default.xex
        Content\
@@ -17,6 +18,7 @@ THE DARKNESS RECOMP - START HERE
        Release\
          DarkRecomp.exe
          DarkRecompPreview.exe
+         DarkRecompSettings.exe
          ...leave all the other included files here
 
    Put the game files directly inside Darkness, not Darkness\Darkness.
@@ -25,6 +27,7 @@ THE DARKNESS RECOMP - START HERE
    This build supports the same game revision used to build it.
 
 3. Double-click Launch.cmd. That's it - no build or developer tools needed.
+   To choose settings and language before playing, use LaunchWithSettings.cmd.
 
 Windows 10/11, 64-bit, with a Direct3D 11-capable graphics device is required.
 The audio and Visual C++ runtime files are included. Keep them with the game.
@@ -48,7 +51,9 @@ CONTROLS
 Click inside the game to use the mouse. Press F1 for the controls guide.
 F2 toggles mouse capture. Escape pauses and releases the mouse.
 Alt+Enter switches fullscreen/windowed. Controllers are supported.
-Change graphics options in the game's Options > Video Settings menu.
+Change graphics options and language in Options > Video Settings, or use
+LaunchWithSettings.cmd before starting the game. Both save to the same settings
+file. In-game language changes take effect after restarting.
 
 UPDATING AN OLDER RELEASE
 Close the game. Extract the new Windows ZIP into your existing game folder

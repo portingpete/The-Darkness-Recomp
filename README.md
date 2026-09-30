@@ -23,6 +23,8 @@ The GitHub **Source code** downloads are for building the project yourself.
    files and folders from your dump. No XexTool preparation is required.
 3. Double-click **Launch.cmd** to play with sound.
 
+Use **LaunchWithSettings.cmd** to choose settings and language before playing.
+
 No compiler, Python, or separate audio setup is needed for the Windows release.
 Use 64-bit Windows 10/11 with a Direct3D 11-capable graphics device.
 See [START_HERE.txt](START_HERE.txt) for the folder layout and troubleshooting.
@@ -32,6 +34,9 @@ The port decodes `default.xex` in memory at startup; `_uncrypted.xex` and
 
 Click the game window to capture the mouse. **F1** shows controls, **F2** toggles
 capture, and **Esc** releases it. Graphics options are in **Options > Video Settings**.
+Choose **Language** there or in the settings launcher: System default, English,
+German, French, Spanish, or Italian. In-game language changes save automatically
+and take effect after restarting. See [CONTROLS.md](CONTROLS.md) for details.
 
 ## Preparing the game files
 
@@ -107,6 +112,7 @@ The XMA audio build also requires MSYS2 at `C:\msys64` with MinGW64 GCC and
 | Command | What it does |
 |---|---|
 | `Launch.cmd` | Play with sound |
+| `LaunchWithSettings.cmd` | Choose settings and language, then play with sound |
 | `Launch.cmd mute` | Play muted |
 | `Launch.cmd preview` | Engine preview build (muted by default) |
 | `Launch.cmd stutter` | Play with sound while recording slow-frame timings |

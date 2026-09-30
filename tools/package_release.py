@@ -10,11 +10,11 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 BINARIES = (
-    'DarkRecomp.exe', 'DarkRecompPreview.exe',
+    'DarkRecomp.exe', 'DarkRecompPreview.exe', 'DarkRecompSettings.exe',
     'avcodec-darkxma-62.dll', 'avutil-darkxma-60.dll', 'libwinpthread-1.dll',
     'CubeWnd.pc.xcr', 'GameContext_Create.pc.xdf',
 )
-DOCUMENTS = ('Launch.cmd', 'START_HERE.txt', 'README.md', 'CONTROLS.md', 'RENDERING.md', 'COPYING')
+DOCUMENTS = ('Launch.cmd', 'LaunchWithSettings.cmd', 'START_HERE.txt', 'README.md', 'CONTROLS.md', 'RENDERING.md', 'COPYING')
 CRT_REQUIRED = ('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')
 
 

@@ -1,7 +1,10 @@
 # Native keyboard and mouse controls
 
 Run `Launch.cmd` for audio, or `Launch.cmd mute` for a muted game.
-Both run until you close the game window. `Launch.cmd preview` and
+Run `LaunchWithSettings.cmd` to choose settings and language before playing
+with audio. It reads and saves the same `DarkRecomp.settings.ini` as the
+in-game Video Settings menu.
+The game runs until you close its window. `Launch.cmd preview` and
 `build_native/Release/DarkRecompPreview.exe` still default to muted;
 the preview executable also accepts `--sound` or `--mute`.
 
@@ -44,18 +47,37 @@ Open **Options > Video Settings** for the game's native graphics rows:
 - **Resolution:** 360p, 480p, 720p, 1080p, 1440p or 2160p; requires a restart.
 - **Display:** windowed or borderless fullscreen.
 - **Antialiasing:** Off (default) or FXAA; smooths edges immediately and saves automatically.
+- **Language:** System, English, German, French, Spanish, or Italian; requires a restart.
 
 Motion blur is disabled. Use the normal menu navigation: Up/Down selects a row,
 Left/Right changes its value, and confirm cycles forward. The controller D-pad
 and A work through the same original menu controls. Escape/Backspace or B goes
 back. Changes save automatically to `DarkRecomp.settings.ini` beside `Darkness`
-and apply immediately except resolution. A failed save is shown in the row text.
+and apply immediately except resolution and language. A failed save is shown in the row text.
 
 All play modes use saved settings. Direct-launch options `--fov 100`, `--fps 120`,
 `--render-height 720`, `--fullscreen` / `--windowed`, and `--vsync` / `--no-vsync`
 override their saved values for that run. `--fov 0` selects Original. Editing a
 menu option saves the current selection, including overrides. Valid custom
 values remain unchanged until you adjust their row.
+
+Choose **Language** in **Options > Video Settings** or the launcher opened by
+`LaunchWithSettings.cmd`. In-game changes save automatically and take effect
+after restarting; the launcher applies your choice when you click Play.
+System follows supported Windows UI languages, with English as the fallback.
+The matching language content must be present in your own dump.
+
+You can also edit `DarkRecomp.settings.ini` beside `Darkness` and restart:
+
+```ini
+[Game]
+Language=en
+```
+
+Use `en`, `de`, `fr`, `es`, or `it`; `auto` restores System default. When launching
+`DarkRecomp.exe` directly, `--language en` selects English for one run; full
+English language names are also accepted. This override does not replace your
+saved language choice when you adjust graphics settings.
 
 Click inside the game to capture the mouse. The first click only captures it.
 Press **F1** for the controls guide, **F2** to toggle capture, or **Escape**

@@ -152,9 +152,9 @@ class Registry:
         return data
 
 
-SETTINGS = ("brightness", "gamma", "fov", "bloom", "vsync", "fps", "resolution", "mode", "motionblur", "antialiasing")
-SETTING_NAMES = ("Brightness", "Gamma", "Field of view", "Bloom", "Vertical sync", "Frame limit", "Resolution", "Display", "Motion blur", "Antialiasing")
-INITIAL_VALUES = ("100%", "1.00", "Original", "On", "Off", "60", "720p", "Borderless", "Off", "Off")
+SETTINGS = ("brightness", "gamma", "fov", "bloom", "vsync", "fps", "resolution", "mode", "motionblur", "antialiasing", "language")
+SETTING_NAMES = ("Brightness", "Gamma", "Field of view", "Bloom", "Vertical sync", "Frame limit", "Resolution", "Display", "Motion blur", "Antialiasing", "Language")
+INITIAL_VALUES = ("100%", "1.00", "Original", "On", "Off", "60", "720p", "Borderless", "Off", "Off", "System")
 
 
 def replace_video_page(registry):
@@ -178,7 +178,8 @@ def replace_video_page(registry):
         properties.append(window("CubeButton", "sc, < " + initial.center(12) + " >", f"11,{y},8,1", "darkrecomp." + key))
     properties.append(window("CubeText", "sc, Brightness: 100% is neutral", "0,15,20,1"))
     properties.append(window("CubeText", "sc, Gamma: lower is darker; 1.00 is neutral", "0,16,20,1"))
-    properties.append(window("CubeText", "sc, Left/Right: change; restart resolution", "0,18,20,1"))
+    properties.append(window("CubeText", "sc, Resolution/language: restart to apply", "0,17,20,1"))
+    properties.append(window("CubeText", "sc, Left/Right: change; confirm: next", "0,18,20,1"))
     r.set_children(page, properties)
 
 

@@ -131,6 +131,31 @@ int main() {
         wchar_t unrelated[8]{};
         GetPrivateProfileStringW(L"Other", L"Preserve", L"", unrelated, 8, path.c_str());
         check(std::wstring_view(unrelated) == L"yes", "saving display setting preserves other sections");
+        for (const auto language : {GameLanguage::System, GameLanguage::English, GameLanguage::German,
+                                   GameLanguage::French, GameLanguage::Spanish, GameLanguage::Italian}) {
+            check(saveDisplaySettings(path, 100.125f, custom, language) && loadGameLanguage(path) == language &&
+                  loadGraphicsSettings(path) == custom && loadFieldOfView(path) == 100.125f,
+                  "language and display selection did not persist together");
+        }
+        check(saveDisplaySettings(path, 100.125f, custom) && loadGameLanguage(path) == GameLanguage::Italian,
+              "display-only save replaced the stored language");
+        check(!saveDisplaySettings(path, 90, aaOff, GameLanguage(2)) &&
+              loadGameLanguage(path) == GameLanguage::Italian && loadGraphicsSettings(path) == custom &&
+              loadFieldOfView(path) == 100.125f, "invalid language partially saved the selection");
+        // A failed final replacement must preserve both sections, even after
+        // the staged copy has successfully received all new preferences.
+        {
+            const HANDLE locked = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ,
+                                             nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            check(locked != INVALID_HANDLE_VALUE, "cannot lock isolated settings fixture");
+            struct Unlock { HANDLE handle; ~Unlock() { CloseHandle(handle); } } unlock{locked};
+            check(!saveDisplaySettings(path, 90, aaOff, GameLanguage::German),
+                  "locked destination unexpectedly accepted a settings replacement");
+        }
+        check(loadGameLanguage(path) == GameLanguage::Italian && loadGraphicsSettings(path) == custom &&
+              loadFieldOfView(path) == 100.125f, "failed settings replacement partially changed preferences");
+        GetPrivateProfileStringW(L"Other", L"Preserve", L"", unrelated, 8, path.c_str());
+        check(std::wstring_view(unrelated) == L"yes", "language save replaced an unrelated section");
         check(!saveFieldOfView(path, 121) && loadFieldOfView(path) == 100.125f, "invalid write preserves file");
         check(WritePrivateProfileStringW(L"Display", L"FieldOfView", L"not-a-number", path.c_str()), "seed corrupt config");
         check(loadFieldOfView(path) == 0, "corrupt config uses Original");

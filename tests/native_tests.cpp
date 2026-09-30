@@ -18,6 +18,7 @@ static void check(bool success, const char* message) { if (!success) throw std::
 #include "dispatcher_tests.h"
 #include "xma_bridge_tests.h"
 #include "input_tests.h"
+#include "language_tests.h"
 #include "mouse_look_tests.h"
 #include "native_delay_tests.h"
 #include "native_timed_wait_tests.h"
@@ -1562,6 +1563,10 @@ int main(int argc, char** argv) {
         if (argc == 3 && strcmp(argv[2], "--input") == 0) {
             testInputContract(ctx);
             testMouseLookContract(ctx);
+            return 0;
+        }
+        if (argc == 3 && strcmp(argv[2], "--language") == 0) {
+            testConfiguredLanguage(ctx);
             return 0;
         }
         if (argc == 3 && strcmp(argv[2], "--dispatcher") == 0) {

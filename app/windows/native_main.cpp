@@ -9,6 +9,7 @@
 #include "display_settings.h"
 #include "runtime/native/display_mode.h"
 #include "runtime/native/fov_settings.h"
+#include "runtime/native/language_settings.h"
 #include "runtime/native/video_settings_menu.h"
 #include "test_input_parser.h"
 #include "frame_metrics.h"
@@ -112,6 +113,8 @@ int wmain(int argc, wchar_t** argv) {
     uint32_t windowWidth = 0, windowHeight = 0, renderHeight = 720;
     float commandLineFov = 0;
     bool overrideFov = false;
+    GameLanguage commandLineLanguage = GameLanguage::System;
+    bool overrideLanguage = false;
     bool overrideFps = false, overrideFullscreen = false, overrideRenderHeight = false;
     bool overrideVsync = false, verticalSync = false;
     for (int i = 1; i < argc; ++i) {
@@ -150,6 +153,12 @@ int wmain(int argc, wchar_t** argv) {
         else if (arg == L"--windowed") { fullscreen = false; overrideFullscreen = true; }
         else if (arg == L"--vsync") { verticalSync = true; overrideVsync = true; }
         else if (arg == L"--no-vsync") { verticalSync = false; overrideVsync = true; }
+        else if (arg == L"--language" && i + 1 < argc) {
+            if (!parseGameLanguage(argv[++i], commandLineLanguage)) {
+                fputs("Language must be auto, en, de, fr, es or it.\n", stderr); return 1;
+            }
+            overrideLanguage = true;
+        }
         else if (arg == L"--fov" && i + 1 < argc) {
             if (!DarkRecomp::parseFieldOfView(argv[++i], commandLineFov)) {
                 fputs("FOV must be 0 (Original) or 60 through 120 horizontal degrees at 16:9.\n", stderr); return 1;
@@ -172,7 +181,7 @@ int wmain(int argc, wchar_t** argv) {
         }
         else if (arg == L"--preview-frame" && i + 1 < argc) previewFrame = argv[++i];
         else {
-            fputs("Usage: DarkRecomp --game-dir <directory> [--timeout-ms 30000 (0 disables deadline)] [--renderer-smoke] [--trace-renderer <new directory>] [--engine-preview] [--mute] [--fps 60 (default; 0 uncapped)] [--profile-engine] [--sample-engine] [--mouse-sensitivity 1.0] [--preview-frame <new BMP path>] [--test-input <file>] [--test-start] [--test-skip-intros]\n", stderr);
+            fputs("Usage: DarkRecomp --game-dir <directory> [--timeout-ms 30000 (0 disables deadline)] [--renderer-smoke] [--trace-renderer <new directory>] [--engine-preview] [--mute] [--fps 60 (default; 0 uncapped)] [--profile-engine] [--sample-engine] [--mouse-sensitivity 1.0] [--language auto|en|de|fr|es|it] [--preview-frame <new BMP path>] [--test-input <file>] [--test-start] [--test-skip-intros]\n", stderr);
             fputs("  --test-input file lines (max 64, own-process diagnostics only): numeric '<key> [<holdMs 1..10000>]' (bare menu keys hold 250ms, I/J/K/L hold 2000ms; gameplay keys WASD/E/R/F/X/Z/C/Q/G/1-4/Tab/Back/Shift/Ctrl plus arrows/Space/Return/Esc/IJKL); 'mouse <dx> <dy>' (+/-10000, held 2000ms); 'capture' screenshots; '0' inspects; an invalid line blocks later commands until that line is fixed.\n", stderr);
             fputs("  Display: --fullscreen or --windowed; --width W --height H selects window/aspect size; --render-height H controls internal resolution (180..2160, default 720). Alt+Enter toggles borderless fullscreen.\n", stderr);
             fputs("  Options > Video Settings contains native PC graphics controls. Saved settings apply unless explicitly overridden. --vsync / --no-vsync overrides vertical sync; --fov 0 (Original) or 60..120 overrides horizontal FOV at 16:9 for this run.\n", stderr);
@@ -191,6 +200,8 @@ int wmain(int argc, wchar_t** argv) {
     puts("DarkRecomp native Windows AOT runtime - development build, gameplay incomplete");
     try {
         const auto settingsPath = std::filesystem::absolute(gameDir).parent_path() / L"DarkRecomp.settings.ini";
+        initializeGameLanguageSetting(loadGameLanguage(settingsPath));
+        if (overrideLanguage) overrideGameLanguageForRun(commandLineLanguage);
         setFieldOfViewSetting(overrideFov ? commandLineFov : DarkRecomp::loadFieldOfView(settingsPath));
         auto activeGraphics = DarkRecomp::loadGraphicsSettings(settingsPath);
         if (overrideFps) activeGraphics.frameRateLimit = targetFps;
@@ -418,9 +429,9 @@ int wmain(int argc, wchar_t** argv) {
                         requestDisplaySettingsSave();
                     }
                     if (takeDisplaySettingsSaveRequest()) {
-                        const bool saved = DarkRecomp::saveDisplaySettings(settingsPath, fieldOfViewSetting(), graphicsSettings());
+                        const bool saved = DarkRecomp::saveDisplaySettings(settingsPath, fieldOfViewSetting(), graphicsSettings(), gameLanguageSetting());
                         reportDisplaySettingsSave(saved);
-                        if (!saved) std::fputs("[Display] Could not save video settings.\n", stderr);
+                        if (!saved) std::fputs("[Settings] Could not save display/language settings.\n", stderr);
                     }
                     const auto selected = graphicsSettings();
                     if (selected.frameRateLimit != activeGraphics.frameRateLimit)

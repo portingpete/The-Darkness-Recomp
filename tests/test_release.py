@@ -73,6 +73,8 @@ class ReleaseTests(unittest.TestCase):
             self.assertFalse(any('private' in n or n.endswith('.ini') or n.startswith('saves/') for n in names))
             self.assertNotIn('build_native/Release/Unrelated.dll', names)
             self.assertIn('build_native/Release/vcruntime140_1.dll', names)
+            self.assertIn('build_native/Release/DarkRecompSettings.exe', names)
+            self.assertEqual(bundle.read('LaunchWithSettings.cmd'), (ROOT / 'LaunchWithSettings.cmd').read_bytes())
             self.assertIn('START_HERE.txt', names)
             manifest = json.loads(bundle.read('RELEASE.json'))
             self.assertEqual(manifest['commit'], 'abc123')
@@ -90,6 +92,18 @@ class ReleaseTests(unittest.TestCase):
         (self.crt / 'msvcp140.dll').unlink()
         with self.assertRaisesRegex(RuntimeError, 'msvcp140.dll'):
             release.collect_files(self.root, self.crt)
+
+    def test_incomplete_settings_launcher_package_is_rejected(self):
+        for path in (self.bin / 'DarkRecompSettings.exe', self.root / 'LaunchWithSettings.cmd'):
+            with self.subTest(path=path.name):
+                original = path.read_bytes()
+                path.unlink()
+                try:
+                    with self.assertRaisesRegex(RuntimeError, path.name.replace('.', r'\.')):
+                        release.package(self.root, self.crt, self.root / 'out', 'v0.1.1', 'abc123')
+                    self.assertFalse((self.root / 'out').exists())
+                finally:
+                    path.write_bytes(original)
 
     def test_existing_release_is_preserved(self):
         path = release.package(self.root, self.crt, self.root / 'out', 'v0.1.1', 'abc123')
@@ -126,6 +140,17 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn('Extract the ENTIRE Windows release ZIP', result.stdout)
         self.assertNotIn('Build it first', result.stdout)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows launcher')
+    def test_missing_settings_launcher_points_to_complete_release(self):
+        (self.bin / 'DarkRecompSettings.exe').unlink()
+        result = subprocess.run('cmd /d /c LaunchWithSettings.cmd', cwd=self.root,
+                                input='\n', capture_output=True, text=True, timeout=15,
+                                creationflags=subprocess.CREATE_NO_WINDOW)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('Extract the ENTIRE Windows release ZIP', result.stdout)
+        self.assertIn('LaunchWithSettings.cmd', result.stdout)
+        self.assertFalse((self.root / 'build_native/run').exists())
 
     @unittest.skipUnless(os.name == 'nt', 'Windows launcher')
     def test_help_does_not_require_game_files(self):

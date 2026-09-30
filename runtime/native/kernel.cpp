@@ -3,6 +3,7 @@
 #include "audio_resampler_trace.h"
 #include "audio_refill_trace.h"
 #include "input.h"
+#include "language_settings.h"
 #include "display_mode.h"
 #include "thread_topology.h"
 #include "native_timed_wait.h"
@@ -1902,17 +1903,10 @@ PPC_FUNC(__imp__ExGetXConfigSetting) {
     uint32_t category = ctx.r3.u16, setting = ctx.r4.u16;
     if (category != 3 || (setting != 9 && setting != 10 && setting != 12 && (setting < 1 || setting > 7)))
         PPC_RECOMP_FAILURE(ctx, uint32_t(ctx.lr), "unsupported console configuration setting");
-    uint32_t language = 1; // English is the fallback among this title's installed languages.
-    switch (PRIMARYLANGID(GetUserDefaultUILanguage())) {
-        case LANG_GERMAN: language = 3; break;
-        case LANG_FRENCH: language = 4; break;
-        case LANG_SPANISH: language = 5; break;
-        case LANG_ITALIAN: language = 6; break;
-    }
     if (ctx.r7.u32) *reinterpret_cast<uint16_t*>(base + ctx.r7.u32) = _byteswap_ushort(4);
     if (!ctx.r5.u32) { ctx.r3.u64 = ctx.r6.u16 ? 0xc00000f1 : 0; return; }
     if (ctx.r6.u16 < 4) { ctx.r3.u64 = 0xc0000023; return; }
-    if (setting == 9) memory->write32(ctx.r5.u32, language);
+    if (setting == 9) memory->write32(ctx.r5.u32, configuredConsoleLanguage());
     else if (setting == 12) {
         DYNAMIC_TIME_ZONE_INFORMATION zone{};
         if (GetDynamicTimeZoneInformation(&zone) == TIME_ZONE_ID_INVALID) { ctx.r3.u64 = 0xc0000001; return; }
