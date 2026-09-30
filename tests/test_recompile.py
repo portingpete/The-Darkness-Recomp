@@ -15,6 +15,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
 import recompile
+from xex_image import read_image
 
 
 class OriginalSwitchMetadataTests(unittest.TestCase):
@@ -22,7 +23,7 @@ class OriginalSwitchMetadataTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.image = (ROOT / 'Darkness/basefile.exe').read_bytes()
+        cls.image = read_image(ROOT / 'Darkness/default.xex')
         config_path = ROOT / 'config/darkness.toml'
         config = tomllib.loads(config_path.read_text())['main']
         tables_path = config_path.parent / config['switch_table_file_path']
@@ -88,8 +89,8 @@ class RecompileTests(unittest.TestCase):
         self.generator = self.root / 'generator.exe'
         for name in (
             'config/darkness.toml', 'runtime/guest/ppc_context.template.h',
-            'Darkness/_uncrypted.xex', 'Darkness/darkness_switch_tables.toml',
-            'Darkness/basefile.exe', 'tools/native_imports.py', 'tools/recompile.py',
+            'Darkness/default.xex', 'Darkness/darkness_switch_tables.toml',
+            'tools/xex_image.py', 'tools/native_imports.py', 'tools/recompile.py',
             'runtime/native/kernel.cpp', 'generator.exe',
         ):
             path = self.root / name
@@ -104,7 +105,7 @@ class RecompileTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('fixture input\n')
         (self.root / 'config/darkness.toml').write_text(
-            '[main]\nfile_path = "../Darkness/_uncrypted.xex"\n'
+            '[main]\nfile_path = "../Darkness/default.xex"\n'
             'switch_table_file_path = "../Darkness/darkness_switch_tables.toml"\n'
         )
         self.chunk_count = 1

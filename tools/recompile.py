@@ -23,8 +23,8 @@ def sha256(path: Path) -> str:
 
 def sources() -> list[Path]:
     return [ROOT / "config/darkness.toml", ROOT / "runtime/guest/ppc_context.template.h",
-            ROOT / "Darkness/_uncrypted.xex", ROOT / "Darkness/darkness_switch_tables.toml",
-            ROOT / "Darkness/basefile.exe", ROOT / "tools/native_imports.py",
+            ROOT / "Darkness/default.xex", ROOT / "Darkness/darkness_switch_tables.toml",
+            ROOT / "tools/xex_image.py", ROOT / "tools/native_imports.py",
             *sorted((ROOT / "runtime/native").glob("*.cpp")), Path(__file__).resolve(), *sorted((XENON / "XenonRecomp").glob("*.cpp")),
             *sorted((XENON / "XenonRecomp").glob("*.h")),
             *sorted((XENON / "XenonAnalyse").glob("*.cpp")),

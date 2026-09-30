@@ -164,7 +164,7 @@ exit /b 1
 if not exist "build_native\Release\DarkRecomp.exe" goto missing
 if not exist "build_native\Release\DarkRecompPreview.exe" goto missing
 set "MISSING_GAME="
-for %%F in (basefile.exe _uncrypted.xex default.xex) do (
+for %%F in (default.xex) do (
     if not exist "%GAME_DIR%\%%F" (
         echo Missing game file: "%GAME_DIR%\%%F"
         set "MISSING_GAME=1"

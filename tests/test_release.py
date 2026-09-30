@@ -48,7 +48,7 @@ class ReleaseTests(unittest.TestCase):
     def game_files(self):
         game = self.root / 'Darkness'
         game.mkdir(exist_ok=True)
-        for name in ('basefile.exe', '_uncrypted.xex', 'default.xex'):
+        for name in ('default.xex',):
             (game / name).write_bytes(b'private game data')
         for name in ('Content', 'System'):
             (game / name).mkdir(exist_ok=True)
@@ -102,7 +102,7 @@ class ReleaseTests(unittest.TestCase):
     def test_launcher_lists_missing_files(self):
         result = self.launch()
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        for name in ('basefile.exe', '_uncrypted.xex', 'default.xex', 'Content', 'System', 'START_HERE.txt'):
+        for name in ('default.xex', 'Content', 'System', 'START_HERE.txt'):
             self.assertIn(name, result.stdout)
 
     @unittest.skipUnless(os.name == 'nt', 'Windows launcher')
@@ -141,10 +141,10 @@ class ReleaseTests(unittest.TestCase):
         result = self.launch('check --game-dir "external dump & files!"')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('Setup looks ready', result.stdout)
-        (external / '_uncrypted.xex').unlink()
+        (external / 'default.xex').unlink()
         result = self.launch('check --game-dir "external dump & files!"')
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn('external dump & files!\\_uncrypted.xex', result.stdout)
+        self.assertIn('external dump & files!\\default.xex', result.stdout)
 
 
 class CodecSourceTests(unittest.TestCase):

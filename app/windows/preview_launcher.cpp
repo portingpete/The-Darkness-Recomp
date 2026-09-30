@@ -46,7 +46,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR arguments, int) {
         auto root = binaryDirectory;
         bool found = false;
         for (unsigned i = 0; i < 4; ++i) {
-            if (std::filesystem::is_regular_file(root / L"Darkness/basefile.exe")) { found = true; break; }
+            if (std::filesystem::is_regular_file(root / L"Darkness/default.xex")) { found = true; break; }
             root = root.parent_path();
         }
         if (!found || !std::filesystem::is_regular_file(executable))

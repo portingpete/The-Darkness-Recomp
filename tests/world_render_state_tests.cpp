@@ -1,15 +1,17 @@
 #include "renderer/d3d11/world_render_state.h"
+#include "runtime/native/xex_image.h"
 #include <array>
 #include <bit>
 #include <cstdio>
 #include <fstream>
+#include <sstream>
 #include <stdexcept>
 
 using namespace DarkRecomp::WorldRenderState;
 static void require(bool ok,const char* message) {if(!ok)throw std::runtime_error(message);}
 
 template<size_t Count>
-static std::array<uint32_t,Count> originalTable(std::ifstream& image,std::streamoff offset) {
+static std::array<uint32_t,Count> originalTable(std::istream& image,std::streamoff offset) {
     std::array<unsigned char,Count*4> bytes{};
     image.seekg(offset);
     image.read(reinterpret_cast<char*>(bytes.data()),bytes.size());
@@ -37,7 +39,7 @@ static bool accepts(D3D11_COMPARISON_FUNC comparison,unsigned reference,unsigned
     }
 }
 
-static float originalFloat(std::ifstream& image,std::streamoff offset) {
+static float originalFloat(std::istream& image,std::streamoff offset) {
     std::array<unsigned char,4> bytes{};
     image.seekg(offset);image.read(reinterpret_cast<char*>(bytes.data()),bytes.size());
     require(bool(image),"Cannot read original raster-bias constant");
@@ -47,9 +49,12 @@ static float originalFloat(std::ifstream& image,std::streamoff offset) {
 
 int main(int argc,char** argv) {
     try {
-        require(argc==2,"Supply the original Darkness/basefile.exe path");
-        std::ifstream image(argv[1],std::ios::binary);
-        require(bool(image),"Cannot open original executable");
+        require(argc==2,"Supply the original Darkness/default.xex path");
+        std::ifstream file(argv[1],std::ios::binary);
+        require(bool(file),"Cannot open original executable");
+        const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(file)), {});
+        const auto decoded = DarkRecomp::Native::decodeXex(bytes);
+        std::istringstream image(std::string(reinterpret_cast<const char*>(decoded.image.data()), decoded.image.size()));
         // In the supported executable, .rdata maps file offset N to 82000000+N.
         // Read the original big-endian tables as the oracle, independently of
         // the native renderer's translation. No game code or GPU work executes.

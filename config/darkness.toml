@@ -1,7 +1,7 @@
 # Correctness profile: preserve the full guest register state across calls.
 # Host compilation is still optimized; guest ABI shortcuts are disabled.
 [main]
-file_path = "../Darkness/_uncrypted.xex"
+file_path = "../Darkness/default.xex"
 switch_table_file_path = "../Darkness/darkness_switch_tables.toml"
 skip_lr = false
 skip_msr = false

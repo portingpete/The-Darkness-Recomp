@@ -18,7 +18,7 @@ static void testFileBuffers(PPCContext& ctx) {
     check(fixture != 0, "File buffer fixture allocation failed");
     const uint32_t ios = fixture + 64, offset = fixture + 80;
     const uint32_t data = fixture + 4096, guarded = data + 4096;
-    const char* path = "game:\\basefile.exe";
+    const char* path = "game:\\default.xex";
     strcpy_s(reinterpret_cast<char*>(base + fixture + 256), 128, path);
     memory->write32(fixture, 0xfffffffd);
     memory->write32(fixture + 4, fixture + 16);
@@ -65,7 +65,7 @@ static void testFileBuffers(PPCContext& ctx) {
           "Split writable file buffer setup failed");
     check(read(guarded - 256) && ctx.r3.u32 == 0 && memory->read32(ios + 4) == 512,
           "Valid unaligned buffer spanning writable regions was rejected");
-    std::ifstream source(memory->gameDirectory() / "basefile.exe", std::ios::binary);
+    std::ifstream source(memory->gameDirectory() / "default.xex", std::ios::binary);
     char expected[512]; source.read(expected, sizeof(expected));
     check(memcmp(base + guarded - 256, expected, sizeof(expected)) == 0,
           "Validated bounce-buffer read changed original file bytes");

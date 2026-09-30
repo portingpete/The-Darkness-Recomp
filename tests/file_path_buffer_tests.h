@@ -21,7 +21,7 @@ static void testFilePathBuffers(PPCContext& ctx) {
     check(scratch != 0, "File path fixture allocation failed");
     const uint32_t ios = scratch + 64, allocation = scratch + 80, handleOut = scratch + 96;
     const uint32_t frame = scratch + 512, data = scratch + 4096, guard = scratch + 8192;
-    constexpr char path[] = "game:\\basefile.exe";
+    constexpr char path[] = "game:\\default.xex";
     constexpr uint32_t pathLength = sizeof(path) - 1, sentinel = 0xa5a5a5a5;
     enum Field { Attributes, String, Path, Output, IoStatus, Allocation, Stack };
     const char* fields[]{"attributes", "string", "path", "output", "ios", "allocation", "stack"};
@@ -143,7 +143,7 @@ static void testFilePathBuffers(PPCContext& ctx) {
                 check(returned && call.r3.u32 == 0, "Valid split file path buffer was rejected");
                 if (operation == FilePathOperation::Attributes) {
                     const uint32_t record = field == Output ? target : data;
-                    check(PPC_LOAD_U64(record + 40) == std::filesystem::file_size(memory->gameDirectory() / "basefile.exe"),
+                    check(PPC_LOAD_U64(record + 40) == std::filesystem::file_size(memory->gameDirectory() / "default.xex"),
                           "File attributes lost the original file size");
                 } else {
                     check(memory->read32(field == IoStatus ? target : ios) == 0, "Valid file open lost completion status");
