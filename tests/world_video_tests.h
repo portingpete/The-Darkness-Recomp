@@ -1,7 +1,7 @@
 #pragma once
 
 // The same original YUV fragment runs on stored/world geometry as on UI
-// rectangles. Exercise its actual D3D11 path with decoder-order U,V pixels,
+// rectangles. Exercise its actual D3D11 path with decoder-order V,U pixels,
 // chroma's L,L,L,A view, tint, output alpha and immutable frame generations.
 static void worldVideoPass(WorldRendererD3D11& renderer,unsigned scale) {
     auto geometry=std::make_shared<StoredGeometry>();
@@ -38,9 +38,9 @@ static void worldVideoPass(WorldRendererD3D11& renderer,unsigned scale) {
         result->authoredMips=true;
         return result;
     };
-    const auto redY=plane(2,2,1,0x2000,81),redUV=plane(1,1,2,0x20000,90,240);
-    const auto blueY=plane(2,2,1,0x2000,41),blueUV=plane(1,1,2,0x20000,240,110);
-    const auto greenY=plane(2,2,1,0x2000,145),greenUV=plane(1,1,2,0x20000,54,34);
+    const auto redY=plane(2,2,1,0x2000,81),redUV=plane(1,1,2,0x20000,240,90);
+    const auto blueY=plane(2,2,1,0x2000,41),blueUV=plane(1,1,2,0x20000,110,240);
+    const auto greenY=plane(2,2,1,0x2000,145),greenUV=plane(1,1,2,0x20000,34,54);
     const auto whiteY=plane(2,2,1,0x2000,235),whiteUV=plane(1,1,2,0x20000,128,128);
     std::fill(source.begin(),source.end(),uint8_t(0));
     require(redUV->pixels==std::vector<uint8_t>({90,90,90,240}),"Chroma frame view/order or ownership changed");

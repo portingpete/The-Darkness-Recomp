@@ -28,7 +28,7 @@ static void testPreviewVideoUploads(EnginePreviewD3D11& renderer, CDisplayContex
     auto red = std::make_shared<VideoFrame>();
     red->width = red->height = 2;
     red->luma = {81, 81, 81, 81};
-    red->chroma = {90, 240};
+    red->chroma = {240, 90};
     auto white = std::make_shared<VideoFrame>();
     white->width = white->height = 2;
     white->luma = {235, 235, 235, 235};
@@ -87,7 +87,7 @@ static void testPreviewVideoUploads(EnginePreviewD3D11& renderer, CDisplayContex
     auto striped = std::make_shared<VideoFrame>();
     striped->width = striped->height = 4;
     striped->luma = {16, 16, 16, 16, 81, 81, 81, 81, 145, 145, 145, 145, 235, 235, 235, 235};
-    striped->chroma = {90, 240, 90, 240, 128, 128, 128, 128};
+    striped->chroma = {240, 90, 240, 90, 128, 128, 128, 128};
     pixel = renderVideo(striped);
     nearByte(pixel, 0, 203);
     nearByte(pixel, 1, 74);

@@ -549,13 +549,13 @@ inline void run(uint8_t* base, uint32_t scratch) {
             solid(result->pixels, i * 4, 4, {255, 255, 255, alpha[i]});
     }
     // Video chroma is a LINEAR A8L8 CImage, not compressed DXN. Its decoder
-    // bytes are U,V before the original uploader's endian conversion. Retain
+    // bytes are BE A,L (V,U) before the uploader's endian conversion. Retain
     // both authored channels and row padding through the actual transaction.
     {
         Fixture f(base, scratch); f.descriptor(2, 2, 1);
         f.be(f.resource + 32, 10); f.be(f.resource + 40, 1u << 10);
         f.header(2, 2, 12, 6, 2, 0x20000, 0x810);
-        const uint8_t values[]{90, 240, 240, 110, 99, 99, 54, 34, 128, 128, 99, 99};
+        const uint8_t values[]{240, 90, 110, 240, 99, 99, 34, 54, 128, 128, 99, 99};
         std::memcpy(f.base + f.data, values, sizeof(values));
         TextureUpload upload(15, 1, 0, 1);
         expect(upload.record(f.base, f.resource, f.image, f.data, 0, 0, false) && upload.complete(0, 0),

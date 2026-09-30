@@ -1451,12 +1451,12 @@ int main(int argc, char** argv) {
         plane(videoFrame+12,2,2,4,1,0x2000,0x18001,8);
         plane(videoFrame+60,1,1,4,2,0x20000,0x19001,4);
         const uint8_t lumaRows[]={16,235,77,77,81,145,66,66}; std::memcpy(base+0x18001,lumaRows,8);
-        base[0x19001]=90; base[0x19002]=240;
+        base[0x19001]=240; base[0x19002]=90;
         VideoFrame decodedVideo;
         require(!decodeVideoFrame(base,videoFrame,decodedVideo) && decodedVideo.luma==std::vector<uint8_t>({16,235,81,145}) &&
-                decodedVideo.chroma==std::vector<uint8_t>({90,240}),"Original Y/UV plane pitch or ordering changed");
+                decodedVideo.chroma==std::vector<uint8_t>({240,90}),"Original Y/VU plane pitch or ordering changed");
         put32(base,videoFrame+60+20,2); put32(base,videoFrame+60+12,8);
-        require(decodeVideoFrame(base,videoFrame,decodedVideo)!=nullptr && decodedVideo.chroma[1]==240,"Chroma size mismatch accepted");
+        require(decodeVideoFrame(base,videoFrame,decodedVideo)!=nullptr && decodedVideo.chroma[1]==90,"Chroma size mismatch accepted");
         put32(base,videoFrame+60+20,1); put32(base,videoFrame+60+12,4);
         put32(base,videoFrame+12+8,0xFFFFFFFE);
         require(decodeVideoFrame(base,videoFrame,decodedVideo)!=nullptr,"Wrapped video pixel span accepted");
@@ -1488,18 +1488,75 @@ int main(int argc, char** argv) {
             require(renderer.readPixel(32,32)==0xFF000000,"Zero-alpha original texture produced visible geometry");
 
             videoMesh.projection=mesh.projection;
-            auto movie=std::make_shared<VideoFrame>(); movie->width=movie->height=2;
-            movie->luma={81,81,81,81}; movie->chroma={90,240}; videoMesh.video=movie;
+            // Establish the raw-memory boundary, not just a hand-authored
+            // renderer input. TopCow frame252's saved 131072-byte Y/VU
+            // prefixes match FFmpeg exactly; interpreting them as U,V has
+            // chroma MAE30.386. No game pixels are part of this fixture.
+            auto decodedMovie=[&](uint8_t y,uint8_t v,uint8_t u) {
+                std::memset(base+videoFrame,0,12);
+                plane(videoFrame+12,2,2,4,1,0x2000,0x18001,8);
+                plane(videoFrame+60,1,1,4,2,0x20000,0x19001,4);
+                const uint8_t rows[]{y,y,77,77,y,y,66,66};
+                const uint8_t vu[]{v,u,99,99};
+                std::memcpy(base+0x18001,rows,sizeof(rows));
+                std::memcpy(base+0x19001,vu,sizeof(vu));
+                auto copied=std::make_shared<VideoFrame>();
+                require(!decodeVideoFrame(base,videoFrame,*copied) &&
+                        copied->luma==std::vector<uint8_t>({y,y,y,y}) &&
+                        copied->chroma==std::vector<uint8_t>({v,u}),
+                        "Raw BE A8L8 V,U frame lost its pitch, order or owned pixels");
+                std::memset(base+0x18001,0,sizeof(rows));
+                std::memset(base+0x19001,0,sizeof(vu));
+                return copied;
+            };
+            auto movie=decodedMovie(81,240,90); videoMesh.video=movie;
             renderer.render({videoMesh}); pixel=renderer.readPixel(32,32);
-            // Original decoder's CPU conversion proves U,V byte order before
-            // upload. Original ARB uses UV-0.5 and alpha zero.
+            // Decode captured V,U into logical U,V for the original ARB
+            // conversion, preserving its UV-0.5 coefficients and zero alpha.
             nearByte(pixel,0,254); nearByte(pixel,1,0); nearByte(pixel,2,0); nearByte(pixel,3,0);
-            movie=std::make_shared<VideoFrame>(*movie); movie->chroma={240,90}; videoMesh.video=movie;
+            movie=decodedMovie(41,110,240); videoMesh.video=movie;
             renderer.render({videoMesh}); pixel=renderer.readPixel(32,32);
-            nearByte(pixel,0,16); nearByte(pixel,1,62); nearByte(pixel,2,255); nearByte(pixel,3,0);
-            movie=std::make_shared<VideoFrame>(*movie); movie->luma={235,235,235,235}; movie->chroma={128,128}; videoMesh.video=movie;
+            nearByte(pixel,0,0); nearByte(pixel,1,0); nearByte(pixel,2,255); nearByte(pixel,3,0);
+            movie=decodedMovie(145,34,54); videoMesh.video=movie;
+            renderer.render({videoMesh}); pixel=renderer.readPixel(32,32);
+            nearByte(pixel,0,0); nearByte(pixel,1,255); nearByte(pixel,2,1); nearByte(pixel,3,0);
+            movie=decodedMovie(235,128,128); videoMesh.video=movie;
             renderer.render({videoMesh}); pixel=renderer.readPixel(32,32);
             nearByte(pixel,0,255); nearByte(pixel,1,254); nearByte(pixel,2,255); nearByte(pixel,3,0);
+            // Real boundary sample, independently decoded with FFmpeg from
+            // logo_topcow.wmv frame252 at x228,y36. Source SHA256:
+            // dd98bde8adfb674941b796d1890644e57eb6700cd60427800ed303edfe6c9cb7.
+            // The raw bytes were captured after8279DDC0 in
+            // boot-20260907-145945-758421.render/000122-video*; its entire
+            // 131072-byte Y and VU prefixes match the source decode exactly.
+            // This region has uniform 6x6 Y and 5x5 UV neighborhoods, so
+            // chroma interpolation cannot obscure the byte-order oracle.
+            const uint8_t capturedRows[]{112,112,77,77,112,112,66,66};
+            const uint8_t capturedVU[]{206,88,99,99};
+            std::memcpy(base+0x18001,capturedRows,sizeof(capturedRows));
+            std::memcpy(base+0x19001,capturedVU,sizeof(capturedVU));
+            auto capturedMovie=std::make_shared<VideoFrame>();
+            require(!decodeVideoFrame(base,videoFrame,*capturedMovie) &&
+                    capturedMovie->luma==std::vector<uint8_t>({112,112,112,112}) &&
+                    capturedMovie->chroma==std::vector<uint8_t>({206,88}),
+                    "Captured TopCow CImage frame changed raw V,U ordering");
+            std::memset(base+0x18001,0,sizeof(capturedRows));
+            std::memset(base+0x19001,0,sizeof(capturedVU));
+            const uint8_t ffmpegRGB[]{235,62,30};
+            SimpleMesh capturedMesh=videoMesh;capturedMesh.video=capturedMovie;
+            for(unsigned cell=0;cell<4;++cell) {
+                for(auto& vertex:capturedMesh.vertices) {
+                    vertex.uv[0]=float(cell%2)*.5f+.25f;
+                    vertex.uv[1]=float(cell/2)*.5f+.25f;
+                }
+                renderer.render({capturedMesh});const auto actual=renderer.readPixel(32,32);
+                // The original shader's coefficients differ slightly from
+                // FFmpeg's integer BT.601 conversion; a swap differs by tens.
+                for(unsigned channel=0;channel<3;++channel)
+                    require(std::abs(int((actual>>(channel*8))&255)-int(ffmpegRGB[channel]))<=3,
+                            "Raw captured video rendered with swapped U/V against source RGB");
+                nearByte(actual,3,0);
+            }
             testPreviewVideoUploads(renderer,display,videoMesh);
             mesh.texture=atlas; renderer.render({mesh}); pixel=renderer.readPixel(32,32);
             nearByte(pixel,0,128); nearByte(pixel,1,64); nearByte(pixel,2,32); nearByte(pixel,3,255);

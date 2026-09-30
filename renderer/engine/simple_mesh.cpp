@@ -720,12 +720,12 @@ const char* decodeUploadImage(uint8_t* base,uint32_t address,uint32_t pixels,Col
     } else if (luminanceAlpha) {
         // Original82269810 maps linear CImage0x20000 to A8L8 (fetch10),
         // distinct from compressed DXN's use of the same CImage format.
-        // Before the original upload's byte swap these bytes are L,A (U,V).
-        // Preserve the original sampler view L,L,L,A for the YUV program.
+        // Before the original upload's byte swap BE A8L8 stores A,L (V,U).
+        // Preserve its logical sampler view L,L,L,A for the YUV program.
         for(unsigned y=0;y<height;++y)for(unsigned x=0;x<width;++x) {
             const auto* in=input.data()+size_t(y)*pitch+x*2;
             auto* out=image.pixels.data()+(size_t(y)*width+x)*4;
-            out[0]=out[1]=out[2]=in[0];out[3]=in[1];
+            out[0]=out[1]=out[2]=in[1];out[3]=in[0];
         }
     } else if (luminance) {
         // 82269700 maps CImage format0x2000 to XDK L8=0x28000102.
@@ -962,6 +962,22 @@ void previewObserveWorld(uint8_t* base,const StoredDraw& geometry) {
                    (draw->fragmentName=="WClientMod_DV5_0" && (s==2 || s==4))) {
                     auto decoded=std::make_shared<ColorImage>();
                     if(!decodeWorldTextureImage(base,draw->textureObjects[s].object,*decoded,draw->textureObjects[s].firstMip)) {
+                        if(s==1 && draw->fragmentName=="CMWnd_ModTexture_PaintVideo_YUV2RGB" &&
+                           decoded->sourceCodec==10) {
+                            // The live decoder writes BE V,U. Original A8L8
+                            // upload swaps the pair, and its RRRG fetch view
+                            // restores V,V,V,U. Match the owned CPU upload's
+                            // logical U,U,U,V view only for this video plane;
+                            // generic fetch10 decoding retains its selectors.
+                            auto normalize=[](std::vector<uint8_t>& pixels) {
+                                for(size_t i=0;i<pixels.size();i+=4) {
+                                    const auto v=pixels[i],u=pixels[i+3];
+                                    pixels[i]=pixels[i+1]=pixels[i+2]=u;pixels[i+3]=v;
+                                }
+                            };
+                            normalize(decoded->pixels);
+                            for(auto& mip:decoded->mips)normalize(mip);
+                        }
                         if(auto old=colorTextures.find(draw->textureIds[s]);old!=colorTextures.end()) {
                             colorBytes-=old->second.image->bytes();colorTextures.erase(old);
                         }

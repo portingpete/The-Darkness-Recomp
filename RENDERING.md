@@ -314,8 +314,9 @@ follow the active input source; see `CONTROLS.md` for the switching behavior.
 - Translate the original water, projected-mark, lit-decal and world-video
   fragment programs. Water retains authored normal/fog maps alongside GPU
   reflection/refraction inputs; decals retain plane clipping, lighting,
-  projection and alpha. Video uploads retain decoder-order U,V chroma and
-  immutable frame generations. Hardware/WARP tests exercise their rendered
+  projection and alpha. Video snapshots retain raw big-endian V,U chroma;
+  native sampling converts it to logical U,V without changing immutable frame
+  generations. Hardware/WARP tests exercise their rendered
   output at 1x, 2x and 3x resolution; capture tests call the original binders.
 - Follow the original resource's primary/alternate texture selection, including
   inline texture objects and readiness checks.

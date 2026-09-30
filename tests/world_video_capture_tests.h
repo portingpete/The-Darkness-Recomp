@@ -50,7 +50,7 @@ static void testWorldVideoCapture(Memory& memory,const StoredDraw& world,uint32_
         previewPrepareTexture(id);bind(slot,objects[slot]);
     }
     auto update=[&](uint8_t y,uint8_t u,uint8_t v) {
-        std::memset(base+planePixels[0],y,4);base[planePixels[1]]=u;base[planePixels[1]+1]=v;
+        std::memset(base+planePixels[0],y,4);base[planePixels[1]]=v;base[planePixels[1]+1]=u;
         for(unsigned slot=0;slot<2;++slot) {
             TextureUpload transaction(0x7f0+slot,1,0,1);
             require(transaction.record(base,objects[slot],images[slot],planePixels[slot],0,0,false) &&
@@ -60,11 +60,14 @@ static void testWorldVideoCapture(Memory& memory,const StoredDraw& world,uint32_
             previewPublishTexture(0x7f0+slot,objects[slot],uploaded[slot]);
         }
         // Independent guest fetch storage: original A8L8 uses 8-in-16 endian
-        // swapping, while the upload observer owns the pre-swap U,V CImage.
+        // swapping and R,R,R,G selectors. 82269810's XDK0x0800014A
+        // selects R,R,R,G through82864530's bits18/21/24/27 packing.
+        // The observer owns BE V,U bytes; resident storage has U,V. Video
+        // recovery normalizes the fetched V,V,V,U to logical U,U,U,V.
         const uint32_t yFetch[]{2u|(1u<<22),storage|2u,1u|(1u<<13),5u<<10,0u,0x200u};
         TextureMipLayout layout;require(!getTextureMipLayout(yFetch,0,0,layout),"World Y storage layout rejected");
         for(unsigned row=0;row<2;++row)std::memset(base+storage+row*layout.rowPitchBytes,y,2);
-        base[storage+0x4000]=v;base[storage+0x4001]=u;
+        base[storage+0x4000]=u;base[storage+0x4001]=v;
     };
     auto capture=[&] {
         previewObserveWorld(base,world);const auto commands=finish();
@@ -85,10 +88,18 @@ static void testWorldVideoCapture(Memory& memory,const StoredDraw& world,uint32_
             second->textures[0]!=first->textures[0] && second->textures[1]!=first->textures[1] &&
             first->textures[0]->pixels[0]==81 && first->textures[1]->pixels==std::vector<uint8_t>({90,90,90,240}),
             "Updated world video reused or mutated the previous queued frame");
+    ColorImage nativeChroma;
+    require(!decodeWorldTextureImage(base,objects[1],nativeChroma) &&
+            nativeChroma.pixels==std::vector<uint8_t>({110,110,110,240}),
+            "Generic A8L8 fetch10 decoder lost original RRRG/endian semantics");
     for(unsigned id:{0x7f0u,0x7f1u})previewPrepareTexture(id);
     const auto recovered=capture();
     require(recovered->textures[0]->pixels==second->textures[0]->pixels &&
             recovered->textures[1]->pixels==second->textures[1]->pixels,
             "Evicted world video failed L8/A8L8 endian/swizzle recovery");
+    const auto reused=capture();
+    require(reused->textures[1]==recovered->textures[1] &&
+            reused->textures[1]->pixels==std::vector<uint8_t>({240,240,240,110}),
+            "Cached video recovery was normalized twice or lost its owned frame");
     std::puts("WorldVideoCapture: original bound objects, live two-plane uploads, retained generations and cache recovery passed.");
 }
