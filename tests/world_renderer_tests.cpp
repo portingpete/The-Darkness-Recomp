@@ -1498,6 +1498,7 @@ static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
     }
     deadNormalContract(renderer);
     darknessEffectContract(renderer);
+    deathSceneContract(renderer,1);
     immediateCanonicalContract(renderer);
     context->ClearState();renderer.invalidateBindings();
     std::weak_ptr<const StoredGeometry> temporary;
@@ -1565,6 +1566,7 @@ static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
         projectedTexturePass(scaled,scale);
         waterMaterialPass(scaled,scale);
         worldVideoPass(scaled,scale);
+        if(scale==2)deathSceneContract(scaled,scale);
         projectedMarkPass(scaled,scale);
         shadowProjectionPass(scaled,histogramDraw,scale);
         shadowBiasPass(scaled,histogramDraw,scale);

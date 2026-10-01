@@ -948,8 +948,20 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
     std::array<Ptr<ID3D11ShaderResourceView>,16> retainedViews;
     std::array<Ptr<ID3D11SamplerState>,16> retainedSamplers;
     std::array<Native::EngineVector,16> scales{};for(auto& scale:scales)scale.fill(1);
+    const auto unboundTexture=[&](unsigned slot) {
+        const auto& texture=draw.textureObjects[slot];
+        return !draw.textureIds[slot] && !texture.object && !texture.storage && !draw.textures[slot];
+    };
+    const bool radialBlur=draw.fragmentName=="XREngine_RadialBlurInvert";
+    const bool unmaskedRadialBlur=radialBlur && unboundTexture(1) && unboundTexture(2) && unboundTexture(3);
     if(fragFound) for(unsigned slot=0;slot<16;++slot)if(frag->textures&(1u<<slot)) {
         const auto& texture=draw.textureObjects[slot];const auto resolved=resolved_.find(texture.key());
+        // Retail RenderDeathScene0 (8235F390 -> 822968A8) explicitly binds
+        // texture zero in the three RadialBlurInvert mask slots. Keep those
+        // SRVs null: their zero samples select the shader's unmasked result.
+        // A named/resource-backed texture without pixels is still a failure.
+        if(radialBlur && slot>=1 && slot<=3 && unboundTexture(slot))
+            continue;
         const bool cube=(frag->cubes&(1u<<slot))!=0;
         unsigned firstMip=0;
         if(texture.object && resolved!=resolved_.end()) {
@@ -1052,7 +1064,12 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
         // Original82871600 links an absent tangent semantic to constant zero
         // XYZ (cache record13), rather than a different UV stream. Tangents
         // consume XYZ only; decodeWorldVertices already owns that default.
-        if(textureInput && !formats[options.coordinates[s]+1])return rejected(7);
+        // The original unmasked RadialBlurInvert quad has only UV0. UV1
+        // feeds its three null masks exclusively, so this absent semantic
+        // cannot affect the result; decodeWorldVertices supplies finite zeros.
+        const bool deadMaskCoordinate=unmaskedRadialBlur && s==1 &&
+            options.modes[s]==0 && options.coordinates[s]==1;
+        if(textureInput && !formats[options.coordinates[s]+1] && !deadMaskCoordinate)return rejected(7);
     }
     auto it=geometry_.find(g.vertices.get());
     if (it==geometry_.end()) {
