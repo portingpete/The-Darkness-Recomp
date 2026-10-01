@@ -452,6 +452,12 @@ const char* decodeWorldTextureImage(uint8_t* base,uint32_t object,ColorImage& re
             if(format==2) {
                 decoded.width=width;decoded.height=height;decoded.sourceCodec=2;decoded.pixels.resize(size_t(width)*height*4);
                 for(size_t i=0;i<linear.size();++i) {decoded.pixels[i*4]=linear[i];decoded.pixels[i*4+3]=255;}
+            } else if(format==10) {
+                decoded.width=width;decoded.height=height;decoded.sourceCodec=10;decoded.pixels.resize(size_t(width)*height*4);
+                for(size_t i=0;i<linear.size()/2;++i) {
+                    decoded.pixels[i*4]=linear[i*2];decoded.pixels[i*4+1]=linear[i*2+1];
+                    decoded.pixels[i*4+3]=255;
+                }
             } else if(format==49) {
                 decoded.width=width;decoded.height=height;decoded.sourceCodec=49;decoded.pixels.resize(size_t(width)*height*4);
                 auto channel=[](const uint8_t* p,std::array<uint8_t,16>& out) {
@@ -681,22 +687,23 @@ const char* decodeUploadImage(uint8_t* base,uint32_t address,uint32_t pixels,Col
     if(flags&0x200)return "upload CImage is metadata only";
     const bool alpha=format==0x40000 && u32(header+28)==1 && (flags&0x15800)==0x800;
     const bool luminance=format==0x2000 && u32(header+28)==1 && (flags&0x15800)==0x800;
+    const bool luminanceAlpha=format==0x20000 && u32(header+28)==2 && (flags&0x15800)==0x800;
     const bool dxn=format==0x20000 && u32(header+28)==2 && (flags&0x15000)==0x11000;
     const bool rgb=(format==0x40 || format==0x800) && u32(header+28)==4 && (flags&0x15800)==0x800;
-    if (!alpha && !luminance && !dxn && !rgb) {
+    if (!alpha && !luminance && !luminanceAlpha && !dxn && !rgb) {
         if(uint64_t(u32(header+8))+16!=pixels)return "upload pixels do not identify owned BC stream";
         return decodeColorImage(base,address,result);
     }
     if (u32(header)!=0x82097610 || !width || !height || width>2048 || height>2048) return "invalid upload image layout";
     const uint32_t allocation=u32(header+8),storage=u32(header+12);
     const uint32_t pitch=u32(header+24);
-    if (!dxn && (pitch<uint64_t(width)*(rgb?4:1) || pitch>8192)) return "invalid upload pitch";
+    if (!dxn && (pitch<uint64_t(width)*(rgb?4:luminanceAlpha?2:1) || pitch>8192)) return "invalid upload pitch";
     const size_t bytes=dxn?size_t((width+3)/4)*((height+3)/4)*16:size_t(pitch)*height;
     if (pixels<allocation || uint64_t(pixels)+bytes>uint64_t(allocation)+storage || uint64_t(pixels)+bytes>0x100000000ull)
         return "upload pixels escape owned CImage allocation";
     std::vector<uint8_t> input(bytes);
     if (!copyRenderMemory(base,pixels,input.data(),bytes)) return "unreadable upload pixels";
-    ColorImage image;image.width=width;image.height=height;image.sourceCodec=alpha?0x40000:dxn?49:rgb?format:2;image.pixels.resize(size_t(width)*height*4);
+    ColorImage image;image.width=width;image.height=height;image.sourceCodec=alpha?0x40000:dxn?49:luminanceAlpha?10:rgb?format:2;image.pixels.resize(size_t(width)*height*4);
     if (rgb) {
         // 8226977C/B8 map CImage0x40/0x800 to XDK X8R8G8B8/A8R8G8B8.
         // This observer runs before the temporary 82257E8C word byte-swap;
@@ -709,6 +716,16 @@ const char* decodeUploadImage(uint8_t* base,uint32_t address,uint32_t pixels,Col
         for(unsigned y=0;y<height;++y)for(unsigned x=0;x<width;++x) {
             const size_t i=size_t(y)*width+x;image.pixels[i*4]=image.pixels[i*4+1]=image.pixels[i*4+2]=255;
             image.pixels[i*4+3]=input[size_t(y)*pitch+x];
+        }
+    } else if (luminanceAlpha) {
+        // Original82269810 maps linear CImage0x20000 to A8L8 (fetch10),
+        // distinct from compressed DXN's use of the same CImage format.
+        // Before the original upload's byte swap BE A8L8 stores A,L (V,U).
+        // Preserve its logical sampler view L,L,L,A for the YUV program.
+        for(unsigned y=0;y<height;++y)for(unsigned x=0;x<width;++x) {
+            const auto* in=input.data()+size_t(y)*pitch+x*2;
+            auto* out=image.pixels.data()+(size_t(y)*width+x)*4;
+            out[0]=out[1]=out[2]=in[1];out[3]=in[0];
         }
     } else if (luminance) {
         // 82269700 maps CImage format0x2000 to XDK L8=0x28000102.
@@ -923,6 +940,7 @@ void previewObserveWorld(uint8_t* base,const StoredDraw& geometry) {
                 if(draw->material==WorldMaterial::ndsp || draw->material==WorldMaterial::fixed ||
                    draw->fragmentName.starts_with("XRShader_") || draw->fragmentName=="XRUtil_RenderSurface" ||
                    draw->fragmentName=="VBOp_GenEnv2" || draw->fragmentName=="VBOp_Fresnel" ||
+                   draw->fragmentName=="CMWnd_ModTexture_PaintVideo_YUV2RGB" ||
                    // CCFuser texture1 is its original 324x18 RGB lookup map.
                    // Reload the source pixels if its CPU cache entry expired.
                    (draw->fragmentName=="XREngine_CCFuser" && s==1) ||
@@ -931,6 +949,22 @@ void previewObserveWorld(uint8_t* base,const StoredDraw& geometry) {
                    (draw->fragmentName=="WClientMod_DV5_0" && (s==2 || s==4))) {
                     auto decoded=std::make_shared<ColorImage>();
                     if(!decodeWorldTextureImage(base,draw->textureObjects[s].object,*decoded,draw->textureObjects[s].firstMip)) {
+                        if(s==1 && draw->fragmentName=="CMWnd_ModTexture_PaintVideo_YUV2RGB" &&
+                           decoded->sourceCodec==10) {
+                            // The live decoder writes BE V,U. Original A8L8
+                            // upload swaps the pair, and its RRRG fetch view
+                            // restores V,V,V,U. Match the owned CPU upload's
+                            // logical U,U,U,V view only for this video plane;
+                            // generic fetch10 decoding retains its selectors.
+                            auto normalize=[](std::vector<uint8_t>& pixels) {
+                                for(size_t i=0;i<pixels.size();i+=4) {
+                                    const auto v=pixels[i],u=pixels[i+3];
+                                    pixels[i]=pixels[i+1]=pixels[i+2]=u;pixels[i+3]=v;
+                                }
+                            };
+                            normalize(decoded->pixels);
+                            for(auto& mip:decoded->mips)normalize(mip);
+                        }
                         if(auto old=colorTextures.find(draw->textureIds[s]);old!=colorTextures.end()) {
                             colorBytes-=old->second.image->bytes();colorTextures.erase(old);
                         }

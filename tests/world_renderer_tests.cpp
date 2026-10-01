@@ -952,6 +952,7 @@ static void immediateCanonicalContract(WorldRendererD3D11& renderer) {
 #include "darkness_effect_tests.h"
 #include "world_alpha_coverage_tests.h"
 #include "world_projected_texture_tests.h"
+#include "world_video_tests.h"
 #include "world_shadow_projection_tests.h"
 #include "world_shadow_bias_tests.h"
 #include "world_shadow_camera_tests.h"
@@ -1511,6 +1512,7 @@ static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
     deeperResources(renderer,device,context,histogramDraw);
     alphaCoveragePass(renderer,histogramDraw,1);
     projectedTexturePass(renderer,1);
+    worldVideoPass(renderer,1);
     shadowProjectionPass(renderer,histogramDraw,1);
     shadowBiasPass(renderer,histogramDraw,1);
     shadowCameraPass(renderer,histogramDraw,1);
@@ -1558,6 +1560,7 @@ static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
         std::printf("PhysicalRaster%u: %u covered pixels, %u mixed logical edge blocks retained through resolve/present.\n",scale,physicalCoverage,mixedBlocks);
         alphaCoveragePass(scaled,histogramDraw,scale);
         projectedTexturePass(scaled,scale);
+        worldVideoPass(scaled,scale);
         if(scale==2)deathSceneContract(scaled,scale);
         shadowProjectionPass(scaled,histogramDraw,scale);
         shadowBiasPass(scaled,histogramDraw,scale);

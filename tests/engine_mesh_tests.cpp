@@ -32,6 +32,7 @@ static void nearByte(uint32_t pixel, unsigned channel, int expected) {
 #include "preview_antialiasing_tests.h"
 #include "preview_clear_state_tests.h"
 #include "preview_video_upload_tests.h"
+#include "world_video_capture_tests.h"
 #include "prompt_icon_tests.h"
 #include "preview_output_tests.h"
 #include "preview_shadow_capture_tests.h"
@@ -676,6 +677,7 @@ static void testPreviewBridge(Memory& memory, PPCContext& threadContext, EngineP
         guest.r3.u64=device;guest.r4.u64=slot;guest.r5.u64=object;guest.r6.u64=uint64_t(1)<<(31-slot);
         __imp__sub_82864F20(guest,base);
     };
+    testWorldVideoCapture(memory,world,device,program,name,bindTexture,finish);
     textureHeader(primary,0x01000000);textureHeader(alternate,0x02000000);
     put32(base,resource+84,primary);put32(base,resource+164,alternate);
     put32(base,resource+172,0x10000000);

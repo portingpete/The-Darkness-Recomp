@@ -11,6 +11,7 @@ import re
 from compile_vertex_template import parse
 
 ASSETS = {
+    'System/Gl/ARB_fragment_program/CMWnd_ModTexture_PaintVideo_YUV2RGB.fp': '8581b0740ce479b1352ee0ef4221f938d0cea158a9a6e8270223799b6303452a',
     'System/Gl/ARB_fragment_program/WClientMod_DV5_0.fp': '0b44b474d46f01228f657175c2b817b6f7246ed65a6bfe4fb99af963b7201647',
     'System/Gl/ARB_fragment_program/WClientMod_DV5_1.fp': 'a99c1ce457f9d493975a9d05fffa3b138d714a1ffed6d78df18d97b69e2bdc9c',
     'System/Gl/ARB_fragment_program/XRShader_FP20_NDS.fp': '4d756e598bbb515c443e5175dbd4cf6967ccff1682dbbb398bc0a00f94e698b5',
@@ -43,7 +44,8 @@ ASSETS = {
     'System/Gl/ARB_fragment_program/TexEnvProj1.fp': '37436dd86a283197fe337255dd4e2be24a9c4d6f4bef16d3c71e22990e3ecb3b',
 }
 LANES = str.maketrans('rgba', 'xyzw')
-VARIANTS = {'XRShader_FP20_NDSP': [0], 'XRShader_FP20_NDS': [0], 'XRShader_MotionMap': [0], 'GUIFadeToWhite': [0],
+VARIANTS = {'CMWnd_ModTexture_PaintVideo_YUV2RGB': [0],
+            'XRShader_FP20_NDSP': [0], 'XRShader_FP20_NDS': [0], 'XRShader_MotionMap': [0], 'GUIFadeToWhite': [0],
             'WClientMod_DV5_0': [0, 1, 2], 'WClientMod_DV5_1': [0, 1, 2],
             'XRShader_FP20_LF': [0, 1], 'XRShader_FP20_NDSEATP': list(range(32)),
             'VBOp_GenEnv2': [0, 1], 'VBOp_Fresnel': [0],
