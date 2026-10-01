@@ -1772,7 +1772,10 @@ extern "C" PPC_FUNC(__imp__sub_823471F8);
 PPC_FUNC(sub_823471F8) {
     const uint32_t caller = uint32_t(ctx.lr), drawContext = ctx.r3.u32;
     __imp__sub_823471F8(ctx, base);
-    const bool fitted = fitLegacyMenuMatrix(drawContext);
+    // Original 823F9630 rebuilds this canvas exclusively for the player fade,
+    // paints (0,0,640,480), then resets it. Its native width/640 scale must
+    // cover the whole display; fitting it like a menu leaves ultrawide gaps.
+    const bool fitted = caller != 0x823F98F0 && fitLegacyMenuMatrix(drawContext);
     static thread_local uint32_t seen[24]{};
     static thread_local unsigned count = 0;
     if (count < 24 && std::find(seen, seen+count, caller) == seen+count) {
