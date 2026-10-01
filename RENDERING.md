@@ -106,6 +106,17 @@ far-depth discard at scales 1/2/3 on hardware and WARP. The original noise maps 
 can be recovered after a missed or evicted CPU texture upload. Scene, depth
 and effect-atlas inputs still come from their GPU resolves.
 
+Other World uses the original `WClientMod_OW1_1` grain pass and
+`WClientMod_OW1_2` scene composite. Missing native translations left a
+half-size scene view exposed in the upper-left corner of the sewers.
+Both programs now retain the Xenon floating-depth reconstruction, world-space
+noise, distance fade and scene-minus-grain composition. Only the grain pass's
+authored noise in slot 1 is recovered from CPU memory; scene, depth and mask
+inputs retain their GPU resolves. Hardware and WARP contracts cover full-screen
+composition, separate atlas coordinates, subtraction and alpha, noise and
+distance fades at scales 1/2/3. A 3440x1440 sewer replay reproduced the duplicate
+before the fix and showed one full-screen view afterward.
+
 Antialiasing offers Off (default) and FXAA, stored as `Antialiasing=0` or `1`.
 Missing or invalid values default to Off. Changes apply at the next presentation
 without restarting. Directional FXAA runs on the completed display-encoded image,

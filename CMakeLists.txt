@@ -91,6 +91,8 @@ add_custom_command(OUTPUT "${DARK_SHADER_DIR}/engine_world_fragments.generated.h
         Darkness/System/Gl/ARB_fragment_program/XRShader_FP20_NDS.fp
         Darkness/System/Gl/ARB_fragment_program/WClientMod_DV5_0.fp
         Darkness/System/Gl/ARB_fragment_program/WClientMod_DV5_1.fp
+        Darkness/System/Gl/ARB_fragment_program/WClientMod_OW1_1.fp
+        Darkness/System/Gl/ARB_fragment_program/WClientMod_OW1_2.fp
         Darkness/System/Gl/ARB_fragment_program/XRShader_MotionMap.fp Darkness/System/Xenon/FPInclude_Xenon.xrg
         Darkness/System/Gl/ARB_fragment_program/GUIFadeToWhite.fp
         Darkness/System/Gl/ARB_fragment_program/XRShader_FP20_LFM.fp

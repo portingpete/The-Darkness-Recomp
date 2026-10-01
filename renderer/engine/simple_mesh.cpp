@@ -946,7 +946,10 @@ void previewObserveWorld(uint8_t* base,const StoredDraw& geometry) {
                    (draw->fragmentName=="XREngine_CCFuser" && s==1) ||
                    // DV5's pulse and perturbation tables are CPU noise images.
                    // Scene/depth/atlas slots0/1/5 remain GPU resolve inputs.
-                   (draw->fragmentName=="WClientMod_DV5_0" && (s==2 || s==4))) {
+                   (draw->fragmentName=="WClientMod_DV5_0" && (s==2 || s==4)) ||
+                   // Other World's grain uses authored noise at slot1; its
+                   // scene0/depth2 and final OW1_2 inputs stay GPU resolves.
+                   (draw->fragmentName=="WClientMod_OW1_1" && s==1)) {
                     auto decoded=std::make_shared<ColorImage>();
                     if(!decodeWorldTextureImage(base,draw->textureObjects[s].object,*decoded,draw->textureObjects[s].firstMip)) {
                         if(s==1 && draw->fragmentName=="CMWnd_ModTexture_PaintVideo_YUV2RGB" &&
