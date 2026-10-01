@@ -1495,6 +1495,7 @@ static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
     }
     deadNormalContract(renderer);
     darknessEffectContract(renderer);
+    deathSceneContract(renderer,1);
     immediateCanonicalContract(renderer);
     context->ClearState();renderer.invalidateBindings();
     std::weak_ptr<const StoredGeometry> temporary;
@@ -1557,6 +1558,7 @@ static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
         std::printf("PhysicalRaster%u: %u covered pixels, %u mixed logical edge blocks retained through resolve/present.\n",scale,physicalCoverage,mixedBlocks);
         alphaCoveragePass(scaled,histogramDraw,scale);
         projectedTexturePass(scaled,scale);
+        if(scale==2)deathSceneContract(scaled,scale);
         shadowProjectionPass(scaled,histogramDraw,scale);
         shadowBiasPass(scaled,histogramDraw,scale);
         shadowCameraPass(scaled,histogramDraw,scale);
