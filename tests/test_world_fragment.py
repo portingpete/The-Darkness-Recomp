@@ -13,6 +13,28 @@ from compile_world_fragment import ASSETS, VARIANTS, compile_source, compile_fix
 
 
 class WorldFragmentTests(unittest.TestCase):
+    def test_decals_preserve_projection_kills_lights_and_high_constants(self):
+        directory = ROOT / 'Darkness/System/Gl/ARB_fragment_program'
+        source = (directory / 'XRShader_FP20_Decal.fp').read_text(encoding='latin-1')
+        self.assertEqual(len(VARIANTS['XRShader_FP20_Decal']), 20)
+        for flags in VARIANTS['XRShader_FP20_Decal']:
+            code, metadata = compile_source(select_template(source, flags))
+            slots = {0: '2D', 1: '2D', 2: '2D'}
+            for bit, slot in ((16, 3), (32, 4), (64, 5)):
+                if flags & bit: slots[slot] = 'CUBE'
+            self.assertEqual(metadata['textures'], slots)
+            self.assertEqual('clip(' in code, bool(flags & 1))
+            if flags == 127:
+                self.assertIn('env[33]', code)
+                self.assertIn('abs((r2.xxxx))', code)
+        code, metadata = compile_source((directory / 'XRShader_DecalTMProj.fp').read_text(encoding='latin-1'))
+        self.assertEqual(metadata['textures'], {0: '2D'})
+        self.assertEqual(code.count('clip('), 3)
+        code, _ = compile_source('OUTPUT o = result.color; PARAM c = program.env[0]; ABS_SAT o.xz, -c; MOV o.yw, 1; END')
+        self.assertIn('o.xz = (saturate(abs((-c)))).xz;', code)
+        with self.assertRaises(ValueError):
+            compile_source('OUTPUT o = result.color; ABS o, 1, 2; END')
+
     def test_world_video_keeps_both_planes_chroma_channels_and_alpha(self):
         name = 'CMWnd_ModTexture_PaintVideo_YUV2RGB'
         source = (ROOT / 'Darkness/System/Gl/ARB_fragment_program' / (name + '.fp')).read_text(encoding='latin-1')

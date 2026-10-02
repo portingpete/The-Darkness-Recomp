@@ -310,6 +310,12 @@ follow the active input source; see `CONTROLS.md` for the switching behavior.
   every original material pass and its order.
 - Read fragment constants from the original completed device upload, including
   the shader's intentional unused NaN values during the zero-blur GUI fade.
+  Retain up to 64 vectors so lit blood decals preserve their lighting and
+  projector inputs beyond vector 15. The original decal programs retain
+  projection, plane clipping, lighting and alpha in the native renderer.
+- Retain each original decoded triangle-list index chunk until its matching
+  indexed draw, then copy it into the owned render queue. Invalid or mismatched
+  draws consume the pending chunk so later draws cannot reuse stale indices.
 - Follow the original resource's primary/alternate texture selection, including
   inline texture objects and readiness checks.
 - Follow completed sampler filtering, addressing, LOD and anisotropy settings.

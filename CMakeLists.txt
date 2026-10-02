@@ -87,6 +87,11 @@ add_custom_command(OUTPUT "${DARK_SHADER_DIR}/engine_world_fragments.generated.h
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/compile_world_fragment.py"
         --game-dir "${CMAKE_SOURCE_DIR}/Darkness" --output-dir "${DARK_SHADER_DIR}"
     DEPENDS tools/compile_world_fragment.py tools/compile_vertex_template.py Darkness/System/Gl/ARB_fragment_program/XRShader_FP20_NDSP.fp
+        Darkness/System/Gl/ARB_fragment_program/XRShader_FP20_Decal.fp
+        Darkness/System/Gl/ARB_fragment_program/XRShader_DecalTMProj.fp
+        Darkness/System/Gl/ARB_fragment_program/XRShader_DecalTM.fp
+        Darkness/System/Gl/ARB_fragment_program/XRShader_DecalNormalTransform.fp
+        Darkness/System/Gl/ARB_fragment_program/XRShader_DecalNormalTransformTM.fp
         Darkness/System/Gl/ARB_fragment_program/CMWnd_ModTexture_PaintVideo_YUV2RGB.fp
         Darkness/System/Gl/ARB_fragment_program/XRShader_FP20_NDS.fp
         Darkness/System/Gl/ARB_fragment_program/WClientMod_DV5_0.fp

@@ -1248,7 +1248,7 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
             std::memcpy(uploadedAlpha_.data(),&alpha,sizeof(alpha));
         }
         if(!pixelConstantsUploaded_ || std::memcmp(uploadedFragment_.data(),draw.fragmentConstants.data(),sizeof(draw.fragmentConstants))) {
-            // The engine supplies at most16 fragment vectors. The remaining
+            // Captured decals can supply more than16 fragment vectors. The remaining
             // bank is permanently zero; don't rebuild/compare it every draw.
             std::copy(draw.fragmentConstants.begin(),draw.fragmentConstants.end(),uploadedFragment_.begin());
             updateConstants(context_.Get(),fragmentConstants_.Get(),uploadedFragment_.data(),sizeof(uploadedFragment_));

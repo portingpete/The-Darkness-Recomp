@@ -883,8 +883,8 @@ static bool snapshotWorldDrawInto(uint8_t* base,const StoredDraw& geometry,World
             else result.material=WorldMaterial::post;
             result.fragmentName=name.data();result.fragmentFlags=word(program.data()+16)>>8;
             const auto count=word(program.data()+16)&255u;
-            if (count>16 || (result.material==WorldMaterial::ndsp && count<4)) return fail(6);
-            std::array<uint8_t,256> env{};
+            if (count>result.fragmentConstants.size() || (result.material==WorldMaterial::ndsp && count<4)) return fail(6);
+            std::array<uint8_t,64*16> env{};
             // Original822478C0 uploads to device+6016. Read that completed
             // copy, not the GUI's mutable program parameter allocation.
             if (count && !copyRenderMemory(base,geometry.vertexBindings->deviceAddress+6016,env.data(),count*16)) return fail(7);

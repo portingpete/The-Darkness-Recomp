@@ -11,6 +11,11 @@ import re
 from compile_vertex_template import parse
 
 ASSETS = {
+    'System/Gl/ARB_fragment_program/XRShader_FP20_Decal.fp': 'fe911d651a2f9f3441c1b66e52ac5ee3e3c54a02e1b716d9fb5fe844193346d7',
+    'System/Gl/ARB_fragment_program/XRShader_DecalTMProj.fp': '04b9c1ff46df7c40441ab9734d54a2bf61cddd1a27641d91f8a14c981e9b73f7',
+    'System/Gl/ARB_fragment_program/XRShader_DecalTM.fp': 'b852253c7663a24137bddd21b95ff8afcd30ec768dd6da0ed54a498fdc8f2696',
+    'System/Gl/ARB_fragment_program/XRShader_DecalNormalTransform.fp': 'f5cc4c563c85ad764011a1d5ef0ab9edffc46bf0b20293917e0036a8abecbd4a',
+    'System/Gl/ARB_fragment_program/XRShader_DecalNormalTransformTM.fp': '3543e82ea5718468930bc65b0de0d91ba8c8ff9b19be601ea14712740112556d',
     'System/Gl/ARB_fragment_program/CMWnd_ModTexture_PaintVideo_YUV2RGB.fp': '8581b0740ce479b1352ee0ef4221f938d0cea158a9a6e8270223799b6303452a',
     'System/Gl/ARB_fragment_program/WClientMod_DV5_0.fp': '0b44b474d46f01228f657175c2b817b6f7246ed65a6bfe4fb99af963b7201647',
     'System/Gl/ARB_fragment_program/WClientMod_DV5_1.fp': 'a99c1ce457f9d493975a9d05fffa3b138d714a1ffed6d78df18d97b69e2bdc9c',
@@ -65,6 +70,16 @@ VARIANTS = {'CMWnd_ModTexture_PaintVideo_YUV2RGB': [0],
             'XRShader_FP20_LFM': [0],
             'XREngine_DepthFog': list(range(4)), 'XREngine_GaussClampedHurt': [0],
             'XREngine_MulFilter': [0]}
+
+
+# Shipped decal light/projector combinations, with and without trimesh.
+DECAL_VARIANTS = sorted({flags | trimesh for flags in
+    (0, 2, 6, 14, 18, 22, 30, 54, 62, 126) for trimesh in (0, 1)})
+VARIANTS.update({
+    'XRShader_FP20_Decal': DECAL_VARIANTS, 'XRShader_DecalTMProj': [0],
+    'XRShader_DecalTM': [0], 'XRShader_DecalNormalTransform': [0],
+    'XRShader_DecalNormalTransformTM': [0],
+})
 
 
 def select_template(source, flags, includes=None):
@@ -248,12 +263,13 @@ def compile_source(source):
                     raise ValueError('Invalid SWZ selector')
             expr = 'float4(' + ', '.join(lanes) + ')'
         else:
-            counts = {'MOV': 1, 'RCP': 1, 'RSQ': 1, 'FRC': 1, 'ADD': 2, 'SUB': 2, 'MUL': 2,
+            counts = {'MOV': 1, 'ABS': 1, 'RCP': 1, 'RSQ': 1, 'FRC': 1, 'ADD': 2, 'SUB': 2, 'MUL': 2,
                       'DP3': 2, 'DP4': 2, 'XPD': 2, 'POW': 2, 'MAD': 3, 'LRP': 3, 'MIN': 2, 'MAX': 2}
             if op not in counts or len(args) != counts[op]:
                 raise ValueError(f'Unsupported opcode or arity: {statement}')
             a = [operand(x) for x in args]
             if op == 'MOV': expr = a[0]
+            elif op == 'ABS': expr = f'abs({a[0]})'
             elif op == 'FRC': expr = f'frac({a[0]})'
             elif op in ('ADD', 'SUB', 'MUL'): expr = f'{a[0]} ' + {'ADD': '+', 'SUB': '-', 'MUL': '*'}[op] + f' {a[1]}'
             elif op in ('DP3', 'DP4'):
