@@ -1,4 +1,5 @@
 #pragma once
+#include <winternl.h>
 
 static bool directoryQueryWithoutHostFault(PPCContext& ctx, uint8_t* base) {
     __try { __imp__NtQueryDirectoryFile(ctx, base); return true; }
@@ -130,17 +131,84 @@ static void testDirectoryValidation(PPCContext& ctx) {
             report(labels[kind], retained, valid);
             close();
         }
-        // A native access denial is rejected before I/O; querying a regular
-        // file completes with an error. Neither success nor NT_SUCCESS alone
-        // determines whether an event/APC is due.
+        struct NativeErrorCompletion { uint32_t status; bool completed; };
+        auto nativeErrorCompletion = [&](uint32_t access, bool regular) {
+            struct Handles {
+                HANDLE file = INVALID_HANDLE_VALUE, event = nullptr;
+                ~Handles() {
+                    if (event) CloseHandle(event);
+                    if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
+                }
+            } handles;
+            const auto path = regular ? root / "entry-a" : root;
+            handles.file = CreateFileW(path.c_str(), access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED | (regular ? 0 : FILE_FLAG_BACKUP_SEMANTICS), nullptr);
+            check(handles.file != INVALID_HANDLE_VALUE, "Native directory error oracle open failed");
+            handles.event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+            check(handles.event != nullptr, "Native directory error oracle event allocation failed");
+            using Query = NTSTATUS (NTAPI*)(HANDLE, HANDLE, PIO_APC_ROUTINE, PVOID, PIO_STATUS_BLOCK, PVOID,
+                ULONG, FILE_INFORMATION_CLASS, BOOLEAN, PUNICODE_STRING, BOOLEAN);
+            auto query = reinterpret_cast<Query>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryDirectoryFile"));
+            check(query != nullptr, "Native directory error oracle query unavailable");
+            constexpr uint32_t untouchedStatus = 0xcccccccc;
+            constexpr ULONG_PTR untouchedInformation = ~ULONG_PTR(0);
+            IO_STATUS_BLOCK io{};
+            auto resetIo = [&] { io.Status = NTSTATUS(untouchedStatus); io.Information = untouchedInformation; };
+            resetIo();
+            alignas(8) uint8_t bytes[1024]; std::memset(bytes, 0xa5, sizeof(bytes));
+            wchar_t mask[] = L"entry-*";
+            UNICODE_STRING filter{14, 14, mask};
+            auto submit = [&](HANDLE completion) {
+                return uint32_t(query(handles.file, completion, nullptr, nullptr, &io, bytes, sizeof(bytes),
+                    FILE_INFORMATION_CLASS(1), TRUE, &filter, FALSE));
+            };
+            uint32_t status = submit(handles.event);
+            const bool eventless = status == 0xc0000002;
+            if (eventless) {
+                resetIo();
+                std::memset(bytes, 0xa5, sizeof(bytes));
+                status = submit(nullptr);
+            }
+            if (status == 0x103) {
+                check(WaitForSingleObject(eventless ? handles.file : handles.event, INFINITE) == WAIT_OBJECT_0,
+                      "Native directory error oracle completion did not signal");
+                status = uint32_t(io.Status);
+                check(status != 0x103, "Native directory error oracle remained pending");
+            }
+            bool completed;
+            if (eventless) {
+                // For these two errors, an untouched IOSB proves rejection
+                // before submission. A written terminal IOSB proves native
+                // completion when the host does not support directory events.
+                const bool untouched = uint32_t(io.Status) == untouchedStatus && io.Information == untouchedInformation;
+                const bool recorded = uint32_t(io.Status) == status && io.Information == 0;
+                check(untouched || recorded, "Native directory error oracle left an ambiguous completion status");
+                completed = recorded;
+            } else completed = WaitForSingleObject(handles.event, 0) == WAIT_OBJECT_0;
+            if (completed)
+                check(uint32_t(io.Status) == status && io.Information == 0,
+                      "Native directory error oracle completion did not record its error");
+            for (const auto byte : bytes) check(byte == 0xa5, "Native directory error oracle changed its output");
+            std::printf("DirectoryNativeError[%s] status=%08X eventless=%u completed=%u\n",
+                regular ? "regular-file" : "access-denial", status, unsigned(eventless), unsigned(completed));
+            return NativeErrorCompletion{status, completed};
+        };
+        // Compare errors with an independent host submission oracle. Hosts can
+        // reject a regular-file query before submission or complete its error;
+        // neither the returned status nor NT_SUCCESS alone proves completion.
         for (bool regular : {false, true}) {
-            open(regular ? GENERIC_READ : FILE_READ_ATTRIBUTES, regular);
+            const uint32_t access = regular ? GENERIC_READ : FILE_READ_ATTRIBUTES;
+            open(access, regular);
+            const auto native = nativeErrorCompletion(access, regular);
             prepare(true);
             __imp__NtQueryDirectoryFile(call, base);
             const uint32_t expected = regular ? 0xc000000d : 0xc0000022;
+            check(native.status == expected, "Native directory error oracle returned an unexpected error");
+            const int notifications = notification();
             const bool valid = call.r3.u32 == expected && memory->read32(ios) == expected &&
-                memory->read32(ios + 4) == 0 && notification() == int(regular);
-            report(regular ? "completed-error" : "unsubmitted-access-denial", false, valid);
+                memory->read32(ios + 4) == 0 && notifications == int(native.completed) &&
+                std::all_of(base + data, base + data + 4096, [](uint8_t byte) { return byte == 0xa5; });
+            report(regular ? "regular-file-error" : "unsubmitted-access-denial", false, valid);
             close();
         }
         // Accept a writable span across protection regions and retain normal

@@ -27,6 +27,8 @@ ASSETS = {
     'System/Gl/ARB_fragment_program/CMWnd_ModTexture_PaintVideo_YUV2RGB.fp': '8581b0740ce479b1352ee0ef4221f938d0cea158a9a6e8270223799b6303452a',
     'System/Gl/ARB_fragment_program/WClientMod_DV5_0.fp': '0b44b474d46f01228f657175c2b817b6f7246ed65a6bfe4fb99af963b7201647',
     'System/Gl/ARB_fragment_program/WClientMod_DV5_1.fp': 'a99c1ce457f9d493975a9d05fffa3b138d714a1ffed6d78df18d97b69e2bdc9c',
+    'System/Gl/ARB_fragment_program/WClientMod_OW1_1.fp': '9aa4636614ffc617af5dde4593d5497ca1afda9cba51440f750f85abfa25c6e8',
+    'System/Gl/ARB_fragment_program/WClientMod_OW1_2.fp': 'c84708bb8d05d09b5746d07ba94e3ef62501b1e2294dc5259266afccdd9befea',
     'System/Gl/ARB_fragment_program/XRShader_FP20_NDS.fp': '4d756e598bbb515c443e5175dbd4cf6967ccff1682dbbb398bc0a00f94e698b5',
     'System/Gl/ARB_fragment_program/VBOp_Fresnel.fp': 'c2eed837a9c13166970d8b03bda9a942a5e009610e7e9c135b52ae374c2361ea',
     'System/Gl/ARB_fragment_program/XRShader_FP20_LF.fp': '0113cb0529fc2eb5c0efe170c0d6ea6ee715a8b1060423e6939badda455b9b43',
@@ -59,6 +61,7 @@ ASSETS = {
 LANES = str.maketrans('rgba', 'xyzw')
 VARIANTS = {'XRShader_FP20_NDSP': [0], 'XRShader_FP20_NDS': [0], 'XRShader_MotionMap': [0], 'GUIFadeToWhite': [0],
             'WClientMod_DV5_0': [0, 1, 2], 'WClientMod_DV5_1': [0, 1, 2],
+            'WClientMod_OW1_1': [0], 'WClientMod_OW1_2': [0],
             'XRShader_FP20_LF': [0, 1], 'XRShader_FP20_NDSEATP': list(range(32)),
             'VBOp_GenEnv2': [0, 1], 'VBOp_Fresnel': [0],
             'XREngine_GaussClamped': [0], 'XREngine_RadialBlur': [0], 'XREngine_RadialBlurHurt': [0],

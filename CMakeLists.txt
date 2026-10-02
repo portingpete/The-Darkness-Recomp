@@ -111,6 +111,8 @@ add_custom_command(OUTPUT "${DARK_SHADER_DIR}/engine_world_fragments.generated.h
         Darkness/System/Gl/ARB_fragment_program/XRShader_FP20_NDS.fp
         Darkness/System/Gl/ARB_fragment_program/WClientMod_DV5_0.fp
         Darkness/System/Gl/ARB_fragment_program/WClientMod_DV5_1.fp
+        Darkness/System/Gl/ARB_fragment_program/WClientMod_OW1_1.fp
+        Darkness/System/Gl/ARB_fragment_program/WClientMod_OW1_2.fp
         Darkness/System/Gl/ARB_fragment_program/XRShader_MotionMap.fp Darkness/System/Xenon/FPInclude_Xenon.xrg
         Darkness/System/Gl/ARB_fragment_program/GUIFadeToWhite.fp
         Darkness/System/Gl/ARB_fragment_program/XRShader_FP20_LFM.fp
@@ -326,6 +328,8 @@ if(BUILD_TESTING)
     stage_dark_xma(NativeTests)
     target_link_options(NativeTests PRIVATE /DEBUG /STACK:67108864,1048576)
     add_test(NAME NativeRuntime COMMAND NativeTests "${CMAKE_SOURCE_DIR}/Darkness")
+    add_test(NAME NativeScreenFadeContract COMMAND NativeTests "${CMAKE_SOURCE_DIR}/Darkness" --screen-fade)
+    set_tests_properties(NativeScreenFadeContract PROPERTIES TIMEOUT 60)
     add_test(NAME NativeTextureMipContract COMMAND NativeTests "${CMAKE_SOURCE_DIR}/Darkness" --texture-mip-layout)
     add_test(NAME NativeTextureUploadContract COMMAND NativeTests "${CMAKE_SOURCE_DIR}/Darkness" --texture-upload)
     set_tests_properties(NativeTextureUploadContract PROPERTIES TIMEOUT 30)

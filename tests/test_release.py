@@ -1,10 +1,11 @@
-"""Exercise release contents and the actual Windows launcher setup checks."""
+"""Exercise release contents and Windows/Linux launcher setup checks."""
 import hashlib
 import importlib.util
 import json
 import io
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import tarfile
@@ -48,6 +49,8 @@ class ReleaseTests(unittest.TestCase):
         (self.root / 'tools').mkdir()
         (self.root / 'tools/build_xma_codec.py').write_bytes(b'build script')
         (self.root / 'tools/add_steam_shortcut.py').write_bytes((ROOT / 'tools/add_steam_shortcut.py').read_bytes())
+        for name in release.LINUX_SETUP_TOOLS:
+            (self.root / 'tools' / name).write_bytes((ROOT / 'tools' / name).read_bytes())
 
     def game_files(self):
         game = self.root / 'Darkness'
@@ -79,6 +82,15 @@ class ReleaseTests(unittest.TestCase):
             self.assertIn('build_native/Release/vcruntime140_1.dll', names)
             self.assertIn('build_native/Release/DarkRecompSettings.exe', names)
             self.assertIn('LaunchWithSettings.cmd', names)
+            self.assertIn('Launch.sh', names)
+            self.assertIn('SetupLinux.cmd', names)
+            self.assertIn('PlayLinux.cmd', names)
+            for tool in release.LINUX_SETUP_TOOLS:
+                self.assertIn(f'tools/{tool}', names)
+            launcher = bundle.getinfo('Launch.sh')
+            self.assertEqual(launcher.create_system, 3)
+            self.assertEqual((launcher.external_attr >> 16) & 0o777, 0o755)
+            self.assertNotIn(b'\r\n', bundle.read('Launch.sh'))
             self.assertIn('STEAM_DECK.md', names)
             self.assertIn('tools/add_steam_shortcut.py', names)
             self.assertIn('START_HERE.txt', names)
@@ -153,6 +165,127 @@ class ReleaseTests(unittest.TestCase):
         result = self.launch('check --game-dir "external dump & files!"')
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn('external dump & files!\\default.xex', result.stdout)
+
+
+@unittest.skipUnless(os.name == 'posix' and shutil.which('bash'), 'Linux/Bash launcher')
+class LinuxLauncherTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix='dark Linux release & test! ')
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.launcher = self.root / 'Launch.sh'
+        self.launcher.write_bytes((ROOT / 'Launch.sh').read_bytes())
+        self.bin = self.root / 'build_native/Release'
+        self.bin.mkdir(parents=True)
+        for name in release.BINARIES + release.CRT_REQUIRED:
+            (self.bin / name).write_bytes(b'fixture')
+        self.game = self.root / 'Darkness'
+        (self.game / 'Content').mkdir(parents=True)
+        (self.game / 'System').mkdir()
+        (self.game / 'default.xex').write_bytes(b'private fixture')
+        self.command_dir = self.root / 'fake commands'
+        self.command_dir.mkdir()
+        # Restrict PATH to fixtures so even a machine with real UMU installed
+        # cannot launch it. The launcher only needs dirname and cat besides Bash.
+        for command in ('dirname', 'cat'):
+            (self.command_dir / command).symlink_to(shutil.which(command))
+        self.runner = self.command_dir / 'umu-run'
+        self.runner.write_text(
+            '#!/bin/bash\n'
+            'printf "%s\\0" "$PWD" "$WINEPREFIX" "$GAMEID" "$PROTONPATH" "$@" > "$UMU_TEST_CAPTURE"\n'
+            'exit "${UMU_TEST_EXIT:-0}"\n', encoding='utf-8')
+        self.runner.chmod(0o755)
+        self.capture = self.root / 'captured argv'
+        self.bash = shutil.which('bash')
+        self.env = os.environ.copy()
+        for name in ('WINEPREFIX', 'GAMEID', 'PROTONPATH', 'XDG_DATA_HOME'):
+            self.env.pop(name, None)
+        self.env.update(PATH=str(self.command_dir), HOME=str(self.root / 'fake home'),
+                        UMU_TEST_CAPTURE=str(self.capture))
+
+    def launch(self, *arguments, **environment):
+        return subprocess.run([self.bash, str(self.launcher), *arguments],
+                              cwd=self.command_dir, env=self.env | environment,
+                              capture_output=True, text=True, timeout=15)
+
+    def captured(self):
+        return self.capture.read_bytes().decode('utf-8').split('\0')[:-1]
+
+    def test_default_launch_uses_release_root_and_preserves_arguments(self):
+        arguments = ['--fps', '60', '--label', 'spaces & "quotes" $()', '', 'line\nbreak']
+        result = self.launch(*arguments)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.captured(), [str(self.root),
+            str(self.root / 'fake home/.local/share/darkrecomp/proton'),
+            'umu-default', 'UMU-Proton', str(self.bin / 'DarkRecompPreview.exe'),
+            '--sound', *arguments])
+
+    def test_mute_respects_prefix_tool_and_game_overrides(self):
+        override = str(self.root / 'other prefix with spaces')
+        result = self.launch('mute', '--fps', '30', WINEPREFIX=override,
+                             GAMEID='umu-custom', PROTONPATH='/tools/custom Proton')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.captured()[1:], [override, 'umu-custom', '/tools/custom Proton',
+            str(self.bin / 'DarkRecompPreview.exe'), '--mute', '--fps', '30'])
+
+    def test_xdg_default_and_runner_exit_status(self):
+        data = str(self.root / 'Linux user data')
+        result = self.launch('play', XDG_DATA_HOME=data, UMU_TEST_EXIT='37')
+        self.assertEqual(result.returncode, 37)
+        self.assertEqual(self.captured()[1], str(Path(data) / 'darkrecomp/proton'))
+
+    def test_check_does_not_run_umu_or_create_a_prefix(self):
+        before = sorted(str(path.relative_to(self.root)) for path in self.root.rglob('*'))
+        result = self.launch('check')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('Setup looks ready', result.stdout)
+        self.assertFalse(self.capture.exists())
+
+        self.assertEqual(before, sorted(str(path.relative_to(self.root)) for path in self.root.rglob('*')))
+
+    def test_missing_game_and_dll_prevent_launch(self):
+        (self.game / 'default.xex').unlink()
+        (self.bin / 'avcodec-darkxma-62.dll').unlink()
+        result = self.launch()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('default.xex', result.stderr)
+        self.assertIn('avcodec-darkxma-62.dll', result.stderr)
+        self.assertIn('entire Windows release ZIP', result.stderr)
+        self.assertFalse(self.capture.exists())
+
+    def test_release_dll_names_accept_windows_casing(self):
+        for name, destination in (
+                ('msvcp140.dll', 'MSVCP140.dll'),
+                ('vcruntime140.dll', 'VCRUNTIME140.DLL'),
+                ('vcruntime140_1.dll', 'VCRUNTIME140_1.dll'),
+                ('avcodec-darkxma-62.dll', 'AvCodec-DarkXma-62.DlL')):
+            (self.bin / name).rename(self.bin / destination)
+        result = self.launch('check')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('Setup looks ready', result.stdout)
+        self.assertFalse(self.capture.exists())
+
+        launcher = self.bin / 'DARKRECOMPPREVIEW.EXE'
+        (self.bin / 'DarkRecompPreview.exe').rename(launcher)
+        result = self.launch()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.captured()[4], str(launcher))
+
+    def test_missing_umu_guides_supported_install_and_steam_alternative(self):
+        self.runner.unlink()
+        result = self.launch()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('umu-run was not found', result.stderr)
+        self.assertIn('Open-Wine-Components/umu-launcher', result.stderr)
+        self.assertIn('Steam', result.stderr)
+
+    def test_help_does_not_require_setup_or_umu(self):
+        self.runner.unlink()
+        (self.game / 'default.xex').unlink()
+        result = self.launch('--help')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('Usage:', result.stdout)
+        self.assertFalse(self.capture.exists())
 
 
 class SteamShortcutTests(unittest.TestCase):

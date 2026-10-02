@@ -89,6 +89,47 @@ END''')
         with self.assertRaises(ValueError):
             compile_source('OUTPUT o = result.color; KIL missing; END')
 
+    def test_other_world_grain_preserves_xenon_depth_world_noise_and_distance_fade(self):
+        source = (ROOT / 'Darkness/System/Gl/ARB_fragment_program/WClientMod_OW1_1.fp').read_text(encoding='latin-1')
+        self.assertEqual(VARIANTS['WClientMod_OW1_1'], [0])
+        code, metadata = compile_source(select_template(source, 0))
+        self.assertEqual(metadata['textures'], {0: '2D', 1: '2D', 2: '2D'})
+        self.assertEqual(metadata['instruction_count'], 62)
+        self.assertTrue(metadata['conditions']['xenon'])
+        # The console uses a float reversed-depth resolve. Packed RGB depth
+        # and the PC-only reconstruction branch would put the grain elsewhere.
+        self.assertIn('tdepth.w = (((float4)(1.0)) - (tdepth.xxxx)).w;', code)
+        self.assertNotIn('floor(', code)
+        self.assertIn('PixelPosV.z = ((r2.yyyy) * (-VPConst.zzzz)).z;', code)
+        for row in range(3):
+            self.assertIn(f'V2WRow{row} = env[{row + 5}]', code)
+            self.assertIn(f'dot((PixelPosV).xyzw, (V2WRow{row}).xyzw)', code)
+        self.assertEqual(code.count('texture1.Sample('), 4)
+        self.assertEqual(code.count('texture0.Sample('), 5)
+        self.assertIn('r1.yw = ((TimeLevels.xxxx) * ((float4)(1)) + (r1)).yw;', code)
+        self.assertIn('r1 = ((r1) * (TimeLevels.wwww));', code)
+        self.assertEqual(code.count('r1 = ((r1) * (r1));'), 3)
+        # The original fades grain from view distance 16 to 26 while keeping
+        # alpha opaque; it does not fade the whole resulting color vector.
+        self.assertIn('r1.w = ((PixelPosV.zzzz) - ((float4)(16))).w;', code)
+        self.assertIn('r1.w = (saturate((r1.wwww) * ((float4)(0.1)))).w;', code)
+        self.assertIn('r0.xyz = ((r0) * (r1.wwww)).xyz;', code)
+        self.assertIn('r0.w = (((float4)(1))).w;', code)
+        self.assertNotIn('@', code)
+
+    def test_other_world_composite_subtracts_grain_with_only_lower_clamp(self):
+        source = (ROOT / 'Darkness/System/Gl/ARB_fragment_program/WClientMod_OW1_2.fp').read_text(encoding='latin-1')
+        self.assertEqual(VARIANTS['WClientMod_OW1_2'], [0])
+        code, metadata = compile_source(select_template(source, 0))
+        self.assertEqual(metadata['textures'], {0: '2D', 1: '2D'})
+        self.assertEqual(metadata['instruction_count'], 5)
+        self.assertIn('texture0.Sample(sampler0, (tc0).xy)', code)
+        self.assertIn('texture1.Sample(sampler1, (tc1).xy)', code)
+        self.assertIn('r0 = ((t0) - (t1));', code)
+        self.assertIn('r0 = (max((r0), ((float4)(0))));', code)
+        self.assertIn('oCol = ((r0));', code)
+        self.assertNotIn('saturate(', code) # Preserve scene values above one.
+
     def test_final_composite_without_motion_blur_and_optional_bloom(self):
         source = (ROOT / 'Darkness/System/Gl/ARB_fragment_program/XREngine_Final5.fp').read_text(encoding='latin-1')
         for flags in range(0, 16, 2):

@@ -19,6 +19,7 @@ static void check(HRESULT hr,const char* what) {require(SUCCEEDED(hr),what);}
 using Result=std::array<float,40>;
 static void put(uint8_t* p,uint32_t x) {for(unsigned i=0;i<4;++i)p[i]=uint8_t(x>>(24-i*8));}
 #include "darkness_vision_tests.h"
+#include "otherworld_tests.h"
 #include "world_palette_usage_tests.h"
 #include "world_shadow_input_tests.h"
 #include "world_position_usage_tests.h"
@@ -1904,6 +1905,7 @@ int main(int argc,char** argv) {
         passes(device.Get(),context.Get());
         budgetContract(device.Get(),context.Get());
         darknessVisionContract(device.Get(),context.Get());
+        otherworldContract(device.Get(),context.Get());
         ComPtr<ID3D11InfoQueue> messages;
         if(SUCCEEDED(device.As(&messages)))for(UINT64 i=0;i<messages->GetNumStoredMessagesAllowedByRetrievalFilter();++i) {
             SIZE_T size=0;messages->GetMessage(i,nullptr,&size);std::vector<uint8_t> bytes(size);
