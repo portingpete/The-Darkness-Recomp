@@ -89,6 +89,10 @@ the original-file and decoded-image hashes checked by the runtime must match.
 
 ## Build from source
 
+To build v0.1.3, use that release's **Source code** ZIP or its `v0.1.3` Git tag.
+Extract the source ZIP before following the steps below. Git is still required
+because the build downloads its translator dependency.
+
 **1. Game files** — from your own dumped copy, fill in `Darkness/`:
 
 Use the original extracted dump; no decrypted executable or raw image is needed.
@@ -160,7 +164,7 @@ You do not need to rebuild.
 
 ## Updating a source build
 
-Pull the latest version and run the build again:
+If your Git checkout tracks a branch, pull the latest version and rebuild:
 
 ```powershell
 git pull --ff-only
@@ -169,6 +173,13 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1
 
 Keep your game dump and existing build directory. Unchanged generated files
 retain their timestamps so the native build can reuse previous compilation work.
+
+For a source ZIP, extract the newer archive, then copy the contents of its project
+folder into your existing source folder. Replace the included source files and
+run `tools/build.ps1` again.
+Keep `Darkness/`, `saves/`, `DarkRecomp.settings.ini`, and `build_native/`.
+For a checkout at a release tag, fetch tags and switch to the desired newer tag
+before rebuilding; `git pull` applies to a tracked branch.
 
 If an older setup stopped with `AOT gate: Generator failed (0)`, these same
 commands install the missing generator patches and regenerate the output.
@@ -212,3 +223,6 @@ ctest --test-dir build_native -C Release --output-on-failure
 GPLv3 — see [COPYING](COPYING), matching the upstream
 [UnleashedRecomp](https://github.com/hedge-dev/UnleashedRecomp) /
 [XenonRecomp](https://github.com/hedge-dev/XenonRecomp) toolchain this port builds on.
+
+Release integration, documentation review, and validation for v0.1.3 were
+assisted by OpenAI Codex.
