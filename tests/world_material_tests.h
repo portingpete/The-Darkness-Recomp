@@ -111,6 +111,7 @@ static void projectedMarkPass(WorldRendererD3D11& renderer,unsigned scale) {
         WorldClear clear;clear.targets=draw.targets;clear.viewport=draw.viewport;clear.flags=1;
         renderer.clear(clear);require(renderer.draw(draw),"Original projected blood/mark material was omitted");
         const auto pixels=renderer.readSurface(draw.targets[0],false);
+        require(pixels.size()==size_t(side)*side*8,"Projected mark output extent differs");
         for(unsigned y=0;y<side;++y)for(unsigned x=0;x<side;++x) {
             const double wx=(x+.5)*2/side-1,wy=1-(y+.5)*2/side;
             const bool inside=!offPlane && std::abs(wx)<.5 && std::abs(wy)<.5;

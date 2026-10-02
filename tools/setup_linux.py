@@ -129,6 +129,10 @@ def required_file(directory: Path, name: str) -> Path:
     return path
 
 
+def fail_game_walk(error: OSError) -> None:
+    raise SetupError(f'Cannot read original game directory: {error}') from error
+
+
 def is_wsl2() -> bool:
     release = Path('/proc/sys/kernel/osrelease')
     text = release.read_text().lower() if release.exists() else ''
@@ -163,7 +167,7 @@ def source_files(source: Path, game: Path, crt: Path | None, wsl: bool) -> dict[
         item = roots.get(name.casefold())
         if item is None or item.is_symlink() or not item.is_dir():
             raise SetupError(f'Missing original game directory: {game / name}')
-    for current, dirs, files in os.walk(game, followlinks=False):
+    for current, dirs, files in os.walk(game, followlinks=False, onerror=fail_game_walk):
         directory = Path(current)
         for name in dirs:
             if (directory / name).is_symlink():
@@ -458,7 +462,7 @@ def setup(source: Path, game_dir: Path | None, install: Path, crt_dir: Path | No
     tools_ready = {spec.name: installed_tool(spec, install, old) for spec in (UMU, PROTON)}
     directories = [install / name for name in ('ge-prefix', 'wsl-pv', 'evidence')]
     game_directories = [install / 'game/Darkness']
-    for current, dirs, _ in os.walk(game, followlinks=False):
+    for current, dirs, _ in os.walk(game, followlinks=False, onerror=fail_game_walk):
         for name in dirs:
             relative = (Path(current) / name).relative_to(game)
             parts = list(relative.parts)
@@ -475,6 +479,8 @@ def setup(source: Path, game_dir: Path | None, install: Path, crt_dir: Path | No
             if hasattr(os, 'geteuid') and (info.st_uid != os.geteuid() or info.st_mode & 0o022):
                 raise SetupError(f'Runtime/evidence directory must belong to you and not be writable by others: {directory}')
     if check:
+        if not install.is_dir() or install.stat().st_mode & 0o077:
+            raise SetupError('Linux installation directory must be private (0700); rerun setup to repair it.')
         if plan or not all(tools_ready.values()) or not launcher_path.is_file() or launcher_path.read_bytes() != launcher:
             raise SetupError('Linux setup is missing or differs from the source; run setup without --check.')
         if not os.access(launcher_path, os.X_OK) or any(not directory.is_dir() for directory in directories):
@@ -488,6 +494,8 @@ def setup(source: Path, game_dir: Path | None, install: Path, crt_dir: Path | No
         return old
     # Resolve and validate archives before changing game/release files.
     install.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if install.stat().st_mode & 0o077:
+        install.chmod(0o700)
     archives = {spec.name: get_archive(spec, supplied, install, skip_download)
                 for spec, supplied in ((UMU, umu_archive), (PROTON, proton_archive)) if not tools_ready[spec.name]}
     for spec in (UMU, PROTON):

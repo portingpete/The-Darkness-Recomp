@@ -4,6 +4,12 @@ The game runs as a native Windows x64 AOT executable and renders through the
 engine's D3D11 backend. The renderer uses original engine geometry, shader
 sources and completed device state. It does not interpret console GPU packets.
 
+For installation and updating, use [README.md](README.md) and
+[START_HERE.txt](START_HERE.txt). [CONTROLS.md](CONTROLS.md) lists settings,
+controls and launch commands. This document describes implementation details
+and dated development measurements; historical test counts and frame rates
+are not validation results for the current release package.
+
 ## Display size and ultrawide
 
 The sound and muted launchers use saved graphics settings and default to
@@ -40,6 +46,10 @@ Full-screen videos retain their source aspect, and the front-end menu retains
 its 16:9 content width. The journal and gameplay HUD keep their original
 height-based layout.
 
+The player's full-screen fade uses the original width/640 and height/480
+canvas scales instead of the front-end menu's aspect fitting. Death and
+transition fades therefore cover ultrawide displays without exposed side bands.
+
 Alt+Enter toggles borderless fullscreen. Window resizing recreates only the
 swapchain views, depth buffer and output readback resource, retaining the device,
 world textures and internal scene buffers. Presentation fits the existing scene
@@ -66,7 +76,8 @@ the save-error state. The original property order and sizing callback are
 unchanged; there is no construction-rectangle override. Narrow pressed/input
 hooks change the setting; the original menu retains focus,
 navigation and text rendering. ALWAYSPAINT refreshes the current value through
-the original CStr and menu text path. No host controls, popup, or F3 panel is used.
+the original CStr and menu text path. The separate `LaunchWithSettings.cmd`
+launcher offers the same saved settings before the game starts.
 
 Changes automatically save brightness, gamma, FOV, bloom, motion blur, antialiasing, VSync, frame cap, render height and display
 mode to an adjacent staged INI copy, then replace the configuration while
@@ -88,7 +99,7 @@ stores `GammaPercent=50..150`; absent or invalid values recover to 100.
 The presentation shader applies `pow(rgb, 100 / GammaPercent)` after optional
 FXAA, preserving alpha, black borders and the owned scene. Neutral brightness
 and gamma retain the exact previous output and direct-copy path. Changes apply
-immediately; repeated presents never compound the correction. Ten compact rows and their
+immediately; repeated presents never compound the correction. Eleven compact rows and their
 help text fit the original twenty-cell menu grid.
 
 Darkness Vision uses the original `WClientMod_DV5_0` and `WClientMod_DV5_1`
@@ -103,8 +114,7 @@ the original state, so the second stage cannot overwrite the gold glow.
 GPU contracts cover both stages, all variants, atlas coordinates, nonuniform
 gold edge glow, the two-stage depth mask, intensity and near/far fades, and
 far-depth discard at scales 1/2/3 on hardware and WARP. The original noise maps
-in stage-0 slots 2 and 4
-can be recovered after a missed or evicted CPU texture upload. Scene, depth
+in stage-0 slots 2 and 4 can be recovered after a missed or evicted CPU texture upload. Scene, depth
 and effect-atlas inputs still come from their GPU resolves.
 
 Other World uses the original `WClientMod_OW1_1` grain pass and
@@ -156,13 +166,13 @@ Unknown profiles, other client types, and authored square cameras retain their
 original values. Original has a direct-call fast path. `DARK_FOV_PROBE=1`
 enables bounded camera evidence for diagnostic runs.
 
-Validation for the native menu correction is limited to compilation and
+The initial native menu correction was validated through compilation and
 non-rendering contracts: startup archive reads and unrelated cached bytes,
 guest file imports returning the packaged replacements, registry encoding/preservation, original button
 construction and property/input callbacks in private memory, persistence,
 resolution recovery, shader flags and frame pacing. No game launch, screenshot,
-GPU test or visual inspection is performed. In-game appearance, navigation and
-launch recovery require user testing.
+GPU test or visual inspection was performed for that correction. Those initial
+results do not establish current release gameplay or a complete visual review.
 
 ## Frame pacing
 
@@ -230,17 +240,17 @@ timings, not measurements of monitor scanout.
 ## Saves
 
 Offline single-player (user0) saves live portably under
-`<gameDirectory>/../saves` (normally `K:/DarkRecomp/saves`) as
+`<gameDirectory>/../saves` (the `saves` folder beside `Darkness`) as
 `00000001_<filename>` content directories; normal play uses `DEFAULT`,
 holding `_profile`, `Chapter1` and `Checkpoint`. The title owns the file
 formats and the original assets stay read-only. Writable device selection and
 content create/open/enumerate plus file write/flush/size/disposition paths are
-implemented through the native XAM/NT imports. Final verification
+implemented through the native XAM/NT imports. Historical verification
 (`build_native/framerate-stability-20260909/FINAL-VERIFICATION.md`) passed
-all 47 Release tests; the final muted 300-second replay captured 14,158,804
-world draws with zero rejections, queue drops or audio errors. Displayed FPS
-remains unverified (all presents occluded) as do full campaign play and
-in-game checkpoint Resume.
+all 47 Release tests in that checkout; its final muted 300-second replay captured 14,158,804
+world draws with zero rejections, queue drops or audio errors. All presents in
+that replay were occluded, so it did not verify displayed FPS or in-game
+checkpoint Resume. A full campaign playthrough remains unverified.
 
 For a bounded, muted run from the workspace root:
 
@@ -322,6 +332,10 @@ follow the active input source; see `CONTROLS.md` for the switching behavior.
   the shader's intentional unused NaN values during the zero-blur GUI fade.
   Retain up to 64 vectors so lit blood/decal programs can use their original
   lighting and projector constants beyond vector 15.
+- Retain each original decoded triangle-list index chunk until its matching
+  indexed draw, then copy it into the owned render queue. Invalid or mismatched
+  draws consume the pending chunk so later draws cannot reuse stale indices.
+  This retains ground blood spatter emitted through the original decoded draw path.
 - Translate the original water, projected-mark, lit-decal and world-video
   fragment programs. Water retains authored normal/fog maps alongside GPU
   reflection/refraction inputs; decals retain plane clipping, lighting,
@@ -329,6 +343,9 @@ follow the active input source; see `CONTROLS.md` for the switching behavior.
   native sampling converts it to logical U,V without changing immutable frame
   generations. Hardware/WARP tests exercise their rendered
   output at 1x, 2x and 3x resolution; capture tests call the original binders.
+- Retain the original in-world TV video's YUV textures and named fragment program
+  through its world draw. The video observer also retains frames when no separate
+  diagnostic capture directory is requested.
 - Follow the original resource's primary/alternate texture selection, including
   inline texture objects and readiness checks.
 - Follow completed sampler filtering, addressing, LOD and anisotropy settings.
@@ -601,7 +618,7 @@ in 97.20 seconds. Its initial verification run rendered 6,486,408 world draws
 with zero rejections, but the strict new metric accepted zero frames. A separate
 smoke test returned `DXGI_STATUS_OCCLUDED` (`0x087A0001`). Interactive desktop
 launch approval timed out. Visible 60 FPS pacing is therefore **not yet verified**;
-the goal remains open until a visible run can be measured. Repeated Present
+that checkpoint needs a visible run to establish displayed pacing. Repeated Present
 calls in the occluded test are not evidence of a steady displayed framerate.
 
 The current memory-layout candidate keeps the C alias at the same guest

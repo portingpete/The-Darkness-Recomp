@@ -1,6 +1,8 @@
 THE DARKNESS RECOMP - START HERE
 
-1. Right-click the downloaded Windows ZIP and choose "Extract All".
+1. Download The-Darkness-Recomp-v0.1.3-windows-x64.zip from the release's Assets.
+   The Source code downloads are for developers.
+   Right-click the downloaded Windows ZIP and choose "Extract All".
    Open the extracted folder. Do not run the game from inside the ZIP.
 
 2. Copy your own Xbox 360 game dump into the Darkness folder.
@@ -27,17 +29,19 @@ THE DARKNESS RECOMP - START HERE
    This build supports the same game revision used to build it.
 
 3. Double-click Launch.cmd to play immediately, or LaunchWithSettings.cmd to
-   choose video settings before the game opens. No build or developer tools
-   are needed.
+   choose video settings and language before the game opens. No compiler,
+   Python installation, or separate audio setup is needed on Windows.
 
 Windows 10/11, 64-bit, with a Direct3D 11-capable graphics device is required.
+The CPU must support SSSE3.
 The audio and Visual C++ runtime files are included. Keep them with the game.
 
 Linux from Windows: with Ubuntu configured in WSL2, double-click SetupLinux.cmd,
 then PlayLinux.cmd. The setup installs the tested Proton tools and copies the
-game into Linux storage. Rerun SetupLinux.cmd to update without replacing saves.
+game into Linux storage. Rerun SetupLinux.cmd to update without replacing Linux saves.
 See STEAM_DECK.md for prerequisites, options and the verified test scope.
-Steam Deck gameplay and performance are not verified.
+Steam Deck gameplay and performance are not verified. The opening Linux scene
+rendered, but camera movement and tutorial completion were not confirmed.
 This release checks the supported The Darkness revision automatically at launch.
 Other Xbox games and updated executables need their own port; changing a hash
 will not add support.
@@ -49,16 +53,24 @@ Alt+Enter switches fullscreen/windowed. Controllers are supported.
 Change graphics options and language in Options > Video Settings, or use
 LaunchWithSettings.cmd before starting the game. Both save to the same settings
 file. Internal resolution and language changes take effect when the game starts.
+Choose System, English, German, French, Spanish or Italian for language.
+The matching language content must be included in your own dump.
+The mouse wheel selects dialogue and menu choices; E confirms. F5 opens
+developer tools for mission selection, player speed and invincibility. Loading
+a mission can autosave; read CONTROLS.md before using mission selection.
 
 UPDATING AN OLDER RELEASE
 Close the game. Extract the new Windows ZIP into your existing game folder
 and replace the included program files. Keep your Darkness folder, saves
 folder, and DarkRecomp.settings.ini. They contain your game, progress, and
 settings, and are not supplied or overwritten by this release.
+Existing _uncrypted.xex and basefile.exe may remain in Darkness; they are no
+longer required or read.
 
 IF IT DOESN'T START
 - Extract the whole ZIP. Keep both launchers and build_native together.
 - If the launcher lists missing files, check step 2 above.
+- To check file placement without playing, run Launch.cmd check from a terminal.
 - If the game reports "default.xex differs from the supported AOT revision",
   your dump uses a different revision or a modified executable. Include your
   disc revision and the runtime.log below when reporting it. Do not post game files.

@@ -59,7 +59,8 @@ ASSETS = {
     'System/Gl/ARB_fragment_program/TexEnvProj1.fp': '37436dd86a283197fe337255dd4e2be24a9c4d6f4bef16d3c71e22990e3ecb3b',
 }
 LANES = str.maketrans('rgba', 'xyzw')
-VARIANTS = {'XRShader_FP20_NDSP': [0], 'XRShader_FP20_NDS': [0], 'XRShader_MotionMap': [0], 'GUIFadeToWhite': [0],
+VARIANTS = {'CMWnd_ModTexture_PaintVideo_YUV2RGB': [0],
+            'XRShader_FP20_NDSP': [0], 'XRShader_FP20_NDS': [0], 'XRShader_MotionMap': [0], 'GUIFadeToWhite': [0],
             'WClientMod_DV5_0': [0, 1, 2], 'WClientMod_DV5_1': [0, 1, 2],
             'WClientMod_OW1_1': [0], 'WClientMod_OW1_2': [0],
             'XRShader_FP20_LF': [0, 1], 'XRShader_FP20_NDSEATP': list(range(32)),
@@ -88,7 +89,6 @@ VARIANTS.update({
     'XRShader_DecalTM': [0], 'XRShader_DecalNormalTransform': [0],
     'XRShader_DecalNormalTransformTM': [0], 'WModel_FXRenderSurface': [0],
     'WModel_FXBlackHole': [0], 'WModel_FXHeatHazeMask': [0], 'GUIRGB2Grey': [0],
-    'CMWnd_ModTexture_PaintVideo_YUV2RGB': [0],
 })
 
 

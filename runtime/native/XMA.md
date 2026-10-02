@@ -1,5 +1,10 @@
 # Native XMA bridge
 
+Downloaded Windows releases include the decoder DLLs and audio dependencies.
+Players can use **Launch.cmd** with sound immediately; see
+[START_HERE.txt](../../START_HERE.txt). The build instructions below are for
+developers rebuilding the audio library.
+
 `XmaBridge` connects the original SDK group submission (`828B1BA8`), poll
 (`828B1A58`), sample availability (`828B1048`), consumer (`828B10C0`) and reset
 (`828B13A0`) to a native CPU decoder. Guest context storage and native decoder
@@ -21,6 +26,10 @@ arbitrary initial offsets and interleaved packet skips fail explicitly.
 avutil with XMA1/XMA2 enabled. It requires the existing MSYS2 MinGW toolchain at
 `C:/msys64` and LLVM import-library tool at `C:/Program Files/LLVM/bin`.
 `tools/build.ps1` invokes it before configuring the native application.
+
+Install `mingw-w64-x86_64-gcc`, `make` and `diffutils` through MSYS2's package
+manager first. The complete source prerequisites are in
+[README.md](../../README.md#build-from-source).
 
 The opt-in public AVOption `darkrecomp_raw_frames=1` bypasses the stock
 container FIFO, priming skip and synthesized EOF overlap tail. The engine owns
@@ -90,7 +99,7 @@ Creation and affinity changes now publish the selected logical processor in
 the thread's PCR. `NativeRuntime` verifies processor 4 and the original barrier.
 After this correction a 30-second boot submitted 4620 buffers and received 4617
 actual XAudio2 completions with zero device errors. The run ended at its explicit
-diagnostic deadline, not at an XMA failure; gameplay remains unverified.
+diagnostic deadline, not at an XMA failure; that boot did not verify gameplay.
 
 ## Streaming refill waits
 

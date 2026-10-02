@@ -6,15 +6,15 @@ renderer — no emulation at runtime.
 
 > **Bring your own game dump.** This repo contains no game code, assets, or
 > binaries. Dump your Xbox 360 copy and drop the files into `Darkness/`
-> (step 1 below).
+> (step 2 below).
 
-Playable today: full gameplay, mouse look + controller input, video settings
+Features include gameplay, mouse look + controller input, video settings
 (resolution, FOV, gamma, bloom, frame cap, VSync), XMA audio, and saves.
 
 ## Download and play
 
 **[Download the Windows release](https://github.com/portingpete/The-Darkness-Recomp/releases).**
-Choose `The-Darkness-Recomp-v...-windows-x64.zip` under **Assets**.
+For v0.1.3, choose **The-Darkness-Recomp-v0.1.3-windows-x64.zip** under **Assets**.
 The GitHub **Source code** downloads are for building the project yourself.
 
 1. Right-click the Windows ZIP and choose **Extract All**.
@@ -22,10 +22,11 @@ The GitHub **Source code** downloads are for building the project yourself.
    folder: the original `default.xex`, `Content`, `System`, and all the other
    files and folders from your dump. No XexTool preparation is required.
 3. Double-click **Launch.cmd** to play with sound, or
-   **LaunchWithSettings.cmd** to choose video settings before playing.
+   **LaunchWithSettings.cmd** to choose video settings and language before playing.
 
 No compiler, Python, or separate audio setup is needed for the Windows release.
 Use 64-bit Windows 10/11 with a Direct3D 11-capable graphics device.
+The current build requires an x86-64 CPU with SSSE3 support.
 See [START_HERE.txt](START_HERE.txt) for the folder layout and troubleshooting.
 An ISO alone is not enough; use an extracted dump of the supported game revision.
 The port decodes `default.xex` in memory at startup; `_uncrypted.xex` and
@@ -45,11 +46,12 @@ and the full input guide.
 
 ## Steam Deck and Linux
 
-The Windows build can run through Proton on Linux. The current source includes
-`Launch.sh` for UMU and file I/O compatibility fixes tested with GE-Proton11-7
-in Ubuntu 24.04 under WSL2. The opening level renders with audio and creates
-checkpoint saves; memory, file I/O and save-storage tests pass. Steam Deck
-gameplay and performance remain unverified.
+The Windows build can run through Proton on Linux. `Launch.sh` and the file I/O
+compatibility fixes were tested with GE-Proton11-7 in Ubuntu 24.04 under WSL2.
+The opening level rendered with audio and created checkpoint saves; memory,
+file I/O and save-storage tests passed. Visible camera movement and completion
+of the opening tutorial were not confirmed. Steam Deck gameplay and performance
+remain unverified.
 See [STEAM_DECK.md](STEAM_DECK.md) for the tested setup, Steam shortcut,
 dependencies and diagnostic logs. A native Linux build is not available.
 For automatic setup from Windows with Ubuntu in WSL2, double-click
@@ -81,6 +83,10 @@ your dump uses a different revision or a modified executable. Include your disc
 revision and the newest `build_native/run/desktop-*/runtime.log` when reporting
 the problem. Do not post game files.
 
+The tested dump reports Title ID `545407EE`, Media ID `0F213645`, version
+`0.0.0.1`, and **All Regions**. Region labels alone do not establish compatibility;
+the original-file and decoded-image hashes checked by the runtime must match.
+
 ## Build from source
 
 **1. Game files** — from your own dumped copy, fill in `Darkness/`:
@@ -99,6 +105,17 @@ the rest from your dump. Nothing else under `Darkness/` is committed.
 
 **2. Build** — one step (dependency setup + generator + translation + XMA codec + compile + tests):
 
+Open PowerShell in the extracted source or Git checkout folder. Install 64-bit
+Windows build prerequisites first: Git, CMake 3.24+, Python 3.11.4 or newer, and Visual
+Studio 2022 with **Desktop development with C++** and the **ClangCL** toolset.
+The audio build also needs MSYS2 at `C:\msys64` with MinGW64 GCC and `make`,
+plus standalone LLVM at `C:\Program Files\LLVM` for `llvm-lib.exe`.
+Allow at least 15 GB of free space for build outputs, in addition to your game dump.
+
+In the MSYS2 MinGW64 terminal, install the audio build tools with
+`pacman -S --needed mingw-w64-x86_64-gcc make diffutils`. Keep the default
+MSYS2 and LLVM locations above, which the audio build script uses.
+
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\build.ps1
 ```
@@ -107,24 +124,21 @@ The build downloads the pinned XenonRecomp source and applies the bundled
 Darkness patches automatically. Existing checkouts from the old setup instructions
 are supported too. The first build needs an internet connection.
 
-You'll need 64-bit Windows, Git, Visual Studio 2022 with the **ClangCL** toolset,
-CMake 3.24+, Python 3.11+, and ~15 GB free. Output lands in
-`build_native/Release/`.
-
-The XMA audio build also requires MSYS2 at `C:\msys64` with MinGW64 GCC and
-`make`, plus standalone LLVM at `C:\Program Files\LLVM` (for `llvm-lib.exe`).
+Output lands in `build_native/Release/`. The script stops if translation, compilation,
+or a required test fails; resolve that error before launching or packaging.
 
 **3. Play** — double-click either launcher:
 
 | Command | What it does |
 |---|---|
 | `Launch.cmd` | Play with sound |
-| `LaunchWithSettings.cmd` | Choose video settings, then play with sound |
+| `LaunchWithSettings.cmd` | Choose video settings and language, then play with sound |
 | `Launch.cmd mute` | Play muted |
 | `Launch.cmd preview` | Engine preview build (muted by default) |
 | `Launch.cmd stutter` | Play with sound while recording slow-frame timings |
 | `Launch.cmd performance` / `render-profile` / `steady-60` | Diagnostic recording runs |
 | `Launch.cmd help` | Full usage |
+| `Launch.cmd check` | Check that the program and game files are present |
 
 Extra arguments reach the game untouched, e.g. `Launch.cmd play --fps 120`.
 
@@ -164,7 +178,7 @@ commands install the missing generator patches and regenerate the output.
 Maintainers can build, test, and package a Windows ZIP with:
 
 ```powershell
-python tools/package_release.py --version v0.1.1
+python tools/package_release.py --version v0.1.3
 ```
 
 Run from a clean, committed checkout with the build prerequisites installed.

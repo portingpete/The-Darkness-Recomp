@@ -40,7 +40,7 @@ Open **Options > Video Settings** for the game's native graphics rows:
 - **Brightness:** 50% to 200%, with 100% neutral.
 - **Gamma:** 0.50 to 1.50, with 1.00 neutral. Lower values darken the image;
   changes apply immediately and save automatically.
-- **Field of view:** Original or **60�120 horizontal degrees at 16:9**;
+- **Field of view:** Original or **60 to 120 horizontal degrees at 16:9**;
   ultrawide displays show more at the sides.
 - **Bloom:** on by default; toggle the final-composite glow.
 - **Vertical sync:** off by default; synchronize presentation to the display.

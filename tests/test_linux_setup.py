@@ -260,6 +260,21 @@ class ArchiveSafetyTests(unittest.TestCase):
 
 @unittest.skipUnless(os.name == "posix", "Linux installation")
 class LinuxSetupTests(SetupFixture):
+    def block_game_content(self, after=0):
+        scandir = os.scandir
+        blocked = self.game / "Content"
+        visits = 0
+
+        def deny_content(path):
+            nonlocal visits
+            if Path(path) == blocked:
+                visits += 1
+                if visits > after:
+                    raise PermissionError(13, "Permission denied", os.fspath(path))
+            return scandir(path)
+
+        return patch.object(setup_linux.os, "scandir", side_effect=deny_content)
+
     def test_local_archives_install_without_modifying_source_or_game(self):
         before_source = self.snapshot(self.source)
         before_game = self.snapshot(self.game)
@@ -291,6 +306,26 @@ class LinuxSetupTests(SetupFixture):
                     self.assertFalse(self.install.exists())
                 finally:
                     renamed.rename(unavailable)
+
+    def test_unreadable_game_subdirectory_fails_before_installation(self):
+        with self.block_game_content():
+            with self.assertRaisesRegex(setup_linux.SetupError, "Content"):
+                self.setup()
+        self.assertFalse(self.install.exists())
+
+    def test_unreadable_game_subdirectory_fails_read_only_check(self):
+        self.setup()
+        before = self.snapshot(self.install)
+        with self.block_game_content():
+            with self.assertRaisesRegex(setup_linux.SetupError, "Content"):
+                self.setup(check=True, umu_archive=None, proton_archive=None)
+        self.assertEqual(self.snapshot(self.install), before)
+
+    def test_unreadable_game_subdirectory_during_directory_walk_fails(self):
+        with self.block_game_content(after=1):
+            with self.assertRaisesRegex(setup_linux.SetupError, "Content"):
+                self.setup()
+        self.assertFalse(self.install.exists())
 
     def test_missing_crt_is_rejected(self):
         (self.binary / "msvcp140.dll").unlink()
@@ -431,6 +466,23 @@ class LinuxSetupTests(SetupFixture):
                 with self.assertRaisesRegex((RuntimeError, ValueError), "(?i)(link|alias)"):
                     self.setup(install=candidate)
                 self.assertEqual(self.snapshot(self.root), before)
+
+    def test_existing_install_root_is_private_before_copy_and_check(self):
+        self.install.mkdir(mode=0o755)
+        self.install.chmod(0o755)
+        self.setup()
+        self.assertEqual(self.install.stat().st_mode & 0o777, 0o700)
+        self.assertTrue((self.install / "game/Darkness/Content/data.bin").is_file())
+
+        self.install.chmod(0o755)
+        before = self.snapshot(self.install)
+        with self.assertRaisesRegex(setup_linux.SetupError, "private"):
+            self.setup(check=True, umu_archive=None, proton_archive=None)
+        self.assertEqual(self.install.stat().st_mode & 0o777, 0o755)
+        self.assertEqual(self.snapshot(self.install), before)
+
+        self.setup(umu_archive=None, proton_archive=None)
+        self.assertEqual(self.install.stat().st_mode & 0o777, 0o700)
 
     def test_private_runtime_permissions_are_checked_without_repair_then_repaired_on_setup(self):
         self.setup(wsl=True)

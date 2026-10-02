@@ -1,19 +1,81 @@
-Current status (2026-09-09): The native Windows AOT build renders the original first-level car scene and police chase through engine-level D3D11. Reversed face culling, stage0 depth-offset coordinates and the missing NDS lighting shader are fixed. Offline user0 saves are implemented portably under `gameDirectory.parent_path()/saves` (`00000001_<filename>` content dirs; normal `DEFAULT` holds `_profile`, `Chapter1`, `Checkpoint`) with the title owning file formats and original assets read-only. Prompts default to keyboard/mouse artwork and follow the active input source (see `CONTROLS.md`). Final verification (`build_native/framerate-stability-20260909/FINAL-VERIFICATION.md`) passed all 47 Release tests; the final muted 300-second replay captured 14,158,804 world draws with zero rejections, queue drops or audio errors. Actual unedited late-scene BMPs were reviewed. See `build_native/run/codex-world-rendering-checkpoint-20260908.md` and its separate verification receipt. Full campaign play, in-game checkpoint Resume, exact platform fidelity and visible 60 FPS remain unverified; all presents report occluded. All launches stay muted. Earlier implementation notes below document previous milestones.
+# Native engine renderer
 
-# Native rendering performance update
+The Windows x64 port runs translated game code and renders through the engine's
+D3D11 backend. Normal play uses this renderer through **Launch.cmd**, with sound
+and your saved settings. **LaunchWithSettings.cmd** opens the settings launcher.
+Installation and updating are described in [README.md](../../README.md) and
+[START_HERE.txt](../../START_HERE.txt); controls and developer tools are in
+[CONTROLS.md](../../CONTROLS.md).
 
-The current implementation and launch/diagnostic options are documented in
-[`RENDERING.md`](../../RENDERING.md). The muted native launcher now targets
-60 FPS and reports accepted engine frames separately from repeated presents.
-Texture selection and completed sampler/fragment state are retained, resources
-and unchanged D3D11 bindings are cached, and a late engine frame wakes the
-consumer directly. Full-level 120 FPS and exact console fidelity must be judged
-from the current measured checkpoint, not the configured frame cap.
+## Current implementation
 
-The sections below are historical implementation milestones; their older
-limitations and frame-delivery descriptions do not all describe the current build.
+The native bridge retains original engine geometry, completed transforms,
+texture bindings and shader inputs in owned snapshots. It submits world, GUI,
+video, shadow and post-processing passes through D3D11 and preserves original
+clear, resolve and presentation order. The original wrapped AOT functions still
+execute with their guest ABI; the renderer does not interpret console GPU packets.
 
-# Experimental native engine renderer
+Supported materials include water, projected marks, lit blood decals, in-world
+TV video, Darkness Vision, death effects and Other World composition. Decoded
+triangle-list chunks stay attached to their matching draw so ground blood
+spatter retains its geometry. Player screen fades cover ultrawide displays.
+Video snapshots preserve the original big-endian V,U chroma and convert it to
+the logical sampler channels in the native rendering path.
+
+Resource snapshots own their geometry and pixels across the game/render-thread
+handoff. Caches and queues are bounded; invalid guest memory, stale resource
+bindings and unsupported material states are rejected. A configured frame cap
+is a pacing target, not proof of sustained gameplay performance.
+
+See [RENDERING.md](../../RENDERING.md) for resolution scaling, shader fidelity,
+resource lifetimes, frame pacing, diagnostics and dated performance evidence.
+Exact console fidelity and a complete campaign playthrough remain unverified.
+Linux uses the Windows build through Proton; the tested setup and Steam Deck
+limits are in [STEAM_DECK.md](../../STEAM_DECK.md).
+
+## Build and diagnostics
+
+From PowerShell in the repository root, build the complete port and run its tests:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\build.ps1
+```
+
+The build requires your complete supported dump, including the original
+`default.xex`. It decodes that file directly; no prepared executable images are
+needed. Use **Launch.cmd** for ordinary play. Directly launching
+`DarkRecompPreview.exe` defaults to muted unless `--sound` is supplied.
+
+For a bounded developer run with logs and diagnostic frame captures:
+
+```powershell
+python tools/run_native.py --timeout-ms 60000 --engine-preview --mute --trace-renderer
+```
+
+The helper writes logs, JSON results and captures under `build_native/run`.
+Exit code **5** means the requested diagnostic deadline expired. It does not
+establish gameplay success. Normal play does not enable automatic screenshots;
+`Launch.cmd preview --shadow-capture` enables two on-demand **F8** captures.
+Captures add work to the rendering thread and should be considered when measuring
+performance. See [CONTROLS.md](../../CONTROLS.md) for the recording launch modes.
+
+Contract tests compare native preparation with original AOT routines and check
+ownership, bounds, lifetimes and GPU output on hardware and WARP. Their results
+do not establish a full playthrough or exact Xbox hardware behavior. Use the
+release notes for validation of a particular downloadable package.
+
+## Historical implementation milestones
+
+The notes below describe September 7–9, 2026 development checkpoints. Their test
+counts, commands, muted runs and incomplete-feature statements apply to those
+checkpoints. Use the current instructions above for this release. Referenced
+`build_native` evidence files are local development artifacts and are not included
+in a clean source checkout or release ZIP.
+
+<details>
+<summary>Earlier renderer contracts and milestone evidence</summary>
+
+### First text and video preview — 2026-09-07
 
 The opt-in native preview draws the original game's copyright text and intro
 video through D3D11. It copies original engine CPU vertex/index arrays,
@@ -40,7 +102,7 @@ is expected; it does not mean gameplay succeeded. The launcher reports a
 nonzero status for that deadline. Without `--engine-preview`, the experimental
 bridge is disabled.
 
-## Supported contract
+### Supported contract
 
 - Original triangle-list entry `8225DBC8`, including its original recursion
   through batched requests. CPU descriptor layout is the one consumed by
@@ -95,7 +157,7 @@ D3D11 drawing with alpha blending, video chroma ordering, the original YUV
 conversion formula, projection and GPU readback. These are host contract
 tests, not evidence of playable gameplay or full hardware parity.
 
-## Owned stored geometry and attributes
+### Owned stored geometry and attributes
 
 `stored_geometry.h/.cpp` capture the original converted interleaved vertices,
 formats, scale/offset constants and decoded BE16 indices. Publication waits
@@ -114,7 +176,7 @@ interpretation does not establish vertex-shader or skinning semantics.
 `StoredGeometryContract` compares original conversion/copy/index wrapper ABI
 and packed-attribute values, and checks cache ownership, lifetime and ranges.
 
-## Native engine transform constants
+### Native engine transform constants
 
 `engine_transforms.h/.cpp` reconstruct the eight-vector output of original
 routine `82248A78` from owned model-view/projection data. Vectors 0..3 contain
@@ -142,7 +204,7 @@ comparison classification. The transform milestone's Release suite passed **24/2
 `boot-20260907-172549-928475` matched **37,152/37,152** stored draw transform
 snapshots with zero differences; that is a data contract, not rendered gameplay.
 
-## Native texture-stage constants
+### Native texture-stage constants
 
 `engine_texture_constants.h/.cpp` reconstruct original `8224A2E8` as owned
 data for eight engine texture stages. Optional matrices are transposed; modes
@@ -169,7 +231,7 @@ and empty observations. This preparation contract does not yet attach a
 complete material to native world draws; vertex programs, skinning and
 render-target lifecycle still need implementation.
 
-## Native vertex descriptors and conversion constants
+### Native vertex descriptors and conversion constants
 
 `engine_vertex_descriptor.h/.cpp` reconstruct the typed 80-byte descriptor
 defaults from `8224DC70`, the 27 mode-table entries initialized by `8223AFE8`,
@@ -194,7 +256,7 @@ FP state and mismatch classification. This descriptor milestone passed **26/26**
 Observation accepts only the proven callers `82248E98` and `822490B8`, checks
 the original initialized tables, and keeps original execution exactly once.
 
-## Matrix palette preparation
+### Matrix palette preparation
 
 `engine_palette.h/.cpp` reconstructs original `8224AB18`: up to52 matrices,
 contiguous or selected by original BE16 indices, with three transposed columns
@@ -212,7 +274,7 @@ loop tails, count clamping, indexed/contiguous selection and source ownership.
 That milestone passed **27/27**. Palette runtime counters are
 separate from bounded trace samples; no palette binary sampling was added.
 
-## Vertex program selection
+### Vertex program selection
 
 `engine_vertex_program.h/.cpp` reconstructs the six-word cache key assembled
 by original `82248C80`: declaration identity, packed coordinate mapping, mode
@@ -237,7 +299,7 @@ the matching Xenon variable definitions and arithmetic helpers are in
 implementing variant bodies, rather than inferring weight/normal semantics
 from copied constant words alone.
 
-## Read-only tracing
+### Read-only tracing
 
 Add `--trace-renderer` to save sampled engine state under a new `.render`
 directory. Captures are bounded at 16 MiB and include JSONL metadata and raw
@@ -278,18 +340,18 @@ retail key-to-condition mapping is still required before live submission.
 Captured c8.w is765.00030517578125; do not hardcode the template comment's510.
 
 
-## Current world pass continuation — 2026-09-07
+### Current world pass continuation — 2026-09-07
 
 Native stored geometry now submits depth and motion passes. Hardware and WARP
 verify skinning/basis outputs and actual depth/stencil/motion pixels. The muted
 80-second boot215216 submitted1,824 of each pass; later pipeline samples show
 rasterized triangles and motion PS invocations. Lighting remains unsubmitted.
 Exact target formats/resolves/composition and controllable world gameplay are
-still unfinished. Keep the full goal active. Read
+still unfinished. Read the dated development checkpoint
 `build_native/run/codex-world-checkpoint-20260907.md` for evidence and next actions.
 
 
-## Current lighting continuation - 2026-09-07
+### Current lighting continuation - 2026-09-07
 
 Original NDSP lighting now submits with diffuse/specular/DXN-normal and six-face
 luminance cube maps. The missing stencil128 clear and original immediate shadow
@@ -297,12 +359,12 @@ volumes are queued. Muted75-second boot223800 submitted4,464 depth/stencil,1,488
 motion and1,488 lighting draws. Readbacks of lighting draws64/512 changed13,827/
 24,158 RGB pixels with zero nonfinite channels. All34 CTest checks pass. These
 are offscreen passes: exact formats/lifetimes/resolves/postprocessing/display
-composition and controllable gameplay remain unfinished. Keep the full goal
-active. Current evidence and next actions:
+composition and controllable gameplay were unfinished at this milestone.
+Recorded evidence:
 `build_native/run/codex-lighting-checkpoint-20260907.md`.
 
 
-## Native composition continuation — 2026-09-07
+### Native composition continuation — 2026-09-07
 
 The renderer now queues engine resolves at82865FD0 and publishes the frame at
 the actual82867620 present call, including the final frontbuffer resolve. The
@@ -323,8 +385,7 @@ scene is visible in native backbuffer captures. This is not gameplay proof.
 
 Current limits include logical RGBA16F/D24S8 surfaces (not bit-exact Xbox
 10-bit-float/MSAA), a bounded shader/material subset, and incomplete native
-storage/profile integration. The active user goal still requires an actual
-in-game screenshot; do not mark it complete from a title-screen capture.
+storage/profile integration. This milestone predates complete in-game capture evidence.
 Opt-in --test-start, --test-skip-intros and --test-input exercise the native
 keyboard adapter without sending input to other processes. Normal launches
 keep user input unchanged. Tests and launches remain muted.
@@ -333,4 +394,6 @@ keep user input unchanged. Tests and launches remain muted.
 Native level-renderer continuation (2026-09-08)
 Shared physical A/C/E memory views corrected first-level loading; the6252 original geometry resources (37,721,688 bytes) now remain cached without eviction. The original no-save route reaches NY1_Tunnel using local-player sign-in and explicit cancelled storage selection. All runs stay muted; save support remains unfinished.
 Original CPU tiling oracles verify streamed RGBA8/BC1/BC3/DXN and RGBA cube ownership.73 fragment variants from20 unchanged pinned assets now include LF, anisotropic NDSEATP, environment mapping and fog. Stage-specific vertex modes9/13/17/18 were matched to original ProgramCache.xpc; runtime remains engine-level D3D11 with native AOT PPC, with no Xbox shader-bytecode interpreter. Hardware/WARP tests check72 vertex variants plus covered pixels and compiled texture-binding requirements.
-The latest immutable checkpoint and actual visual review are documented in build_native/run/codex-compose-checkpoint-20260907.md and codex-compose-visual-review-20260907.md. World rendering remains incomplete; title/menu/tutorial text alone does not satisfy the active in-game-screenshot goal. Small packed texture bases, compressed cubes, exact sampler/mip and surface lifetimes remain limited. Intro video after the physical-map change is not reverified (recent auto-skip runs recorded0 native video images).
+The latest immutable checkpoint and actual visual review are documented in build_native/run/codex-compose-checkpoint-20260907.md and codex-compose-visual-review-20260907.md. World rendering was incomplete at this milestone; title/menu/tutorial text alone did not establish in-game rendering. Small packed texture bases, compressed cubes, exact sampler/mip and surface lifetimes remain limited. Intro video after the physical-map change is not reverified (recent auto-skip runs recorded0 native video images).
+
+</details>

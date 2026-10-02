@@ -1,5 +1,9 @@
 # Darkness generator patches
 
+These patches support source builds. For playing a downloaded release, follow
+[START_HERE.txt](../../START_HERE.txt). For build prerequisites and the complete
+build command, see [README.md](../../README.md#build-from-source).
+
 `xenonrecomp-darkness.patch` applies to hedge-dev/XenonRecomp commit
 `c5bfd90d87f2ed0db8cff5c19ea3aff0e161e527`, the XenonRecomp revision referenced
 by UnleashedRecomp `5e8695a157ce9d2a783944d63439cc8c76a38fc2`.
@@ -17,12 +21,23 @@ negative multiply-add, unsigned multiply-high record flags, and lost analysis
 diagnostics. Reciprocal-square-root and negative-multiply-add record forms fail the semantic gate until
 their FPSCR-to-CR1 behavior is implemented.
 
+From PowerShell in the repository root, run the normal build command:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\build.ps1
+```
+
 `tools/build.ps1` runs `tools/setup_generator.py` before compiling. Setup builds
 the patch series in a temporary directory and recognizes the pinned original and
 every shipped intermediate version. It upgrades old installs, preserves unchanged
 timestamps, and validates all affected files before replacing any of them. Unknown
 local edits are preserved and reported. The Python setup script also accepts
 `--destination` for validating a separate clean generator checkout.
+
+To prepare only the translator dependency, run `python tools/setup_generator.py`.
+It downloads the pinned source on first use, then applies the bundled patches.
+Your original `Darkness/default.xex` is read directly during the later translation
+step; no XexTool preparation is required.
 
 When changing the generator after a release, append a patch to `PATCHES` in
 `tools/setup_generator.py` so existing installs remain recognizable. Validate the

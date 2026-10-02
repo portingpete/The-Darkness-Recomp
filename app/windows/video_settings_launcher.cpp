@@ -216,7 +216,7 @@ void createControls(HWND window, Launcher& launcher) {
     }
     populateChoices(launcher);
     control(window, L"STATIC",
-            L"Settings save when you click Play. Internal resolution takes effect at startup.",
+            L"Settings save when you click Play. Resolution and language apply at startup.",
             0, 26, 526, 565, 36);
     control(window, L"BUTTON", L"Play", BS_DEFPUSHBUTTON | WS_TABSTOP,
             384, 569, 95, 29, kPlayButton);

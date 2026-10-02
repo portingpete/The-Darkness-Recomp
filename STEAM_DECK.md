@@ -1,52 +1,26 @@
 # Steam Deck and Linux
 
-The build is a Windows x64 program that runs through Proton on Linux. The current
-source includes a Linux launcher and file I/O compatibility fixes. Older release
-ZIPs might not contain these changes. Steam Deck gameplay, performance and
-suspend/resume have **not been verified**. There is no native Linux executable.
-
-## Verified development setup
-
-On 2026-10-01, the Windows build was tested from a Windows PC in Ubuntu 24.04
-under WSL2/WSLg, using GE-Proton11-7 (Wine 11.0 Staging), UMU 1.4.4 and Steam
-Runtime 4. The original game executable loaded successfully. The intro and menus
-first rendered through DXVK with Vulkan software rendering (llvmpipe). A later
-WineD3D/OpenGL run used the PC's RTX 5080 and reached the opening first-person
-level after New Game / Medium difficulty selection, creating Chapter1 and
-Checkpoint saves. XAudio2 started with audio callbacks and no reported audio
-errors. Native memory, import-boundary, file I/O and save-storage contract tests
-passed; all 73 Windows CTests also passed. Wine 9.0 failed physical memory alias
-setup and is not a suitable fallback for this build.
-
-The WSL hardware test used a private runtime overlay exposing WSL's graphics
-drivers. The automated installer applies that overlay only under WSL2.
-A stalled WSLg PulseAudio/RDP bridge required a user-approved
-WSL restart before the final run. Tests used a separate game folder and Proton
-prefix without existing Windows saves or settings.
-
-The opening scene reached the requested 30 FPS at 640x360 after initial shader
-compilation. Menus were slower, and compilation caused a substantial first-load
-stall. This does not establish full-game, Linux hardware or Steam Deck
-performance. Menu confirmation worked. Automated look/movement commands reached
-the input adapter, but visible camera movement and completion of the opening
-tutorial were not confirmed. Audio quality, physical gamepad input, a full
-playthrough and suspend/resume still need target-device testing.
-
-[Valve's Proton](https://github.com/ValveSoftware/Proton) runs Windows programs
-through Steam on Linux. Use the complete Windows release folder and your own
-supported game dump, including the original `default.xex`.
-Keep the audio and Visual C++ DLLs beside the executables in
-`build_native/Release`; copying only an EXE leaves required dependencies behind.
+The v0.1.3 Windows x64 release includes Linux launchers and Proton file I/O
+compatibility fixes. Start with the complete Windows release ZIP and your own
+supported game dump, as described in [START_HERE.txt](START_HERE.txt).
+Steam Deck gameplay, performance and suspend/resume have **not been verified**.
+There is no native Linux executable. The limited WSL2 test results are recorded
+under [What has been tested](#what-has-been-tested).
 
 ## Automatic setup from Windows
 
-With Ubuntu 22.04 or newer configured in WSL2 (24.04 was tested), put your complete
-game dump in `Darkness`, then
-double-click **SetupLinux.cmd**. It installs missing Ubuntu Python, graphics and
-audio libraries, downloads the tested UMU 1.4.4 and GE-Proton11-7 with pinned
-SHA-256 checks, and copies the Windows build and game into Linux storage. The
-WSL graphics configuration is applied only inside the game's Steam Runtime.
-After setup, double-click **PlayLinux.cmd**.
+1. Set up Ubuntu 22.04 or newer in WSL2; Ubuntu 24.04 was tested. If it is missing,
+   run `wsl --install -d Ubuntu` in an administrator terminal, restart Windows
+   if requested, and complete Ubuntu's first-run user setup.
+2. Extract the entire Windows release ZIP and copy your complete game dump into
+   its `Darkness` folder. The original `default.xex` is required; no executable
+   preparation is needed.
+3. Double-click **SetupLinux.cmd**. It installs missing Ubuntu Python, graphics
+   and audio libraries, downloads UMU 1.4.4 and GE-Proton11-7 with pinned SHA-256
+   checks, and copies the program and game into Linux storage.
+4. When setup finishes, double-click **PlayLinux.cmd**.
+
+The WSL graphics configuration applies only inside the game's Steam Runtime.
 
 The default destination is `~/.local/share/darkrecomp` inside Ubuntu. Allow space
 for another copy of the game and Proton. Rerunning setup updates program files
@@ -54,11 +28,8 @@ and retains Linux saves, settings and the Proton prefix. Existing game assets
 are compared before copying; conflicting dump files cause an error. Windows
 saves/settings are not copied. Neither script restarts WSL automatically.
 
-If WSL or Ubuntu is missing, run `wsl --install -d Ubuntu` in an administrator
-terminal, restart Windows if requested, and complete Ubuntu's first-run user
-setup. Then run **SetupLinux.cmd**. A packaged release supplies the CRT DLLs;
-when using a built checkout, the installer can locate its matching Visual Studio
-CRT automatically.
+A packaged release supplies the Visual C++ runtime DLLs. When using a built
+checkout, the installer can locate its matching Visual Studio runtime automatically.
 
 For optional arguments, call the PowerShell script directly so paths with shell
 symbols are preserved. You can select the distro, Linux destination, or an
@@ -74,10 +45,20 @@ The selected distro and destination are saved locally in
 `build_native/linux-setup.json` for later runs. `-Check` validates setup without
 downloads, package installation or file changes. `-SkipDependencies` disables
 Ubuntu package installation. `-UmuArchive`, `-ProtonArchive` and `-SkipDownload`
-support verified local archives for offline setup; hashes are still required.
+support verified local UMU/Proton archives for setup; hashes are still required.
+The first play run may still download the matching Steam Runtime through UMU.
 
-On an ordinary Linux desktop, the same installer can be run directly with Python
-3.10 or newer, using the complete extracted Windows release as its source:
+`PlayLinux.cmd` opens the installed copy with its default play options. To pass
+custom game arguments, run the installed launcher inside Ubuntu, for example:
+
+```sh
+bash "$HOME/.local/share/darkrecomp/play-linux.sh" play --fps 60
+```
+
+On an ordinary Linux desktop, install Python 3.10 or newer and your distribution's
+graphics/audio libraries first. The Python installer copies files and downloads
+the pinned tools; it does not install system packages. From the complete extracted
+Windows release folder, run:
 
 ```sh
 python3 tools/setup_linux.py --source "$PWD"
@@ -180,6 +161,41 @@ preserves existing entries and keeps an initial `.bak` backup. Select Proton in
 the shortcut's Compatibility properties after adding it. `--root /path/to/game`
 can target an extracted release elsewhere; `--steam-userdata /path/to/userdata`
 can select another Steam installation.
+
+## What has been tested
+
+On 2026-10-01, the Windows build was tested from a Windows PC in Ubuntu 24.04
+under WSL2/WSLg, using GE-Proton11-7 (Wine 11.0 Staging), UMU 1.4.4 and Steam
+Runtime 4. The original game executable loaded successfully. The intro and menus
+first rendered through DXVK with Vulkan software rendering (llvmpipe). A later
+WineD3D/OpenGL run used the PC's RTX 5080 and reached the opening first-person
+level after New Game / Medium difficulty selection, creating Chapter1 and
+Checkpoint saves. XAudio2 started with audio callbacks and no reported audio
+errors. Native memory, import-boundary, file I/O and save-storage contract tests
+passed in the development checkout used for that run, which included other
+development changes. Those results do not establish validation of a later release
+package. Wine 9.0 failed physical memory alias setup and is not a suitable fallback
+for this build.
+
+The WSL hardware test used a private runtime overlay exposing WSL's graphics
+drivers. The automated installer applies that overlay only under WSL2.
+A stalled WSLg PulseAudio/RDP bridge required a user-approved
+WSL restart before the final run. Tests used a separate game folder and Proton
+prefix without existing Windows saves or settings.
+
+The opening scene reached the requested 30 FPS at 640x360 after initial shader
+compilation. Menus were slower, and compilation caused a substantial first-load
+stall. This does not establish full-game, Linux hardware or Steam Deck
+performance. Menu confirmation worked. Automated look/movement commands reached
+the input adapter, but visible camera movement and completion of the opening
+tutorial were not confirmed. Audio quality, physical gamepad input, a full
+playthrough and suspend/resume still need target-device testing.
+
+[Valve's Proton](https://github.com/ValveSoftware/Proton) runs Windows programs
+through Steam on Linux. Use the complete Windows release folder and your own
+supported game dump, including the original `default.xex`.
+Keep the audio and Visual C++ DLLs beside the executables in
+`build_native/Release`; copying only an EXE leaves required dependencies behind.
 
 ## If launch fails
 
