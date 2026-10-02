@@ -467,6 +467,23 @@ class LinuxSetupTests(SetupFixture):
                     self.setup(install=candidate)
                 self.assertEqual(self.snapshot(self.root), before)
 
+    def test_existing_install_root_is_private_before_copy_and_check(self):
+        self.install.mkdir(mode=0o755)
+        self.install.chmod(0o755)
+        self.setup()
+        self.assertEqual(self.install.stat().st_mode & 0o777, 0o700)
+        self.assertTrue((self.install / "game/Darkness/Content/data.bin").is_file())
+
+        self.install.chmod(0o755)
+        before = self.snapshot(self.install)
+        with self.assertRaisesRegex(setup_linux.SetupError, "private"):
+            self.setup(check=True, umu_archive=None, proton_archive=None)
+        self.assertEqual(self.install.stat().st_mode & 0o777, 0o755)
+        self.assertEqual(self.snapshot(self.install), before)
+
+        self.setup(umu_archive=None, proton_archive=None)
+        self.assertEqual(self.install.stat().st_mode & 0o777, 0o700)
+
     def test_private_runtime_permissions_are_checked_without_repair_then_repaired_on_setup(self):
         self.setup(wsl=True)
         sentinels = {}
