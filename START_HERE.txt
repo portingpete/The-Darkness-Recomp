@@ -32,6 +32,13 @@ THE DARKNESS RECOMP - START HERE
 Windows 10/11, 64-bit, with a Direct3D 11-capable graphics device is required.
 The audio and Visual C++ runtime files are included. Keep them with the game.
 
+Linux from Windows: with Ubuntu configured in WSL2, double-click SetupLinux.cmd,
+then PlayLinux.cmd. Setup installs the tested Proton tools and copies the game
+into Linux storage. Rerun SetupLinux.cmd to update without replacing Linux saves.
+See STEAM_DECK.md for prerequisites, options and the verified test scope.
+Steam Deck gameplay and performance are not verified. The opening Linux scene
+rendered, but camera movement and tutorial completion were not confirmed.
+
 CHECKING YOUR GAME VERSION
 Open Darkness in File Explorer, type powershell into the address bar, and run:
 

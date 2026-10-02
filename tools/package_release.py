@@ -14,7 +14,8 @@ BINARIES = (
     'avcodec-darkxma-62.dll', 'avutil-darkxma-60.dll', 'libwinpthread-1.dll',
     'CubeWnd.pc.xcr', 'GameContext_Create.pc.xdf',
 )
-DOCUMENTS = ('Launch.cmd', 'LaunchWithSettings.cmd', 'START_HERE.txt', 'README.md', 'CONTROLS.md', 'RENDERING.md', 'COPYING')
+DOCUMENTS = ('Launch.cmd', 'LaunchWithSettings.cmd', 'Launch.sh', 'SetupLinux.cmd', 'PlayLinux.cmd', 'START_HERE.txt', 'README.md', 'CONTROLS.md', 'RENDERING.md', 'STEAM_DECK.md', 'COPYING')
+LINUX_SETUP_TOOLS = ('setup_linux.ps1', 'setup_linux.py', 'wsl_graphics.py')
 CRT_REQUIRED = ('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')
 
 
@@ -35,6 +36,8 @@ def find_crt(root: Path) -> Path:
 
 def collect_files(root: Path, crt: Path) -> dict[str, Path]:
     files = {name: root / name for name in DOCUMENTS}
+    for name in LINUX_SETUP_TOOLS:
+        files[f'tools/{name}'] = root / 'tools' / name
     for name in BINARIES:
         files[f'build_native/Release/{name}'] = root / 'build_native/Release' / name
     for name in CRT_REQUIRED:
@@ -71,7 +74,16 @@ def package(root: Path, crt: Path, output: Path, version: str, revision: str) ->
     }
     with zipfile.ZipFile(archive, 'x', zipfile.ZIP_DEFLATED, compresslevel=9) as bundle:
         for name, path in sorted(files.items()):
-            bundle.write(path, name)
+            if name == 'Launch.sh':
+                # Windows cannot provide Unix executable permissions. Store
+                # them explicitly so Linux unzip can run the launcher.
+                entry = zipfile.ZipInfo.from_file(path, name)
+                entry.create_system = 3
+                entry.external_attr = 0o100755 << 16
+                entry.compress_type = zipfile.ZIP_DEFLATED
+                bundle.writestr(entry, path.read_bytes())
+            else:
+                bundle.write(path, name)
         bundle.writestr('Darkness/PUT_GAME_FILES_HERE.txt',
                         'Copy ALL files and folders from your own extracted Xbox 360 dump here.\r\n'
                         'See START_HERE.txt beside Launch.cmd for the required folder layout.\r\n')

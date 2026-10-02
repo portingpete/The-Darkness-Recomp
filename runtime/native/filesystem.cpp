@@ -1,9 +1,11 @@
 #include "objects.h"
 #include "storage.h"
+#include "file_query_compat.h"
 #include "renderer/engine/engine_performance.h"
 #include <winternl.h>
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -49,6 +51,15 @@ uint64_t read64(uint32_t address) { return _byteswap_uint64(*reinterpret_cast<ui
 void write64(uint32_t address, uint64_t value) { *reinterpret_cast<uint64_t*>(memory->base() + address) = _byteswap_uint64(value); }
 void ioStatus(uint32_t pointer, uint32_t status, uint32_t bytes) {
     if (pointer) { memory->write32(pointer, status); memory->write32(pointer + 4, bytes); }
+}
+bool invalidUnbufferedRequest(bool unbuffered, uint32_t length, const LARGE_INTEGER* offset) {
+    // Unbuffered native I/O requires sector-multiple lengths and offsets. All
+    // supported volumes use at least 512-byte sectors; leave stricter device
+    // alignment to ntdll. Wine's regular-file path omits this minimum check.
+    // Zero-length requests, implicit positions and negative native sentinels
+    // retain their native handling. Guest buffer alignment uses bounce buffers.
+    return unbuffered && length && ((length & 511) ||
+        (offset && offset->QuadPart >= 0 && (uint64_t(offset->QuadPart) & 511)));
 }
 struct PathResult { std::filesystem::path path; bool writable = false; uint32_t status = 0; };
 PathResult resolve(uint32_t attributes) {
@@ -180,6 +191,7 @@ uint32_t create(PPCContext& ctx, uint32_t out, uint32_t access, uint32_t attribu
             auto stored = object(id);
             stored->isFile = true; stored->path = resolved.path; stored->writable = resolved.writable;
             stored->unbuffered = (options & 8) != 0;
+            stored->fileOpenOptions = options;
             memory->write32(out, id);
         }
     }
@@ -244,12 +256,15 @@ PPC_FUNC(__imp__NtReadFile) {
         (ctx.r10.u32 && !fileGuestSpan(ctx.r10.u32, 8, false))) {
         ioStatus(ios, accessViolation, 0); ctx.r3.u64 = accessViolation; return;
     }
+    LARGE_INTEGER offset{};
+    if (ctx.r10.u32) offset.QuadPart = read64(ctx.r10.u32);
+    if (invalidUnbufferedRequest(file->unbuffered, ctx.r9.u32, ctx.r10.u32 ? &offset : nullptr)) {
+        ioStatus(ios, invalidParameter, 0); ctx.r3.u64 = invalidParameter; return;
+    }
     uint32_t apc = ctx.r5.u32, argument = ctx.r6.u32;
     std::lock_guard lock(file->ioMutex);
     HANDLE completion = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     if (!completion) { ioStatus(ios, 0xc0000017, 0); ctx.r3.u64 = 0xc0000017; return; }
-    LARGE_INTEGER offset{};
-    if (ctx.r10.u32) offset.QuadPart = read64(ctx.r10.u32);
     IO_STATUS_BLOCK result{};
     std::unique_ptr<void, decltype(&_aligned_free)> aligned(nullptr, _aligned_free);
     void* destination = base + ctx.r8.u32;
@@ -302,6 +317,19 @@ PPC_FUNC(__imp__NtQueryInformationFile) {
     IO_STATUS_BLOCK result{};
     using Query = NTSTATUS (NTAPI*)(HANDLE, PIO_STATUS_BLOCK, PVOID, ULONG, FILE_INFORMATION_CLASS);
     uint32_t status = uint32_t(nt<Query>(ctx, "NtQueryInformationFile")(file->handle, &result, bytes, size, FILE_INFORMATION_CLASS(kind)));
+    if (status == 0xc0000002 && (kind == 16 || kind == 17)) {
+        // Wine lacks these two classes. Mode is the documented subset of the
+        // successful open options, shared by duplicated guest handles. For
+        // alignment, our unbuffered I/O already uses 4096-aligned bounce
+        // buffers; report that conservative requirement instead of inventing
+        // success for another unsupported class or host error.
+        const uint32_t value = kind == 16 ? file->fileOpenOptions & 0x103e : 4095;
+        std::memcpy(bytes, &value, sizeof(value));
+        result.Status = 0; result.Information = sizeof(value); status = 0;
+    }
+    if (FileTraceEnabled() || int32_t(status) < 0)
+        fprintf(stderr, "[File] information '%ls' class=%u bytes=%llu status=0x%08X\n",
+                file->path.filename().c_str(), kind, uint64_t(result.Information), status);
     if (int32_t(status) >= 0) {
         memset(base + out, 0, size);
         uint32_t qwords = kind == 4 ? 4 : kind == 5 ? 2 : kind == 34 ? 6 : (kind == 6 || kind == 14) ? 1 : 0;
@@ -404,10 +432,12 @@ PPC_FUNC(__imp__NtQueryDirectoryFile) {
         IO_STATUS_BLOCK result{};
         using Query = NTSTATUS (NTAPI*)(HANDLE, HANDLE, PIO_APC_ROUTINE, PVOID, PIO_STATUS_BLOCK, PVOID,
             ULONG, FILE_INFORMATION_CLASS, BOOLEAN, PUNICODE_STRING, BOOLEAN);
-        status = uint32_t(nt<Query>(ctx, "NtQueryDirectoryFile")(file->handle, completion, nullptr, nullptr,
-            &result, native, sizeof(native), FILE_INFORMATION_CLASS(1), TRUE, pattern.empty() ? nullptr : &filter, restart));
-        if (status == pending) { WaitForSingleObject(completion, INFINITE); status = uint32_t(result.Status); }
-        completed = WaitForSingleObject(completion, 0) == WAIT_OBJECT_0;
+        auto query = nt<Query>(ctx, "NtQueryDirectoryFile");
+        const auto nativeCompletion = queryDirectoryWithCompletion([&](HANDLE event) {
+            return uint32_t(query(file->handle, event, nullptr, nullptr,
+                &result, native, sizeof(native), FILE_INFORMATION_CLASS(1), TRUE, pattern.empty() ? nullptr : &filter, restart));
+        }, file->handle, completion, result);
+        status = nativeCompletion.status; completed = nativeCompletion.completed;
         CloseHandle(completion);
         // A restart supersedes the retained entry, including an empty search.
         // Leave it intact when the restart request itself could not execute.
@@ -437,6 +467,9 @@ PPC_FUNC(__imp__NtQueryDirectoryFile) {
             fprintf(stderr, "[File] directory '%ls': %s\n", file->path.c_str(), utf8.c_str());
     }
     ioStatus(ios, status, written);
+    if (FileTraceEnabled() || int32_t(status) < 0)
+        fprintf(stderr, "[File] directory query '%ls' filter='%ls' class=1 restart=%u length=%u status=0x%08X completed=%u\n",
+                file->path.c_str(), pattern.c_str(), unsigned(restart), length, status, unsigned(completed));
     if (completed) {
         if (ctx.r5.u32 & ~1u) queueGuestApc(ctx, ctx.r5.u32, ctx.r6.u32, ios);
         if (event) SetEvent(event->handle);
@@ -461,12 +494,15 @@ PPC_FUNC(__imp__NtWriteFile) {
         (ctx.r10.u32 && !fileGuestSpan(ctx.r10.u32, 8, false))) {
         ioStatus(ios, accessViolation, 0); ctx.r3.u64 = accessViolation; return;
     }
+    LARGE_INTEGER offset{};
+    if (ctx.r10.u32) offset.QuadPart = read64(ctx.r10.u32);
+    if (invalidUnbufferedRequest(file->unbuffered, ctx.r9.u32, ctx.r10.u32 ? &offset : nullptr)) {
+        ioStatus(ios, invalidParameter, 0); ctx.r3.u64 = invalidParameter; return;
+    }
     uint32_t apc = ctx.r5.u32, argument = ctx.r6.u32;
     std::lock_guard lock(file->ioMutex);
     HANDLE completion = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     if (!completion) { ioStatus(ios, 0xc0000017, 0); ctx.r3.u64 = 0xc0000017; return; }
-    LARGE_INTEGER offset{};
-    if (ctx.r10.u32) offset.QuadPart = read64(ctx.r10.u32);
     IO_STATUS_BLOCK result{};
     std::unique_ptr<void, decltype(&_aligned_free)> aligned(nullptr, _aligned_free);
     const void* source = base + ctx.r8.u32;

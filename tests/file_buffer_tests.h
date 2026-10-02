@@ -4,6 +4,8 @@
 #include "directory_validation_tests.h"
 #include "file_information_tests.h"
 #include "file_path_buffer_tests.h"
+#include "file_query_compat_tests.h"
+#include "file_unbuffered_tests.h"
 
 static bool readFileWithoutHostFault(PPCContext& ctx, uint8_t* base) {
     __try { __imp__NtReadFile(ctx, base); return true; }
@@ -11,8 +13,11 @@ static bool readFileWithoutHostFault(PPCContext& ctx, uint8_t* base) {
                   ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) { return false; }
 }
 static void testFileBuffers(PPCContext& ctx) {
+    testDirectoryEventCompatibility();
+    testFileOpenModeCompatibility(ctx);
     testFilePathBuffers(ctx);
     testFileInformation(ctx);
+    testUnbufferedRequestValidation(ctx);
     auto* base = memory->base();
     const uint32_t fixture = memory->allocate(5 * 4096);
     check(fixture != 0, "File buffer fixture allocation failed");

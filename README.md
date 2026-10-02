@@ -38,6 +38,21 @@ Choose **Language** there or in the settings launcher: System default, English,
 German, French, Spanish, or Italian. In-game language changes save automatically
 and take effect after restarting. See [CONTROLS.md](CONTROLS.md) for details.
 
+## Steam Deck and Linux
+
+The Windows build can run through Proton on Linux. `Launch.sh` and the file I/O
+compatibility fixes were tested with GE-Proton11-7 in Ubuntu 24.04 under WSL2.
+The opening level rendered with audio and created checkpoint saves; memory,
+file I/O and save-storage tests passed. Visible camera movement and completion
+of the opening tutorial were not confirmed. Steam Deck gameplay and performance
+remain unverified; a native Linux build is not available.
+
+For automatic setup from Windows with Ubuntu in WSL2, double-click
+**SetupLinux.cmd**, then **PlayLinux.cmd**. The installer copies the game to
+Linux storage and preserves that copy's saves and settings on later updates.
+See [STEAM_DECK.md](STEAM_DECK.md) for prerequisites, options, Steam shortcuts
+and the verified test scope.
+
 ## Preparing the game files
 
 Copy the original extracted files into **Darkness**, then launch the game.
@@ -128,6 +143,7 @@ toggle capture, **Esc** release).
 
 - [CONTROLS.md](CONTROLS.md) — every binding, launcher option, and setting
 - [RENDERING.md](RENDERING.md) — how the renderer and frame pacing work
+- [STEAM_DECK.md](STEAM_DECK.md) — Proton setup, validation scope and diagnostics
 
 ## Updating a downloaded release
 
