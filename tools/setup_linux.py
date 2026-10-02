@@ -129,6 +129,10 @@ def required_file(directory: Path, name: str) -> Path:
     return path
 
 
+def fail_game_walk(error: OSError) -> None:
+    raise SetupError(f'Cannot read original game directory: {error}') from error
+
+
 def is_wsl2() -> bool:
     release = Path('/proc/sys/kernel/osrelease')
     text = release.read_text().lower() if release.exists() else ''
@@ -163,7 +167,7 @@ def source_files(source: Path, game: Path, crt: Path | None, wsl: bool) -> dict[
         item = roots.get(name.casefold())
         if item is None or item.is_symlink() or not item.is_dir():
             raise SetupError(f'Missing original game directory: {game / name}')
-    for current, dirs, files in os.walk(game, followlinks=False):
+    for current, dirs, files in os.walk(game, followlinks=False, onerror=fail_game_walk):
         directory = Path(current)
         for name in dirs:
             if (directory / name).is_symlink():
@@ -458,7 +462,7 @@ def setup(source: Path, game_dir: Path | None, install: Path, crt_dir: Path | No
     tools_ready = {spec.name: installed_tool(spec, install, old) for spec in (UMU, PROTON)}
     directories = [install / name for name in ('ge-prefix', 'wsl-pv', 'evidence')]
     game_directories = [install / 'game/Darkness']
-    for current, dirs, _ in os.walk(game, followlinks=False):
+    for current, dirs, _ in os.walk(game, followlinks=False, onerror=fail_game_walk):
         for name in dirs:
             relative = (Path(current) / name).relative_to(game)
             parts = list(relative.parts)
