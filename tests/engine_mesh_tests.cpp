@@ -73,6 +73,41 @@ static void put32(uint8_t* base, uint32_t address, uint32_t v) {
     base[address]=uint8_t(v>>24); base[address+1]=uint8_t(v>>16); base[address+2]=uint8_t(v>>8); base[address+3]=uint8_t(v);
 }
 static void putFloat(uint8_t* base, uint32_t address, float f) { put32(base,address,std::bit_cast<uint32_t>(f)); }
+static void testTexture1555(Memory& memory) {
+    auto* base=memory.base();const auto storage=memory.allocate(65536),header=memory.allocate(4096);
+    require(storage && header,"1555 decode fixture allocation failed");
+    const std::array<uint8_t,32> normalized{{0,8,16,25,33,41,49,58,66,74,82,90,99,107,115,123,
+        132,140,148,156,165,173,181,189,197,206,214,222,230,239,247,255}};
+    const std::array<std::array<unsigned,4>,4> selectors{{{0,1,2,3},{2,1,0,3},{5,4,1,0},{3,2,5,4}}};
+    unsigned comparisons=0;
+    for(bool tiled:{false,true})for(unsigned endian=0;endian<4;++endian)for(const auto& selected:selectors) {
+        uint32_t swizzle=0;for(unsigned c=0;c<4;++c)swizzle|=selected[c]<<(1+c*3);
+        const uint32_t fetch[]{2u|(1u<<22)|(tiled?0x80000000u:0),storage|3u|(endian<<6),
+            3u|(7u<<13),swizzle,0,0x200u};
+        for(unsigned i=0;i<6;++i)put32(base,header+28+i*4,fetch[i]);
+        TextureMipLayout layout;require(!getTextureMipLayout(fetch,0,0,layout),"1555 fixture layout rejected");
+        const unsigned swap=endian==1?1:endian==2?3:endian==3?2:0;
+        std::memset(base+storage,0xcd,65536);
+        std::vector<uint8_t> expected;
+        for(unsigned y=0;y<8;++y)for(unsigned x=0;x<4;++x) {
+            const unsigned red=x+y*4,green=31-red,blue=(red*7)&31,alpha=red&1;
+            const uint16_t packed=uint16_t(red|(green<<5)|(blue<<10)|(alpha<<15));
+            const uint32_t offset=tiled?worldTextureTiledOffset(x,y,layout.pitchBlocks,2):
+                y*layout.rowPitchBytes+x*2;
+            for(unsigned lane=0;lane<2;++lane)
+                base[layout.allocationAddress+layout.surfaceOffsetBytes+((offset+lane)^swap)]=uint8_t(packed>>(lane*8));
+            const std::array<uint8_t,6> rgba{normalized[red],normalized[green],normalized[blue],uint8_t(alpha?255:0),0,255};
+            for(unsigned c:selected)expected.push_back(rgba[c]);
+        }
+        ColorImage decoded;
+        require(!decodeWorldTextureImage(base,header,decoded) && decoded.valid() && decoded.sourceCodec==3 &&
+                decoded.width==4 && decoded.height==8 && decoded.pixels==expected,
+                "1555 pixels, endian conversion or component selectors differ from independent UNORM values");
+        comparisons+=32;
+    }
+    require(memory.release(storage) && memory.release(header),"1555 fixture cleanup failed");
+    std::printf("Texture1555: %u independently expected pixels across linear/tiled layouts, all endian modes and selectors.\n",comparisons);
+}
 static void nearByte(uint32_t pixel, unsigned channel, int expected) {
     require(std::abs(int((pixel>>(channel*8))&255)-expected)<=1, "Native triangle pixel does not match alpha/color projection contract");
 }
@@ -1379,6 +1414,7 @@ int main(int argc, char** argv) {
         owner.load(argv[1]);
         PPCContext ctx{};
         owner.initThread(ctx);
+        testTexture1555(owner);
         auto* base=owner.base();
         std::array<uint8_t,32> memoryProbe{};
         require(!copyRenderMemory(base,0xFFFFFFFFull,memoryProbe.data(),2) &&

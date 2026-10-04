@@ -2,6 +2,7 @@
 #include "display_gamma.h"
 #include "prompt_icons.h"
 #include "texture_mip_layout.h"
+#include "texture_pixel_decode.h"
 #include "engine_performance.h"
 #include "stored_geometry.h"
 #include "engine_texture_constants.h"
@@ -453,6 +454,12 @@ const char* decodeWorldTextureImage(uint8_t* base,uint32_t object,ColorImage& re
             if(format==2) {
                 decoded.width=width;decoded.height=height;decoded.sourceCodec=2;decoded.pixels.resize(size_t(width)*height*4);
                 for(size_t i=0;i<linear.size();++i) {decoded.pixels[i*4]=linear[i];decoded.pixels[i*4+3]=255;}
+            } else if(format==3) {
+                decoded.width=width;decoded.height=height;decoded.sourceCodec=3;decoded.pixels.resize(size_t(width)*height*4);
+                for(size_t i=0;i<linear.size()/2;++i) {
+                    const auto rgba=decodeTexture1555(linear.data()+i*2);
+                    std::copy(rgba.begin(),rgba.end(),decoded.pixels.begin()+i*4);
+                }
             } else if(format==10) {
                 decoded.width=width;decoded.height=height;decoded.sourceCodec=10;decoded.pixels.resize(size_t(width)*height*4);
                 for(size_t i=0;i<linear.size()/2;++i) {

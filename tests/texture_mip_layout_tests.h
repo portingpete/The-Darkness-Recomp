@@ -71,8 +71,21 @@ static void testTextureMipLayout(PPCContext& ctx) {
     auto run = [&](uint32_t width, uint32_t height, uint32_t format,
                    bool cube, bool packed, uint32_t extraPitchTiles, bool tiled = true) {
         ++caseCount;
-        const uint32_t block = format == 2 || format == 6 || format == 10 ? 1 : 4;
-        const uint32_t bytes = format == 2 ? 1 : format == 6 ? 4 : format == 10 ? 2 : format == 18 ? 8 : 16;
+        const uint32_t block = format == 2 || format == 3 || format == 6 || format == 10 ? 1 : 4;
+        const uint32_t bytes = format == 2 ? 1 : format == 6 ? 4 : format == 3 || format == 10 ? 2 : format == 18 ? 8 : 16;
+        // Independent known colors exercise all packed channels, binary alpha
+        // and intermediate UNORM values through original tiling and mip helpers.
+        constexpr uint16_t packedColors[]{0,0xffff,0x001f,0x83e0,0x7c00,0x8000,0x4210,0x8e25};
+        constexpr uint8_t packedRgba[][4]{{0,0,0,0},{255,255,255,255},{255,0,0,0},
+            {0,255,0,255},{0,0,255,0},{0,0,0,255},{132,132,132,0},{41,140,25,255}};
+        const auto colorIndex=[&](uint32_t face,uint32_t mip,uint32_t x,uint32_t y) {
+            return (caseCount+face*3+mip*5+x+y*7)%8;
+        };
+        const auto byteValue=[&](uint32_t seed,uint32_t face,uint32_t mip,uint32_t x,uint32_t y,uint32_t lane) {
+            if(format!=3)return value(seed,face,mip,x,y,lane);
+            // Original fetch endian1 swaps each stored 16-bit word.
+            return uint8_t(packedColors[colorIndex(face,mip,x,y)]>>(lane?0:8));
+        };
         // Table actually read by 82863F68/82863848 in the original image.
         check(base[0x8209caa9u + 2 * format] == bytes * 8 / (block * block),
               "Original texture format table is absent or unexpected");
@@ -83,7 +96,7 @@ static void testTextureMipLayout(PPCContext& ctx) {
         uint32_t fetch[6]{(tiled ? 0x80000002u : 2u) | ((pitch / 32) << 22),
                           fixture.basePixels | format | (endian << 6),
                           (width - 1) | ((height - 1) << 13) | (cube ? 0x14000000u : 0),
-                          0x1414, 0x3c0,
+                          format==3?0xd10u:0x1414u, 0x3c0,
                           fixture.mipPixels | (cube ? 0x600u : 0x200u) | (packed ? 0x800u : 0)};
         std::memset(base + header, 0, 64);
         memory->write32(header, 0x00200003);
@@ -138,7 +151,7 @@ static void testTextureMipLayout(PPCContext& ctx) {
                 check(uint64_t(bw) * bh * bytes <= 0x100000, "Mip source fixture too small");
                 for (uint32_t y = 0; y < bh; ++y) for (uint32_t x = 0; x < bw; ++x)
                     for (uint32_t lane = 0; lane < bytes; ++lane)
-                        base[fixture.source + (y * bw + x) * bytes + lane] = value(caseCount, face, mip, x, y, lane);
+                        base[fixture.source + (y * bw + x) * bytes + lane] = byteValue(caseCount, face, mip, x, y, lane);
                 // Destination and packed coordinates come ONLY from the
                 // original query, not from any member of the host layout.
                 memory->write32(point, originX); memory->write32(point + 4, originY);
@@ -170,7 +183,7 @@ static void testTextureMipLayout(PPCContext& ctx) {
                           "Native mip tiled read escaped padded face");
                     for (uint32_t lane = 0; lane < layout.bytesPerBlock; ++lane)
                         check(base[layout.allocationAddress + layout.surfaceOffsetBytes + offset + lane] ==
-                              value(caseCount, entry.face, entry.mip, x, y, lane),
+                              byteValue(caseCount, entry.face, entry.mip, x, y, lane),
                               "Native mip read differs from original-queried/original-tiled bytes");
                 }
         }
@@ -194,6 +207,12 @@ static void testTextureMipLayout(PPCContext& ctx) {
             const auto& pixels=mip?image.mips[mip-1]:image.pixels;
             check(pixels.size()==size_t(w)*h*faces*4,"Decoded authored mip has incorrect dimensions/face count");
             ownedBytes+=pixels.size();
+            if(format==3)for(uint32_t face=0;face<faces;++face)
+                for(uint32_t y=0;y<h;++y)for(uint32_t x=0;x<w;++x) {
+                    const auto* pixel=pixels.data()+((size_t(face)*h+y)*w+x)*4;
+                    check(!std::memcmp(pixel,packedRgba[colorIndex(face,mip,x,y)],4),
+                          "Packed 1555 mip decode changed RGBA channels, alpha, endian or layout");
+                }
             if(format==2 || format==6 || format==10)for(uint32_t face=0;face<faces;++face)
                 for(uint32_t y=0;y<h;++y)for(uint32_t x=0;x<w;++x) {
                     const auto* pixel=pixels.data()+((size_t(face)*h+y)*w+x)*4;
@@ -248,7 +267,7 @@ static void testTextureMipLayout(PPCContext& ctx) {
         }
     }
 
-    for (unsigned format : {2, 6, 10, 18, 20, 49}) for (bool packed : {false, true}) {
+    for (unsigned format : {2, 3, 6, 10, 18, 20, 49}) for (bool packed : {false, true}) {
         for (const auto size : std::initializer_list<std::array<uint32_t, 2>>{
                 {1, 1}, {4, 4}, {8, 16}, {16, 8}, {16, 16}, {16, 256}, {256, 16},
                 {32, 32}, {64, 32}, {32, 64}, {64, 64}, {128, 128}, {256, 256},

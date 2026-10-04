@@ -51,7 +51,7 @@ inline const char* getTextureMipLayout(const uint32_t (&fetch)[6],
     switch (format) {
     case 2:  layout.blockTexels = 1; layout.bytesPerBlock = 1; break;
     case 6:  layout.blockTexels = 1; layout.bytesPerBlock = 4; break;
-    case 10: layout.blockTexels = 1; layout.bytesPerBlock = 2; break;
+    case 3: case 10: layout.blockTexels = 1; layout.bytesPerBlock = 2; break;
     case 18: layout.blockTexels = 4; layout.bytesPerBlock = 8; break;
     case 20: case 49: layout.blockTexels = 4; layout.bytesPerBlock = 16; break;
     default: return "unsupported texture mip format";
