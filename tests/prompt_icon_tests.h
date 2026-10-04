@@ -187,6 +187,19 @@ static void testPromptIcons() {
             "Controller source did not restore original artwork");
     require(replacementFor(7, original, Source::KeyboardMouse, Context::Menu) == icon,
             "Source switching is not reversible");
+    // Rebinding is a value-only renderer snapshot. Cached artwork must change
+    // immediately, while original controller textures remain untouched.
+    auto labels = defaultBindingLabels(); labels[size_t(Button::A)] = "P/E";
+    setBindingLabels(labels);
+    require(std::string(keyboardLabel(Button::A, Context::Menu)) == "P/E", "Remapped action prompt kept former key");
+    const auto remapped = replacementFor(7, original, Source::KeyboardMouse, Context::Menu);
+    require(remapped && remapped->valid() && remapped != icon && remapped->pixels != icon->pixels,
+            "Binding change reused stale prompt artwork");
+    require(replacementFor(7, original, Source::Controller, Context::Menu) == nullptr,
+            "Rebinding changed original controller artwork");
+    setBindingLabels(defaultBindingLabels());
+    require(replacementFor(7, original, Source::KeyboardMouse, Context::Menu) == icon,
+            "Restoring defaults did not restore original keycap cache");
     auto unrelated = std::make_shared<DarkRecomp::ColorImage>(promptTestImage(40, 40, 200));
     require(classifyPromptTexture(7, *unrelated) == Button::Unknown, "Unknown origin classified");
     require(replacementFor(7, unrelated, Source::KeyboardMouse, Context::Menu) == nullptr,

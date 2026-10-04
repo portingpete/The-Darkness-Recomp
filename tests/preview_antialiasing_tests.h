@@ -8,7 +8,7 @@ static void testPreviewAntialiasing(EnginePreviewD3D11& renderer, ID3D11Device* 
     const auto saved = graphicsSettings();
     struct Restore { GraphicsSettings settings; ~Restore() { setGraphicsSettings(settings); } } restore{saved};
     auto select = [&](bool enabled) {
-        auto selected = saved; selected.antialiasing = enabled; selected.gammaPercent = 100;
+        auto selected = saved; selected.antialiasing = enabled;
         selected.brightnessPercent = 100;
         require(setGraphicsSettings(selected), "Cannot select antialiasing");
     };
@@ -78,31 +78,30 @@ static void testPreviewAntialiasing(EnginePreviewD3D11& renderer, ID3D11Device* 
         // A following draw must recover state after the fullscreen AA pass.
         select(true); renderer.render({triangle}); renderer.copyToDisplay();
         require(readOutput() == filtered, "FXAA leaked pipeline state into the next frame");
-        for (bool aa : {false,true}) for (unsigned gamma : {50u,80u,100u,150u})
-            for (unsigned brightness : {50u,100u,125u,200u}) {
-            auto selected=graphicsSettings();selected.antialiasing=aa;selected.gammaPercent=gamma;
+        for (bool aa : {false,true}) for (unsigned brightness : {50u,100u,125u,200u}) {
+            auto selected=graphicsSettings();selected.antialiasing=aa;
             selected.brightnessPercent=brightness;
             setGraphicsSettings(selected);renderer.copyToDisplay();
             const auto corrected=readOutput();const auto& neutral=aa?filtered:original;
             for(size_t i=0;i<corrected.size();++i) {
                 for(unsigned c=0;c<3;++c) {
                     // The neutral reference is already quantized to UNORM8;
-                    // tone adjustments operate before that rounding. Bound the original
+                    // brightness operates before that rounding. Bound the original
                     // half-code interval, especially at near-black FXAA edges.
                     const double value=(neutral[i]>>(c*8))&255;
-                    const double low=255*std::min(1.0,std::pow(std::max(0.0,value-.51)/255,100.0/gamma)*brightness/100.0);
-                    const double high=255*std::min(1.0,std::pow(std::min(255.0,value+.51)/255,100.0/gamma)*brightness/100.0);
+                    const double low=std::min(255.0,std::max(0.0,value-.51)*brightness/100.0);
+                    const double high=std::min(255.0,std::min(255.0,value+.51)*brightness/100.0);
                     const double actual=(corrected[i]>>(c*8))&255;
                     require(actual>=low-1 && actual<=high+1,
-                            "Brightness/gamma differs from final-output curve with AA/resize/borders");
+                            "Brightness differs from final-output intensity with AA/resize/borders");
                 }
-                require((corrected[i]>>24)==(neutral[i]>>24),"Brightness/gamma changed alpha");
+                require((corrected[i]>>24)==(neutral[i]>>24),"Brightness changed alpha");
             }
-            require(renderer.readPixel(20,20)==sourcePixel,"Brightness/gamma changed the owned scene");
-            renderer.copyToDisplay();require(readOutput()==corrected,"Repeated brightness/gamma correction accumulated");
+            require(renderer.readPixel(20,20)==sourcePixel,"Brightness changed the owned scene");
+            renderer.copyToDisplay();require(readOutput()==corrected,"Repeated brightness correction accumulated");
         }
         select(false);renderer.copyToDisplay();
-        require(readOutput()==original,"Neutral brightness/gamma did not restore the exact image");
+        require(readOutput()==original,"Neutral brightness did not restore the exact image");
     }
     // A flat, non-gray image exercises the early exit and channel preservation.
     SimpleMesh flat = triangle;
@@ -112,17 +111,17 @@ static void testPreviewAntialiasing(EnginePreviewD3D11& renderer, ID3D11Device* 
     const auto flatOriginal = readOutput();
     select(true); renderer.copyToDisplay();
     require(readOutput() == flatOriginal, "FXAA changed a uniform color");
-    for(bool aa:{false,true})for(unsigned gamma:{50u,95u,100u,150u})for(unsigned brightness:{50u,100u,125u,200u}) {
-        auto selected=graphicsSettings();selected.antialiasing=aa;selected.gammaPercent=gamma;
+    for(bool aa:{false,true})for(unsigned brightness:{50u,100u,125u,200u}) {
+        auto selected=graphicsSettings();selected.antialiasing=aa;
         selected.brightnessPercent=brightness;
         setGraphicsSettings(selected);renderer.copyToDisplay();
         const auto corrected=readOutput();
         for(size_t i=0;i<corrected.size();++i)for(unsigned c=0;c<3;++c) {
-            const double expected=255*std::min(1.0,std::pow(double((flatOriginal[i]>>(c*8))&255)/255,100.0/gamma)*brightness/100.0);
-            require(std::abs(double((corrected[i]>>(c*8))&255)-expected)<=1,"Flat-color brightness/gamma or FXAA early exit is wrong");
+            const double expected=std::min(255.0,double((flatOriginal[i]>>(c*8))&255)*brightness/100.0);
+            require(std::abs(double((corrected[i]>>(c*8))&255)-expected)<=1,"Flat-color brightness or FXAA early exit is wrong");
         }
     }
     select(false);renderer.copyToDisplay();
-    require(readOutput()==flatOriginal,"Neutral brightness/gamma did not restore flat colors");
-    std::puts("PreviewAntialiasing passed: FXAA, brightness/gamma combinations, neutral restoration, flat colors, resize, borders and repeated frames.");
+    require(readOutput()==flatOriginal,"Neutral brightness did not restore flat colors");
+    std::puts("PreviewAntialiasing passed: FXAA, brightness combinations, neutral restoration, flat colors, resize, borders and repeated frames.");
 }

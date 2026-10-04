@@ -9,6 +9,9 @@
 #include <stdexcept>
 #include <vector>
 #include <thread>
+#include <algorithm>
+#include <chrono>
+#include <string_view>
 
 using namespace DarkRecomp::Native;
 extern "C" PPC_FUNC(__imp__sub_8223AFE8);
@@ -126,6 +129,18 @@ static void oracle(uint8_t* b,const PPCContext& initial,const EngineVertexProgra
             const bool guarded=snapshotEngineVertexBindings(b,again);
             VirtualProtect(b+device+4096,4096,protection,&ignoredProtection);
             require(!guarded && again==binding,"Unreadable constant bank was captured or changed output");
+            for(const auto sourceAddress:{context+8224,context+16420,model+640}) {
+                const auto page=sourceAddress&~4095u;
+                DWORD sourceProtection=0,sourceIgnored=0;
+                require(VirtualProtect(b+page,4096,PAGE_NOACCESS,&sourceProtection),"Cannot guard binding source page");
+                again=binding;owned=binding;
+                const bool sourceSnapshot=snapshotEngineVertexBindings(b,again);
+                const bool sourceCapture=captureEngineVertexBindings(b,owned);
+                const bool restored=VirtualProtect(b+page,4096,sourceProtection,&sourceIgnored)!=FALSE;
+                require(restored && !sourceSnapshot && again==binding && !sourceCapture && !owned &&
+                    _mm_getcsr()==originalMode,"Unreadable binding selector/state/model changed owned output or FP state");
+                require(captureEngineVertexBindings(b,owned) && owned && *owned==binding,"Binding did not recover after source protection restoration");
+            }
         }
     }
     require(_mm_getcsr()==originalMode && !std::memcmp(b+fixture,after.data(),extent) && !std::memcmp(b+context,contextAfter.data(),18000),"Finishing program observation changed source/FP state");
@@ -147,11 +162,151 @@ static void oracle(uint8_t* b,const PPCContext& initial,const EngineVertexProgra
     }
     ++cases;
 }
+static void modeTableContract(uint8_t* base,const PPCContext& initial) {
+    constexpr uint32_t table=0x82A5CD88;
+    constexpr size_t flagBytes=27*4,tableBytes=flagBytes+27;
+    std::array<uint8_t,tableBytes> original;
+    std::memcpy(original.data(),base+table,original.size());
+    const auto fp=_mm_getcsr();
+    const uint32_t stack=initial.r1.u32-8192;
+    const std::vector<uint8_t> source(base+fixture,base+fixture+extent),
+        state(base+context,base+context+18000),stackBytes(base+stack,base+stack+8320);
+    EngineVertexBindingSnapshot expected;
+    require(snapshotEngineVertexBindings(base,expected),"Mode table contract has no completed binding");
+    EngineVertexProgramObservation verified;
+    require(beginEngineVertexProgramObservation(base,initial.r1.u32,verified),"Initialized mode table was rejected");
+    finishEngineVertexProgramObservation(base,verified);
+    require(verified.comparison==TransformComparison::equal,"Initialized mode table did not compare equal");
+    auto sameObservation=[](const EngineVertexProgramObservation& a,const EngineVertexProgramObservation& b) {
+        return a.source==b.source && a.key==b.key && a.keyAddress==b.keyAddress && a.comparison==b.comparison &&
+            a.selection.recordAddress==b.selection.recordAddress && a.selection.bindingAddress==b.selection.bindingAddress &&
+            a.selection.visitedCount==b.selection.visitedCount && a.selection.visited==b.selection.visited;
+    };
+    // Independently corrupt every byte of the 27 BE flag words and every
+    // reservation. Never run original guest preparation with corrupt counts.
+    for(size_t offset=0;offset<tableBytes;++offset) {
+        base[table+offset]^=0x80;
+        EngineVertexProgramObservation rejected;
+        rejected.source.input.declarationAddress=999;rejected.source.matrixAddress=777;
+        rejected.key.fill(0xA5A5A5A5);rejected.keyAddress=999;rejected.comparison=TransformComparison::different;
+        rejected.selection.recordAddress=123;rejected.selection.bindingAddress=456;rejected.selection.visitedCount=1;
+        rejected.selection.visited[0].address=789;rejected.selection.visited[0].bytes.fill(0xCD);
+        const auto sentinel=rejected;
+        require(!beginEngineVertexProgramObservation(base,initial.r1.u32,rejected) && sameObservation(rejected,sentinel),
+            "Corrupt mode table was accepted or changed observation output");
+        auto unavailable=verified;
+        finishEngineVertexProgramObservation(base,unavailable);
+        auto expectedUnavailable=verified;expectedUnavailable.comparison=TransformComparison::unavailable;
+        require(sameObservation(unavailable,expectedUnavailable),"Corrupt mode table changed owned observation data");
+        EngineVertexBindingSnapshot preserved=expected;
+        std::optional<EngineVertexBindingSnapshot> owned=expected;
+        require(!snapshotEngineVertexBindings(base,preserved) && preserved==expected &&
+            !captureEngineVertexBindings(base,owned) && !owned,"Corrupt mode table reused a stale completed binding");
+        base[table+offset]=original[offset];
+        finishEngineVertexProgramObservation(base,verified);
+        require(verified.comparison==TransformComparison::equal && snapshotEngineVertexBindings(base,preserved) &&
+            preserved==expected && captureEngineVertexBindings(base,owned) && owned && *owned==expected,
+            "Completed binding did not recover after mode table restoration");
+        require(_mm_getcsr()==fp,"Mode table rejection or recovery changed floating-point state");
+    }
+    require(!std::memcmp(base+table,original.data(),original.size()) && !std::memcmp(base+fixture,source.data(),extent) &&
+        !std::memcmp(base+context,state.data(),18000) && !std::memcmp(base+stack,stackBytes.data(),8320),
+        "Mode table validation changed guest data or failed to restore the table");
+    std::printf("Mode table contract passed: %zu independent flag/reservation byte corruptions, unchanged failure outputs, stale binding rejection and exact recovery.\n",tableBytes);
+}
+static void bindingBenchmark(uint8_t* base,const PPCContext& initial) {
+    EngineVertexProgramInput input;input.declarationAddress=declaration;input.modes.fill(4);
+    cases=1;oracle(base,initial,input,1,false);
+    EngineVertexBindingSnapshot expected;
+    require(snapshotEngineVertexBindings(base,expected),"Binding benchmark preparation failed");
+    auto measure=[&](auto work) {
+        for(unsigned i=0;i<32;++i)work();
+        std::array<double,9> batches{};
+        for(auto& batch:batches) {
+            const auto start=std::chrono::steady_clock::now();
+            for(unsigned i=0;i<100000;++i)work();
+            batch=std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-start).count()/100000;
+        }
+        std::sort(batches.begin(),batches.end());return batches[4];
+    };
+    EngineVertexBindingSnapshot snapshot;
+    const auto fp=_mm_getcsr();
+    const std::vector<uint8_t> source(base+fixture,base+fixture+extent),state(base+context,base+context+18000);
+    const double snapshotTime=measure([&] {require(snapshotEngineVertexBindings(base,snapshot),"Binding benchmark snapshot failed");});
+    require(snapshot==expected,"Binding benchmark snapshot changed owned descriptor/constants");
+    std::optional<EngineVertexBindingSnapshot> owned;
+    const double captureTime=measure([&] {require(captureEngineVertexBindings(base,owned),"Binding benchmark capture failed");});
+    require(owned && *owned==expected && !std::memcmp(source.data(),base+fixture,extent) &&
+        !std::memcmp(state.data(),base+context,18000),"Binding benchmark changed owned output or guest source");
+    // chrono's double duration/division can set precision status flags. Check
+    // complete FP state around untimed capture calls, excluding the timer.
+    _mm_setcsr(fp);
+    require(snapshotEngineVertexBindings(base,snapshot) && snapshot==expected && _mm_getcsr()==fp &&
+        captureEngineVertexBindings(base,owned) && owned && *owned==expected && _mm_getcsr()==fp,
+        "Binding benchmark changed floating-point state");
+    std::puts("constant_bytes,snapshot_us,capture_us");
+    std::printf("4096,%.6f,%.6f\n",snapshotTime,captureTime);
+}
+static void preparationBenchmark(uint8_t* base,const PPCContext& initial) {
+    auto measure=[&](auto work) {
+        for(unsigned i=0;i<32;++i)work();
+        std::array<double,9> batches{};
+        for(auto& batch:batches) {
+            const auto start=std::chrono::steady_clock::now();
+            for(unsigned i=0;i<50000;++i)work();
+            batch=std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-start).count()/50000;
+        }
+        std::sort(batches.begin(),batches.end());return batches[4];
+    };
+    std::puts("fixture,original_us,completed_preparation_us");
+    for(unsigned kind=0;kind<3;++kind) {
+        EngineVertexProgramInput input;input.declarationAddress=declaration;input.modes.fill(4);
+        if(kind) {
+            input.declarationFlags=0x400;input.enabledCoordinates=255;
+            input.modes={0,10,4,16,9,17,4,4};input.materialFlags=0x8000;
+            if(kind==2) {input.palette=true;input.secondBlendIndices=true;input.conversionMask=31;}
+        }
+        // The independent original-AOT oracle establishes a selected cache
+        // record, stable sources, and the retained completed descriptor.
+        cases=1;oracle(base,initial,input,1,false);
+        const auto startMode=_mm_getcsr();
+        auto expected=clone(initial);__imp__sub_82248C80(expected,base);
+        const auto expectedMode=_mm_getcsr();
+        const uint32_t stack=initial.r1.u32-8192;
+        const std::vector<uint8_t> expectedSource(base+fixture,base+fixture+extent),
+            expectedState(base+context,base+context+18000),expectedStack(base+stack,base+stack+8320);
+        _mm_setcsr(startMode);auto wrapped=clone(initial);sub_82248C80(wrapped,base);
+        require(!std::memcmp(&wrapped,&expected,sizeof(wrapped)) && _mm_getcsr()==expectedMode &&
+            !std::memcmp(expectedSource.data(),base+fixture,extent) &&
+            !std::memcmp(expectedState.data(),base+context,18000) &&
+            !std::memcmp(expectedStack.data(),base+stack,8320),"Preparation benchmark changed complete original ABI or guest data");
+        EngineVertexBindingSnapshot expectedBinding;
+        require(snapshotEngineVertexBindings(base,expectedBinding),"Preparation benchmark did not retain completed binding");
+        PPCContext last;
+        // Both rows include the same fresh-context/FP reset. Timer arithmetic
+        // must not become an input to the original guest preparation.
+        const double originalTime=measure([&] {_mm_setcsr(startMode);std::memcpy(&last,&initial,sizeof(last));__imp__sub_82248C80(last,base);});
+        require(!std::memcmp(&last,&expected,sizeof(last)),"Repeated original preparation changed fixture registers");
+        const double completedTime=measure([&] {_mm_setcsr(startMode);std::memcpy(&last,&initial,sizeof(last));sub_82248C80(last,base);});
+        EngineVertexBindingSnapshot after;
+        require(!std::memcmp(&last,&expected,sizeof(last)) && snapshotEngineVertexBindings(base,after) && after==expectedBinding &&
+            !std::memcmp(expectedSource.data(),base+fixture,extent) &&
+            !std::memcmp(expectedState.data(),base+context,18000) &&
+            !std::memcmp(expectedStack.data(),base+stack,8320),"Repeated completed preparation changed original ABI, retained bindings or guest data");
+        std::printf("%s,%.6f,%.6f\n",kind==0?"unlit":kind==1?"multi":"weighted-conversion",originalTime,completedTime);
+    }
+}
 int main(int argc,char** argv) {
     try {
-        require(argc==2,"Expected game directory");Memory owner;memory=&owner;owner.load(argv[1]);PPCContext initial{};owner.initThread(initial);
+        require(argc==2 || (argc==3 && (std::string_view(argv[2])=="--benchmark" || std::string_view(argv[2])=="--preparation-benchmark")),
+                "Expected game directory and optional --benchmark or --preparation-benchmark");Memory owner;memory=&owner;owner.load(argv[1]);PPCContext initial{};owner.initThread(initial);
         require(owner.commit(fixture,extent),"Cannot commit fixture");auto* base=owner.base();enableEnginePreview();
         auto init=clone(initial);__imp__sub_8223AFE8(init,base);
+        if(argc==3) {
+            if(std::string_view(argv[2])=="--benchmark")bindingBenchmark(base,initial);
+            else preparationBenchmark(base,initial);
+            return 0;
+        }
         uint32_t random=0x82248C80;auto next=[&]{random=random*1664525+1013904223;return random;};
         EngineVertexProgramInput input;input.declarationAddress=declaration;input.modes.fill(4);
         for(unsigned flags=0;flags<64;++flags) {
@@ -175,6 +330,7 @@ int main(int argc,char** argv) {
             input={};input.declarationAddress=declaration;input.modes.fill(4);input.conversionMask=conversionBits;
             oracle(base,initial,input,1,true);
         }
+        modeTableContract(base,initial);
         bool otherThreadCaptured=true;
         std::thread other([&]{EngineVertexBindingSnapshot isolated;otherThreadCaptured=snapshotEngineVertexBindings(base,isolated);});other.join();
         require(!otherThreadCaptured,"Prepared vertex bindings leaked across guest threads");

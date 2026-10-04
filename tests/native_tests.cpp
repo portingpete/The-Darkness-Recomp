@@ -18,6 +18,9 @@ static void check(bool success, const char* message) { if (!success) throw std::
 #include "dispatcher_tests.h"
 #include "xma_bridge_tests.h"
 #include "input_tests.h"
+#include "menu_pointer_guest_tests.h"
+#include "menu_keyboard_guest_tests.h"
+#include "menu_keyboard_status_tests.h"
 #include "language_tests.h"
 #include "mouse_look_tests.h"
 #include "native_delay_tests.h"
@@ -38,6 +41,7 @@ static void check(bool success, const char* message) { if (!success) throw std::
 #include "notification_alias_tests.h"
 #include "critical_section_tests.h"
 #include "c_view_tests.h"
+#include "timebase_scale_tests.h"
 #include "object_output_tests.h"
 #include "texture_mip_layout_tests.h"
 #include "texture_upload_tests.h"
@@ -51,6 +55,7 @@ static void check(bool success, const char* message) { if (!success) throw std::
 #include "developer_player_tests.h"
 #include "developer_missions_tests.h"
 #include "developer_update_tests.h"
+#include "screen_fade_tests.h"
 static PPC_FUNC(threadProbe) {
     uint32_t argument = ctx.r3.u32;
     memory->write32(argument + 24, base[ctx.r13.u32 + 0x10c]);
@@ -1523,6 +1528,10 @@ int main(int argc, char** argv) {
         addressSpace.load(argv[1]);
         PPCContext ctx{};
         addressSpace.initThread(ctx);
+        if (argc == 3 && strcmp(argv[2], "--screen-fade") == 0) {
+            testScreenFade(ctx);
+            return 0;
+        }
         if (argc == 3 && strcmp(argv[2], "--developer-tools") == 0) {
             testDeveloperToolsRequests();
             testDeveloperInvincibility(ctx);
@@ -1578,6 +1587,18 @@ int main(int argc, char** argv) {
         if (argc == 3 && strcmp(argv[2], "--input") == 0) {
             testInputContract(ctx);
             testMouseLookContract(ctx);
+            return 0;
+        }
+        if (argc == 3 && strcmp(argv[2], "--menu-pointer") == 0) {
+            testMenuPointerGuest(ctx);
+            return 0;
+        }
+        if (argc == 3 && strcmp(argv[2], "--keyboard-menu") == 0) {
+            testMenuKeyboardGuest(ctx);
+            return 0;
+        }
+        if (argc == 3 && strcmp(argv[2], "--keyboard-status") == 0) {
+            testMenuKeyboardStatus(ctx);
             return 0;
         }
         if (argc == 3 && strcmp(argv[2], "--language") == 0) {
@@ -2108,6 +2129,7 @@ int main(int argc, char** argv) {
         ctx.r3.u64 = 0xfeeefeee;
         __imp__KeQueryPerformanceFrequency(ctx, memory->base());
         check(ctx.r3.u64 == 49875000, "Timebase frequency ABI mismatch");
+        testTimebaseScale();
         uint64_t before = PPCQueryTimebase();
         Sleep(10);
         uint64_t elapsed = PPCQueryTimebase() - before;

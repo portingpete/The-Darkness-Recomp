@@ -3,6 +3,7 @@
 #include "xma_bridge.h"
 #include "ppc_image_metadata.h"
 #include "xex_image.h"
+#include "timebase_scale.h"
 #include <bcrypt.h>
 #include <array>
 #include <dbghelp.h>
@@ -509,10 +510,10 @@ LONG exceptionFilter(EXCEPTION_POINTERS* exception) {
     ExitProcess(2);
 }
 uint64_t PPCQueryTimebase() {
-    static const uint64_t frequency = [] { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return uint64_t(f.QuadPart); }();
+    static const DarkRecomp::Native::TimebaseScale<DarkRecomp::Native::kTimebaseFrequency> scale(
+        [] { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return uint64_t(f.QuadPart); }());
     LARGE_INTEGER now; QueryPerformanceCounter(&now);
-    return uint64_t(now.QuadPart / frequency) * DarkRecomp::Native::kTimebaseFrequency +
-        (uint64_t(now.QuadPart) % frequency) * DarkRecomp::Native::kTimebaseFrequency / frequency;
+    return scale(uint64_t(now.QuadPart));
 }
 extern "C" float roundevenf(float x) { return std::nearbyintf(x); }
 extern "C" double roundeven(double x) { return std::nearbyint(x); }

@@ -16,9 +16,12 @@ using Microsoft::WRL::ComPtr;
 static void require(bool ok,const char* what) {if(!ok)throw std::runtime_error(what);}
 static void check(HRESULT hr,const char* what) {require(SUCCEEDED(hr),what);}
 #include "world_sampler_cache_tests.h"
+#include "world_anisotropy_tests.h"
 using Result=std::array<float,40>;
 static void put(uint8_t* p,uint32_t x) {for(unsigned i=0;i<4;++i)p[i]=uint8_t(x>>(24-i*8));}
+#include "world_anisotropy_visual_tests.h"
 #include "darkness_vision_tests.h"
+#include "otherworld_tests.h"
 #include "world_palette_usage_tests.h"
 #include "world_shadow_input_tests.h"
 #include "world_position_usage_tests.h"
@@ -1097,6 +1100,8 @@ static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
         require(renderer.draw(optional),"Missing original tangent defaults rejected a draw");
     }
     const auto lightingDraw=draw;
+    worldAnisotropyContract(device,context,lightingDraw);renderer.invalidateBindings();
+    worldAnisotropyVisualContract(device,context);renderer.invalidateBindings();
     samplerCachePressure(device,context,lightingDraw);renderer.invalidateBindings();
     // Resolve HDR with the original signed -4 exponent, then sample with +4.
     clear.color={8,4,2,1};clear.flags=1;renderer.clear(clear);
@@ -1735,22 +1740,64 @@ static void format19GpuContract(ID3D11Device* device,ID3D11DeviceContext* contex
     require(actualPacked[0][8]!=actualPacked[1][8] && actualPacked[0][4]!=0,"Format19 GPU outputs not nonzero/converted");
     std::printf("Format19GPU passed: 3 packed vs 3 FLOAT3 vertices, %u output comparisons, nonuniform conversion analytically verified.\n",comparisons);
 }
+#include "world_resolution_switch_tests.h"
+#include "world_frontbuffer_precision_tests.h"
+static void worldRendererDebugContract(ID3D11Device* device) {
+    ComPtr<ID3D11InfoQueue> messages;
+    if(SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&messages))))
+        for(UINT64 i=0;i<messages->GetNumStoredMessagesAllowedByRetrievalFilter();++i) {
+            SIZE_T size=0;messages->GetMessage(i,nullptr,&size);std::vector<uint8_t> bytes(size);
+            auto* message=reinterpret_cast<D3D11_MESSAGE*>(bytes.data());
+            check(messages->GetMessage(i,message,&size),"D3D debug message retrieval");
+            require(message->Severity>D3D11_MESSAGE_SEVERITY_ERROR,"D3D debug layer reported invalid rendering commands");
+        }
+}
 int main(int argc,char** argv) {
-    constantCopyContract();
-    lightingValidationContract();
-    promptWorldContract();
     ComPtr<ID3D11Device> device;
     try {
-        formats();paletteUsageContract();paletteArithmeticContract();worldPositionUsageContract();worldWaterUsageContract();worldShadowInputContract();
-        worldVertexValidationContract();immediateIndexOwnershipContract();
-        if(argc>1 && std::strcmp(argv[1],"--cpu-only")==0) {
+        bool warp=false,cpuOnly=false,colorGradeOnly=false,resolutionSwitchOnly=false,frontbufferOnly=false;
+        for(int i=1;i<argc;++i) {
+            if(std::strcmp(argv[i],"--warp")==0)warp=true;
+            else if(std::strcmp(argv[i],"--cpu-only")==0)cpuOnly=true;
+            else if(std::strcmp(argv[i],"--color-grade-only")==0)colorGradeOnly=true;
+            else if(std::strcmp(argv[i],"--resolution-switch-only")==0)resolutionSwitchOnly=true;
+            else if(std::strcmp(argv[i],"--frontbuffer-only")==0)frontbufferOnly=true;
+            else throw std::runtime_error("Unknown argument; expected --warp, --cpu-only, --color-grade-only, --resolution-switch-only or --frontbuffer-only");
+        }
+        require(unsigned(cpuOnly)+unsigned(colorGradeOnly)+unsigned(resolutionSwitchOnly)+unsigned(frontbufferOnly)<=1,
+            "Focused contract modes are mutually exclusive");
+        if(!colorGradeOnly && !resolutionSwitchOnly && !frontbufferOnly) {
+            constantCopyContract();lightingValidationContract();promptWorldContract();
+            formats();paletteUsageContract();paletteArithmeticContract();worldPositionUsageContract();worldWaterUsageContract();worldShadowInputContract();
+            worldVertexValidationContract();immediateIndexOwnershipContract();
+        }
+        if(cpuOnly) {
             std::puts("World vertex preparation CPU contracts passed; no D3D device created.");
             return 0;
         }
-        const bool warp=argc>1 && std::strcmp(argv[1],"--warp")==0;
         ComPtr<ID3D11DeviceContext> context;const D3D_FEATURE_LEVEL level=D3D_FEATURE_LEVEL_11_0;
         const auto deviceFlags=GetEnvironmentVariableA("DARK_D3D_DEBUG",nullptr,0)?D3D11_CREATE_DEVICE_DEBUG:0;
         check(D3D11CreateDevice(nullptr,warp?D3D_DRIVER_TYPE_WARP:D3D_DRIVER_TYPE_HARDWARE,nullptr,deviceFlags,&level,1,D3D11_SDK_VERSION,&device,nullptr,&context),"D3D device");
+        if(colorGradeOnly) {
+            colorGradeChainContract(device.Get(),context.Get());
+            colorGradeChainContract(device.Get(),context.Get(),26,4);
+            colorGradeEligibilityContract(device.Get(),context.Get());
+            worldRendererDebugContract(device.Get());context->ClearState();
+            std::printf("WorldColorGradeContract passed: %s.\n",warp?"WARP":"hardware");
+            return 0;
+        }
+        if(resolutionSwitchOnly) {
+            resolutionSwitchContract(device.Get(),context.Get());
+            worldRendererDebugContract(device.Get());context->ClearState();
+            std::printf("WorldResolutionSwitchContract passed: %s.\n",warp?"WARP":"hardware");
+            return 0;
+        }
+        if(frontbufferOnly) {
+            worldFrontbufferPrecisionContract(device.Get(),context.Get());
+            worldRendererDebugContract(device.Get());context->ClearState();
+            std::printf("WorldFrontbufferPrecisionContract passed: %s.\n",warp?"WARP":"hardware");
+            return 0;
+        }
         std::vector<WorldVertex> vertices(7);
         for(unsigned i=0;i<vertices.size();++i) {
             auto& v=vertices[i];v.position={float(i)/8,-float(i)/16,float(i)/32,1};v.normal={0,0,1,0};
@@ -1902,15 +1949,15 @@ int main(int argc,char** argv) {
         format19GpuContract(device.Get(),context.Get());
         shadowExtrusionGpuContract(device.Get(),context.Get());
         passes(device.Get(),context.Get());
+        colorGradeChainContract(device.Get(),context.Get());
+        colorGradeChainContract(device.Get(),context.Get(),26,4);
+        colorGradeEligibilityContract(device.Get(),context.Get());
+        resolutionSwitchContract(device.Get(),context.Get());
+        worldFrontbufferPrecisionContract(device.Get(),context.Get());
         budgetContract(device.Get(),context.Get());
         darknessVisionContract(device.Get(),context.Get());
-        ComPtr<ID3D11InfoQueue> messages;
-        if(SUCCEEDED(device.As(&messages)))for(UINT64 i=0;i<messages->GetNumStoredMessagesAllowedByRetrievalFilter();++i) {
-            SIZE_T size=0;messages->GetMessage(i,nullptr,&size);std::vector<uint8_t> bytes(size);
-            auto* message=reinterpret_cast<D3D11_MESSAGE*>(bytes.data());
-            check(messages->GetMessage(i,message,&size),"D3D debug message retrieval");
-            require(message->Severity>D3D11_MESSAGE_SEVERITY_ERROR,"D3D debug layer reported invalid rendering commands");
-        }
+        otherworldContract(device.Get(),context.Get());
+        worldRendererDebugContract(device.Get());
         context->ClearState();std::printf("WorldRendererContract passed: %s,162 variants,1134 vertices,%u output comparisons; original stage-1/5 bump-cube basis, environment mapping, light field, depth-offset, constant and Lighting_Nonormal distance modes; packed fetch; DXN/L8; depth/stencil, motion, cube-projected lighting and additive pixels; separate targets.\n",warp?"WARP":"hardware",comparisons);return 0;
     } catch(const std::exception& e){
         ComPtr<ID3D11InfoQueue> messages;

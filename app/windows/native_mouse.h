@@ -1,5 +1,6 @@
 #pragma once
 #include "runtime/native/input.h"
+#include "runtime/native/menu_pointer.h"
 #include <string>
 
 // The window thread owns Win32 capture. The input mutex is never held across
@@ -21,7 +22,9 @@ public:
     bool registered() const { return registered_; }
     bool captured() const { return captured_; }
     void setFrameRate(double fps) { fps_ = unsigned(fps + .5); updateTitle(); }
+    void setRenderHeight(unsigned height) { renderHeight_ = height; updateTitle(); }
     bool capture() {
+        if (DarkRecomp::Native::guestMenuPointerActive()) return false;
         if (!registered_ || GetForegroundWindow() != window_ || IsIconic(window_)) return false;
         if (!updateClip()) return false;
         captured_ = true;
@@ -54,7 +57,7 @@ public:
             // Foreground WM_INPUT still reaches DefWindowProc for cleanup.
         } else if (message == WM_SETCURSOR && captured_ && LOWORD(detail) == HTCLIENT) {
             SetCursor(nullptr); return true;
-        } else if (message == WM_LBUTTONDOWN && !captured_) {
+        } else if (message == WM_LBUTTONDOWN && !captured_ && !DarkRecomp::Native::guestMenuPointerActive()) {
             capture(); return true; // Acquiring the mouse must not fire a shot.
         } else if (message == WM_KEYDOWN && !(detail & (LPARAM(1) << 30))) {
             if (key == VK_ESCAPE) release(); // Input already received Pause.
@@ -65,8 +68,12 @@ public:
                     L"Click in the window to play. Escape pauses and releases the mouse.\n"
                     L"F2 captures/releases the mouse. Alt-Tab releases it automatically.\n"
                     L"F5: developer tools (mission, player speed and invincibility).\n\n"
+                    L"F6: switch render resolution between 720p and 1440p during play.\n"
+                    L"Availability depends on the launch resolution and display aspect.\n\n"
                     L"Options > Video Settings: graphics    Alt+Enter: fullscreen\n"
-                    L"Bloom, motion blur, VSync, frame cap, resolution, fullscreen and field of view.\n\n"
+                    L"Bloom, motion blur, texture filtering, VSync, frame cap, resolution and field of view.\n\n"
+                    L"Options > Controls > Keyboard bindings: customize and save your keys.\n"
+                    L"Default keyboard controls:\n"
                     L"WASD: move    Mouse: look    Space: jump\n"
                     L"E: use / confirm    R: reload    Ctrl or C: crouch\n"
                     L"Left click: fire right weapon    Right click: fire left weapon\n"
@@ -75,7 +82,8 @@ public:
                     L"Q: manifest Darkness    G: use Darkness power\n"
                     L"3/4: switch power    F: redirect Darkling\n"
                     L"Tab: journal    Enter: pause / Start\n\n"
-                    L"Menus (mouse released): arrows, E or Space to confirm, Esc or Backspace to go back.\n"
+                    L"Menus: move the cursor and click an item, or use arrows and E / Space.\n"
+                    L"Esc or Backspace goes back.\n"
                     L"Space also skips the intro videos. Inversion uses the game options.\n"
                     L"Mouse sensitivity: launch with --mouse-sensitivity 1.0 (0.1 to 10).",
                     L"The Darkness - Keyboard and mouse controls", MB_OK);
@@ -104,10 +112,12 @@ private:
         const std::wstring title = captured_ ?
             L"The Darkness - Mouse look | Esc releases | F1 controls" :
             L"The Darkness - Click to play | F1 controls | F2 mouse capture";
-        if (IsWindow(window_)) SetWindowTextW(window_, (title + L" | " + std::to_wstring(fps_) + L" FPS").c_str());
+        if (IsWindow(window_)) SetWindowTextW(window_, (title + L" | " + std::to_wstring(renderHeight_) +
+            L"p | F6 resolution | " + std::to_wstring(fps_) + L" FPS").c_str());
     }
     HWND window_{};
     RECT clip_{};
     bool registered_ = false, captured_ = false;
     unsigned fps_ = 0;
+    unsigned renderHeight_ = 720;
 };

@@ -75,8 +75,7 @@ static void testVideoSettings(PPCContext& ctx) {
                                    GraphicsSettings{1000,2160,true,true,true,true}})
         for (bool aa : {false, true}) {
             auto selected = s; selected.antialiasing = aa;
-            for (unsigned gamma : {50u, 95u, 100u, 150u}) for (unsigned brightness : {50u, 95u, 100u, 200u}) {
-                selected.gammaPercent = gamma;
+            for (unsigned brightness : {50u, 95u, 100u, 200u}) {
                 selected.brightnessPercent = brightness;
                 check(setGraphicsSettings(selected) && graphicsSettings() == selected, "graphics packing boundary corrupted another setting");
             }
@@ -88,11 +87,6 @@ static void testVideoSettings(PPCContext& ctx) {
     check(!setGraphicsSettings(invalid) && graphicsSettings().renderHeight == 720, "invalid height changed settings");
     invalid.renderHeight = 2161;
     check(!setGraphicsSettings(invalid) && graphicsSettings().renderHeight == 720, "oversized height changed settings");
-    for (unsigned gamma : {0u,49u,151u,~0u}) {
-        invalid = graphicsSettings(); invalid.gammaPercent = gamma;
-        const auto saved = graphicsSettings();
-        check(!setGraphicsSettings(invalid) && graphicsSettings() == saved, "invalid gamma changed settings");
-    }
     for (unsigned brightness : {0u,49u,201u,~0u}) {
         invalid = graphicsSettings(); invalid.brightnessPercent = brightness;
         const auto saved = graphicsSettings();
@@ -173,13 +167,13 @@ static void testVideoSettings(PPCContext& ctx) {
     takeDisplaySettingsSaveRequest();
     key(227);
     check(graphicsSettings().motionBlur && graphicsSettings().bloom && takeDisplaySettingsSaveRequest() &&
-          videoSettingLabel("darkrecomp.motionblur").find("On") != std::string::npos,
+          videoSettingLabel("darkrecomp.motionblur").find("ON") != std::string::npos,
           "native Motion Blur row did not enable/persist independently of bloom");
     key(227 | 0x8000);
     check(graphicsSettings().motionBlur && !takeDisplaySettingsSaveRequest(), "key release toggled motion blur twice");
     key(226);
     check(!graphicsSettings().motionBlur && takeDisplaySettingsSaveRequest() &&
-          videoSettingLabel("darkrecomp.motionblur").find("Off") != std::string::npos,
+          videoSettingLabel("darkrecomp.motionblur").find("OFF") != std::string::npos,
           "native Motion Blur row did not disable/persist");
     string(block + 0x3500, "darkrecomp.antialiasing");
     call = ctx;
@@ -197,7 +191,7 @@ static void testVideoSettings(PPCContext& ctx) {
     check(graphicsSettings() == expectedAA && !takeDisplaySettingsSaveRequest(), "release toggled antialiasing twice");
     key(226);
     check(graphicsSettings() == beforeAA && takeDisplaySettingsSaveRequest() &&
-          videoSettingLabel("darkrecomp.antialiasing").find("Off") != std::string::npos,
+          videoSettingLabel("darkrecomp.antialiasing").find("OFF") != std::string::npos,
           "native antialiasing row did not disable/persist FXAA");
     key(228);
     check(graphicsSettings() == expectedAA, "Confirm did not enable FXAA");
@@ -206,25 +200,9 @@ static void testVideoSettings(PPCContext& ctx) {
     check(graphicsSettings() == beforeAA, "mouse/pressed callback did not disable FXAA");
     const auto before = graphicsSettings();
     while(takeDisplaySettingsSaveRequest()) {}
-    string(block + 0x3600, "darkrecomp.gamma");
-    call = ctx;
-    call.r3.u64 = button; call.r4.u64 = block + 0x3200;
-    call.r5.u64 = block + 0x3000; call.r6.u64 = block + 0x3600;
-    sub_8239F0E0(call, base);
-    key(226);
-    auto darker = before; darker.gammaPercent = 95;
-    check(graphicsSettings() == darker && takeDisplaySettingsSaveRequest() &&
-          videoSettingLabel("darkrecomp.gamma").find("0.95") != std::string::npos,
-          "gamma row did not darken independently through original input dispatch");
-    key(227 | 0x8000);
-    check(graphicsSettings() == darker && !takeDisplaySettingsSaveRequest(), "gamma changed on key release");
-    key(227);
-    check(graphicsSettings() == before && takeDisplaySettingsSaveRequest(), "gamma did not return to neutral");
-    for (int i=0;i<32;++i) changeVideoSetting("darkrecomp.gamma",-1);
-    check(graphicsSettings().gammaPercent==50,"gamma lower bound wrapped to a brighter value");
-    for (int i=0;i<32;++i) changeVideoSetting("darkrecomp.gamma",1);
-    check(graphicsSettings().gammaPercent==150,"gamma upper bound wrapped to a darker value");
-    setGraphicsSettings(before);
+    check(!changeVideoSetting("darkrecomp.gamma", -1) && !changeVideoSetting("darkrecomp.gamma", 1) &&
+          videoSettingLabel("darkrecomp.gamma").empty() && graphicsSettings() == before &&
+          !takeDisplaySettingsSaveRequest(), "retired native gamma action changed settings or requested persistence");
     string(block + 0x3700, "darkrecomp.brightness");
     call = ctx;
     call.r3.u64 = button; call.r4.u64 = block + 0x3200;
@@ -268,7 +246,10 @@ static void testVideoSettings(PPCContext& ctx) {
         check(gameLanguageSetting() == language && graphicsSettings() == before && takeDisplaySettingsSaveRequest(),
               "language row skipped a supported language, failed to wrap or changed graphics settings");
         const auto display = language == GameLanguage::System ? std::wstring_view(L"System") : gameLanguageDisplayName(language);
-        check(videoSettingLabel("darkrecomp.language").find(std::string(display.begin(), display.end())) != std::string::npos,
+        std::string expectedLanguage(display.begin(), display.end());
+        for (char& glyph : expectedLanguage)
+            if (glyph >= 'a' && glyph <= 'z') glyph = char(glyph - 'a' + 'A');
+        check(videoSettingLabel("darkrecomp.language").find(expectedLanguage) != std::string::npos,
               "language row label differs from the selected preference");
         key(227 | 0x8000);
         check(gameLanguageSetting() == language && !takeDisplaySettingsSaveRequest(),
@@ -303,7 +284,7 @@ static void testVideoSettings(PPCContext& ctx) {
     for (const auto height : {480u,720u,1080u,1440u,2160u,360u}) {
         changeVideoSetting("darkrecomp.resolution", 1);
         check(graphicsSettings().renderHeight == height, "resolution menu skipped a supported setting or failed to wrap");
-        check(videoSettingLabel("darkrecomp.resolution").find(std::to_string(height) + "p") != std::string::npos,
+        check(videoSettingLabel("darkrecomp.resolution").find(std::to_string(height) + "P") != std::string::npos,
               "resolution label does not match the selected height");
     }
     setFieldOfViewSetting(114.25f);
@@ -316,12 +297,12 @@ static void testVideoSettings(PPCContext& ctx) {
     changeVideoSetting("darkrecomp.fov", -1);
     check(fieldOfViewSetting() == 120, "FOV wrap failed");
     reportDisplaySettingsSave(false);
-    check(videoSettingLabel("darkrecomp.bloom").find("Save failed") != std::string::npos, "save failure is invisible in menu");
+    check(videoSettingLabel("darkrecomp.bloom").find("SAVE FAILED") != std::string::npos, "save failure is invisible in menu");
     reportDisplaySettingsSave(true);
     // The engine gives small text two glyphs per cell. Dynamic values must
     // fit the authored eight-cell column without a font change or word wrap.
     for (const auto action : {"darkrecomp.fov", "darkrecomp.bloom", "darkrecomp.vsync",
-                              "darkrecomp.fps", "darkrecomp.resolution", "darkrecomp.mode", "darkrecomp.motionblur", "darkrecomp.antialiasing", "darkrecomp.gamma", "darkrecomp.brightness", "darkrecomp.language"}) {
+                              "darkrecomp.fps", "darkrecomp.resolution", "darkrecomp.mode", "darkrecomp.motionblur", "darkrecomp.antialiasing", "darkrecomp.brightness", "darkrecomp.language"}) {
         for (int i = 0; i < 128; ++i) {
             for (bool saved : {true, false}) {
                 reportDisplaySettingsSave(saved);
@@ -333,5 +314,34 @@ static void testVideoSettings(PPCContext& ctx) {
         }
     }
     reportDisplaySettingsSave(true);
-    std::puts("Native video settings: shader flags, safe resolution, original button constructor/property/input ABI, all choices and save requests passed; no rendering performed.");
+    setGraphicsSettings(before);
+    check(graphicsSettings().anisotropyLevels == 16, "texture filtering must default to 16x");
+    for (unsigned level : {8u, 4u, 2u, 1u, 16u}) {
+        check(changeVideoSetting("darkrecomp.anisotropy", -1) && graphicsSettings().anisotropyLevels == level &&
+              takeDisplaySettingsSaveRequest(), "texture filtering did not step/wrap and request persistence");
+        check(videoSettingLabel("darkrecomp.anisotropy").find(level == 1 ? "ORIGINAL" : std::to_string(level) + "X") !=
+              std::string::npos, "filtering row label does not match selected level");
+    }
+    while (takeDisplaySettingsSaveRequest()) {}
+    check(!activateNativeMenuAction("unknown") && !takeExitGameRequest(),
+          "unknown action queued host work");
+    for (const auto action : {"darkrecomp.exit"}) {
+        string(block + 0x3900, action);
+        call = ctx; call.r3.u64 = button; call.r4.u64 = block + 0x3200;
+        call.r5.u64 = block + 0x3000; call.r6.u64 = block + 0x3900;
+        sub_8239F0E0(call, base);
+        key(226); key(227);
+        check(!takeExitGameRequest(), "directional input activated host action");
+        key(228);
+        check(takeExitGameRequest(), "Confirm did not queue host action");
+        key(228 | 0x8000);
+        check(!takeExitGameRequest(), "release queued duplicate host action");
+        call = ctx; call.r3.u64 = button;
+        sub_823981D8(call, base);
+        check(call.r3.u32 == 1 && takeExitGameRequest(),
+              "pressed callback did not queue host action");
+        check(!takeExitGameRequest() && !takeDisplaySettingsSaveRequest(),
+              "host action consumed more than once or requested display save");
+    }
+    std::puts("Native video settings: shader flags, resolution, original button ABI, filtering, host actions and persistence passed; no rendering performed.");
 }

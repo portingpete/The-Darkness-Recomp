@@ -736,7 +736,7 @@ static void testPreviewBridge(Memory& memory, PPCContext& threadContext, EngineP
         guest.r3.u64=device;guest.r4.u64=slot;guest.r5.u64=object;guest.r6.u64=uint64_t(1)<<(31-slot);
         __imp__sub_82864F20(guest,base);
     };
-    testWorldVideoCapture(memory,world,device,program,name,bindTexture,finish);
+    testWorldVideoCapture(memory,threadContext,world,device,program,name,bindTexture,finish);
     testWorldSourceRecovery(memory,world,device,program,name,bindTexture,finish);
     testWorldDecalCapture(memory,threadContext,device,bindTexture,finish);
     textureHeader(primary,0x01000000);textureHeader(alternate,0x02000000);
@@ -913,7 +913,8 @@ static void testPreviewBridge(Memory& memory, PPCContext& threadContext, EngineP
         std::memcpy(base+device+1152,oldSampler.data(),oldSampler.size());
         std::puts("TextureCacheResidency: guarded leading mips, four selected header forms, sampler changes and immutable completed generations passed.");
     }
-    // DV5 mixes GPU-produced scene/depth/atlas inputs with CPU-owned noise.
+    // DV5 and Other World mix GPU-produced scene/depth/atlas inputs with
+    // CPU-owned noise.
     // Recover a missed or evicted noise upload without decoding stale backing
     // memory for the GPU inputs. All six stand-ins are deliberately decodable,
     // so an overbroad recovery whitelist makes the excluded slots observable.
@@ -955,33 +956,38 @@ static void testPreviewBridge(Memory& memory, PPCContext& threadContext, EngineP
                     "Darkness noise fixture does not independently decode to its expected pixels");
             bindTexture(slot,objects[slot]);previewPrepareTexture(ids[slot]);
         }
-        std::strcpy(reinterpret_cast<char*>(base+name),"WClientMod_DV5_0");
-        auto captureNoise=[&](unsigned flags) {
+        auto captureNoisePass=[&](const char* fragment,unsigned flags,unsigned textureMask,unsigned cpuMask) {
+            std::strcpy(reinterpret_cast<char*>(base+name),fragment);
             put32(base,program+16,flags<<8);
             previewObserveWorld(base,world);const auto commands=finish();
             require(commands.size()==1 && commands[0].world &&
-                    commands[0].world->fragmentName=="WClientMod_DV5_0" && commands[0].world->fragmentFlags==flags &&
-                    commands[0].world->textureMask==(flags?0x37u:0x17u),"Darkness noise capture lost its original pass");
+                    commands[0].world->fragmentName==fragment && commands[0].world->fragmentFlags==flags &&
+                    commands[0].world->textureMask==textureMask,"Darkness noise capture lost its original pass");
             const auto& captured=commands[0].world;
-            for(unsigned slot:{0u,1u,3u,5u})
-                require(!captured->textures[slot],"Darkness noise recovery decoded a GPU-only or unused slot");
-            for(unsigned slot:{0u,1u,2u,4u,5u})if(captured->textureMask&(1u<<slot))
-                require(captured->textureObjects[slot].object==objects[slot] && captured->textureIds[slot]==ids[slot],
-                        "Darkness noise recovery changed a completed texture binding");
-            for(unsigned slot:{2u,4u})
-                require(captured->textures[slot] && captured->textures[slot]->valid() &&
-                        captured->textures[slot]->width==4 && captured->textures[slot]->height==4 &&
-                        captured->textures[slot]->pixels==expected[slot],
-                        "Darkness noise cache miss did not recover the nonuniform source pixels");
+            for(unsigned slot=0;slot<6;++slot) {
+                if(textureMask&(1u<<slot))
+                    require(captured->textureObjects[slot].object==objects[slot] && captured->textureIds[slot]==ids[slot],
+                            "Darkness noise recovery changed a completed texture binding");
+                if(cpuMask&(1u<<slot))
+                    require(captured->textures[slot] && captured->textures[slot]->valid() &&
+                            captured->textures[slot]->width==4 && captured->textures[slot]->height==4 &&
+                            captured->textures[slot]->pixels==expected[slot],
+                            "Darkness noise cache miss did not recover the nonuniform source pixels");
+                else require(!captured->textures[slot],"Darkness noise recovery decoded a GPU-only or unused slot");
+            }
             return captured;
+        };
+        auto captureNoise=[&](unsigned flags) {
+            return captureNoisePass("WClientMod_DV5_0",flags,flags?0x37u:0x17u,0x14);
+        };
+        struct ProtectNoise {
+            uint8_t* address;DWORD old{};
+            explicit ProtectNoise(uint8_t* p):address(p){require(VirtualProtect(address,65536,PAGE_NOACCESS,&old)!=0,"Darkness noise cache guard failed");}
+            ~ProtectNoise(){DWORD ignored{};VirtualProtect(address,65536,old,&ignored);}
         };
         const auto recovered=captureNoise(0);
         {
-            struct ProtectNoise {
-                uint8_t* address;DWORD old{};
-                explicit ProtectNoise(uint8_t* p):address(p){require(VirtualProtect(address,65536,PAGE_NOACCESS,&old)!=0,"Darkness noise cache guard failed");}
-                ~ProtectNoise(){DWORD ignored{};VirtualProtect(address,65536,old,&ignored);}
-            } protectNoise(base+storage);
+            ProtectNoise protectNoise(base+storage);
             for(unsigned flags:{1u,2u}) {
                 const auto reused=captureNoise(flags);
                 require(reused->textures[2]==recovered->textures[2] && reused->textures[4]==recovered->textures[4],
@@ -999,12 +1005,28 @@ static void testPreviewBridge(Memory& memory, PPCContext& threadContext, EngineP
         for(unsigned slot:{2u,4u})
             require(refreshed->textures[slot]!=recovered->textures[slot] && recovered->textures[slot]->pixels==oldNoise[slot],
                     "Darkness noise recovery mutated a retained generation after cache invalidation");
+        // The Other World passes use different slot roles than DV5. Evict
+        // all prior entries so readable fake GPU backing cannot hide a broad
+        // recovery whitelist, then keep the recovered noise generation alive.
+        for(auto id:ids)previewPrepareTexture(id);
+        captureNoisePass("WClientMod_OW1_2",0,0x3,0);
+        const auto otherWorld=captureNoisePass("WClientMod_OW1_1",0,0x7,0x2);
+        {
+            ProtectNoise protectNoise(base+storage);
+            const auto reused=captureNoisePass("WClientMod_OW1_1",0,0x7,0x2);
+            require(reused->textures[1]==otherWorld->textures[1],
+                    "Other World grain redecoded an unchanged noise cache entry");
+        }
+        previewPrepareTexture(ids[1]);
+        captureNoisePass("WClientMod_OW1_2",0,0x3,0);
+        require(otherWorld->textures[1]->pixels==expected[1],
+                "Other World composite invalidation mutated retained noise pixels");
         for(unsigned slot=0;slot<6;++slot) {previewPrepareTexture(ids[slot]);bindTexture(slot,oldObjects[slot]);}
         put32(base,context+17964,oldTable);put32(base,program+16,oldProgramFlags);
         std::memcpy(base+attributes,oldAttributes.data(),oldAttributes.size());
         std::memcpy(base+device+1152,oldSamplers.data(),oldSamplers.size());
         std::memcpy(base+name,oldName.data(),oldName.size());
-        std::puts("DarknessNoiseCapture: nonuniform slot2/4 recovery, guarded cache reuse, immutable refresh and GPU-slot exclusions passed.");
+        std::puts("DarknessNoiseCapture: DV5 slot2/4 and OW1 slot1 recovery, guarded cache reuse, immutable refresh and GPU-slot exclusions passed.");
     }
     // Direct82256008 bypasses initial-upload publication. Updating pixels in
     // the same allocation must evict the old CPU image even if every descriptor

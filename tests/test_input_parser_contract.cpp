@@ -51,11 +51,14 @@ int main() {
         requireAccept("16", 16, 250);
         requireAccept("17", 17, 250);
         requireAccept("116", VK_F5, 250);
+        requireAccept("117", VK_F6, 250);
         // Explicit bounded holds, including both edges.
         requireAccept("87 1", 87, 1);
         requireAccept("32 10000", 32, 10000);
         requireAccept("73 500", 73, 500);
         requireAccept("116 500", VK_F5, 500);
+        requireAccept("117 1", VK_F6, 1);
+        requireAccept("117 10000", VK_F6, 10000);
         requireAccept("  69   2000  ", 69, 2000);
         requireAccept("32 ", 32, 250);
         requireAccept(std::string("32") + std::string(254, ' '), 32, 250);
@@ -79,11 +82,17 @@ int main() {
         requireReject("256");
         requireReject("999");
         requireReject("7");
-        requireReject("115"); // Adjacent F4/F6 keys remain outside the allowlist.
-        requireReject("117");
+        requireReject("115"); // Adjacent F4/F7 keys remain outside the allowlist.
+        requireReject("118");
         requireReject("116 0");
         requireReject("116 10001");
         requireReject("116 close");
+        requireReject("117 0");
+        requireReject("117 10001");
+        requireReject("117 close");
+        requireReject("117 250 1");
+        requireReject("117 -1");
+        requireReject("117 1.5");
         requireReject("");
         requireReject("   ");
         requireReject("4294967296");
@@ -91,11 +100,12 @@ int main() {
         requireReject(std::string("32") + std::string(255, ' '));
         require(!isTestInputKey(0) && !isTestInputKey(255) && !isTestInputKey(7),
                 "allowlist admits an unmapped key");
-        require(isTestInputKey('W') && isTestInputKey(VK_TAB) && isTestInputKey(VK_CONTROL) && isTestInputKey(VK_F5),
+        require(isTestInputKey('W') && isTestInputKey(VK_TAB) && isTestInputKey(VK_CONTROL) &&
+                isTestInputKey(VK_F5) && isTestInputKey(VK_F6),
                 "allowlist lost a mapped key");
         puts("Test input parser contract: historical holds, explicit 1/10000, "
              "rejected bad/trailing/sign/overflow, unchanged outputs, and "
-             "gameplay keys verified against the production parser.");
+             "gameplay keys plus F5/F6 verified against the production parser.");
         return 0;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "TestInputParserContract: %s\n", error.what());

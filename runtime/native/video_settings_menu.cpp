@@ -2,16 +2,32 @@
 #include "fov_settings.h"
 #include "language_settings.h"
 #include "video_settings_menu.h"
+#include "keyboard_menu.h"
+#include "keyboard_menu_guest.h"
 #include "runtime.h"
 #include "ppc_recomp_shared.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 
 namespace DarkRecomp::Native {
-void initializeVideoSettingsMenu() noexcept { reportDisplaySettingsSave(true); }
+namespace {
+std::atomic<bool> exitGameRequested{false};
+}
+void initializeVideoSettingsMenu() noexcept {
+    reportDisplaySettingsSave(true);
+    endKeyboardMenu();
+    exitGameRequested.store(false, std::memory_order_release);
+}
+bool activateNativeMenuAction(std::string_view action) noexcept {
+    if (action == "darkrecomp.exit") exitGameRequested.store(true, std::memory_order_release);
+    else return false;
+    return true;
+}
+bool takeExitGameRequest() noexcept { return exitGameRequested.exchange(false, std::memory_order_acq_rel); }
 
 namespace {
 template<size_t N> unsigned step(unsigned value, int direction, const std::array<unsigned, N>& choices) {
@@ -38,8 +54,8 @@ bool changeVideoSetting(std::string_view action, int direction) noexcept {
     if (action == "darkrecomp.bloom") settings.bloom = !settings.bloom;
     else if (action == "darkrecomp.motionblur") settings.motionBlur = !settings.motionBlur;
     else if (action == "darkrecomp.antialiasing") settings.antialiasing = !settings.antialiasing;
-    else if (action == "darkrecomp.gamma")
-        settings.gammaPercent = unsigned(std::clamp(int(settings.gammaPercent) + direction * 5, 50, 150));
+    else if (action == "darkrecomp.anisotropy")
+        settings.anisotropyLevels = step(settings.anisotropyLevels, direction, std::array{1u, 2u, 4u, 8u, 16u});
     else if (action == "darkrecomp.brightness")
         settings.brightnessPercent = unsigned(std::clamp(int(settings.brightnessPercent) + direction * 5, 50, 200));
     else if (action == "darkrecomp.vsync") settings.verticalSync = !settings.verticalSync;
@@ -65,11 +81,8 @@ std::string videoSettingLabel(std::string_view action) {
     if (action == "darkrecomp.bloom") result = settings.bloom ? "On" : "Off";
     else if (action == "darkrecomp.motionblur") result = settings.motionBlur ? "On" : "Off";
     else if (action == "darkrecomp.antialiasing") result = settings.antialiasing ? "FXAA" : "Off";
-    else if (action == "darkrecomp.gamma") {
-        char gamma[16]{};
-        std::snprintf(gamma, sizeof(gamma), "%u.%02u", settings.gammaPercent / 100, settings.gammaPercent % 100);
-        result = gamma;
-    }
+    else if (action == "darkrecomp.anisotropy")
+        result = settings.anisotropyLevels == 1 ? "Original" : std::to_string(settings.anisotropyLevels) + "x";
     else if (action == "darkrecomp.brightness") result = std::to_string(settings.brightnessPercent) + "%";
     else if (action == "darkrecomp.vsync") result = settings.verticalSync ? "On" : "Off";
     else if (action == "darkrecomp.mode") result = settings.fullscreen ? "Borderless" : "Windowed";
@@ -93,6 +106,9 @@ std::string videoSettingLabel(std::string_view action) {
         // Keep the arrows sixteen small glyphs apart for every value, so its
         // native hit rectangle remains eight cells wide without overriding it.
         if (displaySettingsSaveFailed()) result = "Save failed";
+        // Match the retail menu typography for every live setting value.
+        for (char& glyph : result)
+            if (glyph >= 'a' && glyph <= 'z') glyph = char(glyph - 'a' + 'A');
         const size_t padding = result.size() < 12 ? 12 - result.size() : 0;
         result = "sc, < " + std::string(padding / 2, ' ') + result +
                  std::string(padding - padding / 2, ' ') + " >";
@@ -103,7 +119,7 @@ std::string videoSettingLabel(std::string_view action) {
 
 namespace {
 // CStr's byte-string backing begins with a 16-bit tag. These objects are
-// owned by the original UI, and the wrapper only inspects CubeButton fields.
+// owned by the original UI; the wrappers inspect original window fields.
 std::string_view byteString(uint8_t* base, uint32_t object) {
     const uint32_t data = PPC_LOAD_U32(object + 4);
     if (!data || (PPC_LOAD_U16(data) & 0x8000)) return {};
@@ -116,9 +132,8 @@ std::string_view actionForButton(uint8_t* base, uint32_t button) {
     return byteString(base, button + 344); // SCRIPT_PRESSED in CMWnd_CubeButton.
 }
 
-void refreshLabel(PPCContext& ctx, uint8_t* base, uint32_t button) {
-    const auto text = DarkRecomp::Native::videoSettingLabel(actionForButton(base, button));
-    if (text.empty() || text == byteString(base, button + 280)) return;
+void replaceLabel(PPCContext& ctx, uint8_t* base, uint32_t window, const std::string& text) {
+    if (text.empty() || text == byteString(base, window + 280)) return;
     // Let the original CStr implementation own/refcount the replacement.
     // Calls use a private stack frame and preserve the renderer's registers.
     auto call = ctx;
@@ -127,10 +142,16 @@ void refreshLabel(PPCContext& ctx, uint8_t* base, uint32_t button) {
     std::memcpy(base + raw, text.c_str(), text.size() + 1);
     call.r3.u64 = str; call.r4.u64 = raw;
     sub_821F86A8(call, base);
-    call.r3.u64 = button + 280; call.r4.u64 = str;
+    call.r3.u64 = window + 280; call.r4.u64 = str;
     sub_821F8BF0(call, base);
     call.r3.u64 = str;
     sub_821F8AD0(call, base);
+}
+void refreshLabel(PPCContext& ctx, uint8_t* base, uint32_t button) {
+    const auto action = actionForButton(base, button);
+    auto text = DarkRecomp::Native::keyboardMenuLabel(action);
+    if (text.empty()) text = DarkRecomp::Native::videoSettingLabel(action);
+    replaceLabel(ctx, base, button, text);
 }
 }
 
@@ -142,10 +163,25 @@ PPC_FUNC(sub_823980A8) {
     __imp__sub_823980A8(ctx, base);
 }
 
+// CubeText retains its authored rectangle and stays outside the focus list.
+// Its original ALWAYSPAINT path clears that whole rectangle before repainting.
+extern "C" PPC_FUNC(__imp__sub_8239A4E8);
+PPC_FUNC(sub_8239A4E8) {
+    const auto window = ctx.r3.u32;
+    if (PPC_LOAD_U32(window) == 0x82074100 &&
+        byteString(base, window + 168) == "DARKRECOMP_KEYBOARD_STATUS") {
+        replaceLabel(ctx, base, window,
+            DarkRecomp::Native::keyboardMenuLabel("darkrecomp.keyboard.status"));
+    }
+    __imp__sub_8239A4E8(ctx, base);
+}
+
 // Original pressed callback covers both confirm and mouse activation.
 extern "C" PPC_FUNC(__imp__sub_823981D8);
 PPC_FUNC(sub_823981D8) {
-    if (DarkRecomp::Native::changeVideoSetting(actionForButton(base, ctx.r3.u32), 1)) {
+    const auto action = actionForButton(base, ctx.r3.u32);
+    if (DarkRecomp::Native::activateKeyboardMenu(ctx, base, ctx.r3.u32, action) ||
+        DarkRecomp::Native::activateNativeMenuAction(action) || DarkRecomp::Native::changeVideoSetting(action, 1)) {
         ctx.r3.u64 = 1;
         return;
     }
@@ -157,10 +193,13 @@ PPC_FUNC(sub_8239ECD8) {
     const uint32_t button = ctx.r3.u32, message = ctx.r4.u32;
     if (PPC_LOAD_U32(message) == 3 && (PPC_LOAD_U32(button + 84) & 9) == 1) {
         const auto key = PPC_LOAD_U32(message + 8);
-        if (!(key & 0x8000) && ((key & 511) == 226 || (key & 511) == 227) &&
-            DarkRecomp::Native::changeVideoSetting(actionForButton(base, button), (key & 511) == 226 ? -1 : 1)) {
-            ctx.r3.u64 = 1;
-            return;
+        if (!(key & 0x8000) && ((key & 511) == 226 || (key & 511) == 227)) {
+            const auto action = actionForButton(base, button);
+            if (action == "darkrecomp.keybindings" || action == "darkrecomp.exit" ||
+                DarkRecomp::Native::changeVideoSetting(action, (key & 511) == 226 ? -1 : 1)) {
+                ctx.r3.u64 = 1;
+                return;
+            }
         }
     }
     __imp__sub_8239ECD8(ctx, base);

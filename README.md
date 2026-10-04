@@ -9,7 +9,8 @@ renderer — no emulation at runtime.
 > (step 1 below).
 
 Playable today: full gameplay, mouse look + controller input, video settings
-(resolution, FOV, gamma, bloom, frame cap, VSync), XMA audio, and saves.
+(resolution, FOV, original Xbox gamma calibration, bloom, frame cap, VSync,
+16x texture filtering), keyboard remapping, cursor menu selection, XMA audio, and saves.
 
 ## Download and play
 
@@ -34,7 +35,10 @@ The port decodes `default.xex` in memory at startup; `_uncrypted.xex` and
 Click the game window to capture the mouse. **F1** shows controls, **F2** toggles
 capture, and **Esc** releases it. Graphics options are in **Options > Video Settings**
 and in the video settings launcher. Both use the same saved settings.
-The mouse wheel selects dialogue and menu choices; **E** confirms.
+Click menu choices to select them; the mouse wheel also changes choices and **E** confirms.
+Use **Options > Controls > Keyboard bindings** to remap gameplay keys.
+The four-page game menu supports primary/secondary keys, clear, defaults, and Save/Cancel.
+**Exit Game** in the pause or main menu closes the game after confirmation.
 Press **F5** to open developer tools for mission selection, player speed,
 and invincibility. Mission loading can autosave; see
 [CONTROLS.md](CONTROLS.md#developer-tools) before selecting a destination.
@@ -45,10 +49,16 @@ and the full input guide.
 
 ## Steam Deck and Linux
 
-The complete Windows release can be used for a Proton test setup. Steam Deck
-gameplay and Linux compatibility have not been verified for this release.
-See [STEAM_DECK.md](STEAM_DECK.md) for the Steam shortcut, bundled dependencies,
-controller setup, and diagnostic logs. A native Linux build is not available.
+The Windows build can run through Proton on Linux. The current source includes
+`Launch.sh` for UMU and file I/O compatibility fixes tested with GE-Proton11-7
+in Ubuntu 24.04 under WSL2. The opening level renders with audio and creates
+checkpoint saves; memory, file I/O and save-storage tests pass. Steam Deck
+gameplay and performance remain unverified.
+See [STEAM_DECK.md](STEAM_DECK.md) for the tested setup, Steam shortcut,
+dependencies and diagnostic logs. A native Linux build is not available.
+For automatic setup from Windows with Ubuntu in WSL2, double-click
+**SetupLinux.cmd**, then **PlayLinux.cmd**. The installer copies the game to
+Linux storage and preserves that copy's saves and settings on later updates.
 
 ## Other games and title updates
 
@@ -57,7 +67,7 @@ integration for its supported Xbox 360 revision. It cannot load another Xbox
 game by replacing the files or changing a hash. Supporting a different title
 requires its own translation configuration, runtime integration, renderer,
 and testing; the upstream XenonRecomp toolchain is a starting point for that
-work. The pinned hashes below also apply to The Darkness title updates: an
+work. The automatic revision check also applies to The Darkness title updates: an
 updated executable needs a separate verified translation before it can be used.
 
 ## Preparing the game files
@@ -69,32 +79,11 @@ decoded image against the AOT build's SHA-256 hashes before executing game code.
 The source generator also reads the original `default.xex` directly.
 Existing prepared files may be left in the folder; they are not read.
 
-### Checking the supported game revision
-
-For builds with original-file loading, run this in your **Darkness** folder:
-
-```powershell
-Get-FileHash .\default.xex -Algorithm SHA256 | Format-List
-```
-
-The supported original file's SHA-256 is (case does not matter):
-
-```text
-default.xex  aace35a8f9bcdc7f28aeab9ff8cf3bdf200353f5c83705f6284487347acb3c5f
-```
-
-Direct decoding reproduces the previous memory image exactly (SHA-256
-`180b7fc8f57462f6bac3404ecab061a8d79914c7a3e9a12c238bd3449e72d049`).
-The tested XEX metadata reports Title ID `545407EE`, Media ID
-`0F213645`, version `0.0.0.1`, and **All Regions**. That does not establish
-compatibility with every USA/Canadian/international disc revision; the generated
-hash is the decisive check for this revision.
-
-If the hash differs, report the hash and your disc revision. Do not post game files.
-If the game closes after launch, also attach the newest
-`build_native/run/desktop-*/runtime.log`. A different result can indicate a
-different revision or a modified dump. Previously published releases may still
-require prepared files; use a build containing the original-file loader.
+The game checks the supported revision automatically at launch; no manual hash
+check is needed. If it reports `default.xex differs from the supported AOT revision`,
+your dump uses a different revision or a modified executable. Include your disc
+revision and the newest `build_native/run/desktop-*/runtime.log` when reporting
+the problem. Do not post game files.
 
 ## Build from source
 
@@ -150,7 +139,7 @@ toggle capture, **Esc** release).
 
 - [CONTROLS.md](CONTROLS.md) — every binding, launcher option, and setting
 - [RENDERING.md](RENDERING.md) — how the renderer and frame pacing work
-- [STEAM_DECK.md](STEAM_DECK.md) — unverified Proton setup and diagnostics
+- [STEAM_DECK.md](STEAM_DECK.md) — Proton setup, validation scope and diagnostics
 
 ## Updating a downloaded release
 

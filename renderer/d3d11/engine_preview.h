@@ -1,5 +1,6 @@
 #pragma once
 #include "renderer/engine/simple_mesh.h"
+#include "renderer/engine/display_gamma.h"
 #include "world_renderer.h"
 #include <d3d11.h>
 #include <dxgi.h>
@@ -22,6 +23,14 @@ class EnginePreviewD3D11 {
     Ptr<ID3D11VertexShader> presentationVs_;
     Ptr<ID3D11PixelShader> presentationPs_, antialiasingPs_;
     Ptr<ID3D11Buffer> presentationConstants_;
+    Ptr<ID3D11Buffer> displayGammaBuffer_;
+    Ptr<ID3D11ShaderResourceView> displayGammaView_, calibratedSource_;
+    Ptr<ID3D11Texture2D> calibrated_,calibratedStaging_;
+    Ptr<ID3D11RenderTargetView> calibratedTarget_;
+    Ptr<ID3D11PixelShader> displayGammaPs_;
+    std::shared_ptr<const Native::DisplayGamma> displayGamma_;
+    bool highPrecisionDisplay_=false,calibrationDirty_=true;
+    void updateCalibratedImage();
     Ptr<ID3D11VertexShader> vs_;
     Ptr<ID3D11PixelShader> ps_, videoPs_, colorPs_;
     Ptr<ID3D11InputLayout> layout_;
@@ -52,7 +61,14 @@ class EnginePreviewD3D11 {
 public:
     // Output dimensions are physical pixels; scale applies to guest world commands.
     EnginePreviewD3D11(ID3D11Device*, ID3D11DeviceContext*, IDXGISwapChain*,
-                       uint32_t renderWidth = 0, uint32_t renderHeight = 0, uint32_t scale = 1);
+                       uint32_t renderWidth = 0, uint32_t renderHeight = 0, uint32_t scale = 1,
+                       bool highPrecisionDisplay = false);
+    // Window-thread-only, after the last part of a frame. Logical guest extents
+    // must stay fixed; all old targets remain usable if preparing a resize fails.
+    bool resizeRenderTarget(uint32_t width,uint32_t height,uint32_t scale);
+    uint32_t renderWidth() const {return width_;}
+    uint32_t renderHeight() const {return height_;}
+    uint32_t renderScale() const {return world_->renderScale();}
     void releaseDisplayTarget();
     void render(const std::vector<SimpleMesh>& meshes,Native::PreviewFramePart part={});
     void copyToDisplay();

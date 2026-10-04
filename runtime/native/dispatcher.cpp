@@ -1,4 +1,5 @@
 #include "runtime.h"
+#include "dispatcher_image_span.h"
 #include "renderer/engine/engine_performance.h"
 #include "ppc_recomp_shared.h"
 #include <algorithm>
@@ -24,20 +25,67 @@ void observeWaitResume(std::unique_lock<std::mutex>& lock) {
     }
 }
 
-bool span(uint8_t* base, uint32_t address, uint32_t bytes, bool writable = false) {
+SIZE_T querySpanRegion(uint8_t* base, uint8_t* cursor, uint32_t requestedBytes,
+                      PMEMORY_BASIC_INFORMATION info) {
+    if (!profileEngineCpu) return VirtualQuery(cursor, info, sizeof(*info));
+    const auto result = engineProfileVirtualQuery(EnginePhase::queryDispatcher, cursor, info, sizeof(*info));
+    // Reuse the actual validation result. Sample startup and a bounded set of
+    // later queries so large private/mapped host regions can be attributed
+    // without changing permissions, performing another query, or caching.
+    static std::atomic<uint64_t> sequence{};
+    const auto sample = sequence.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (sample <= 8 || (sample % 1024 == 0 && sample / 1024 <= 88)) {
+        const auto guestAddress = [&](const void* pointer) {
+            const auto value = reinterpret_cast<uintptr_t>(pointer);
+            const auto origin = reinterpret_cast<uintptr_t>(base);
+            return value >= origin && value - origin < PPC_MEMORY_SIZE ? uint64_t(value - origin) : UINT64_MAX;
+        };
+        std::fprintf(stderr, "[DispatcherRegion] sequence=%llu tickMs=%llu tid=%lu guest=0x%08llX host=%p requestBytes=%u resultBytes=%llu regionHost=%p regionGuest=0x%llX regionBytes=%llu allocationHost=%p allocationGuest=0x%llX state=0x%lX protect=0x%lX type=0x%lX\n",
+            sample, GetTickCount64(), GetCurrentThreadId(), guestAddress(cursor), cursor, requestedBytes,
+            uint64_t(result), info->BaseAddress, guestAddress(info->BaseAddress), uint64_t(info->RegionSize),
+            info->AllocationBase, guestAddress(info->AllocationBase), info->State, info->Protect, info->Type);
+    }
+    return result;
+}
+bool span(uint8_t* base, uint32_t address, uint32_t bytes, bool writable = false,
+          uint8_t** checkedRegionEnd = nullptr) {
     if (!base || !address || !bytes || uint64_t(address) + bytes > PPC_MEMORY_SIZE) return false;
+    const auto image = dispatcherImageSpan(base, address, bytes, writable,
+        [](PSAPI_WORKING_SET_EX_INFORMATION* pages, DWORD size) {
+            if (!profileEngineCpu) return K32QueryWorkingSetEx(GetCurrentProcess(), pages, size);
+            EngineCpuScope scope(EnginePhase::queryDispatcherWorkingSet);
+            return K32QueryWorkingSetEx(GetCurrentProcess(), pages, size);
+        });
+    if (profileEngineCpu && image.pages) {
+        dispatcherWorkingSetPages.fetch_add(image.pages, std::memory_order_relaxed);
+        if (image.status == DispatcherImageSpanStatus::accepted)
+            dispatcherWorkingSetAccepted.fetch_add(1, std::memory_order_relaxed);
+        else if (image.status == DispatcherImageSpanStatus::denied)
+            dispatcherWorkingSetDenied.fetch_add(1, std::memory_order_relaxed);
+        else if (image.apiFailure)
+            dispatcherWorkingSetApiFallback.fetch_add(1, std::memory_order_relaxed);
+        else if (image.nonresident)
+            dispatcherWorkingSetNonresidentFallback.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (image.status == DispatcherImageSpanStatus::accepted) {
+        if (checkedRegionEnd) *checkedRegionEnd = image.checkedEnd;
+        return true;
+    }
+    if (image.status == DispatcherImageSpanStatus::denied) return false;
     auto* cursor = base + address;
     auto* end = cursor + bytes;
     while (cursor < end) {
         MEMORY_BASIC_INFORMATION info{};
-        if (!engineProfileVirtualQuery(EnginePhase::queryDispatcher, cursor, &info, sizeof(info)) || info.State != MEM_COMMIT ||
+        if (!querySpanRegion(base, cursor, bytes, &info) || info.State != MEM_COMMIT ||
             (info.Protect & (PAGE_GUARD | PAGE_NOACCESS))) return false;
         DWORD protection = info.Protect & 0xff;
         bool canWrite = protection == PAGE_READWRITE || protection == PAGE_WRITECOPY ||
                         protection == PAGE_EXECUTE_READWRITE || protection == PAGE_EXECUTE_WRITECOPY;
         if (writable ? !canWrite : (!canWrite && protection != PAGE_READONLY &&
                                                protection != PAGE_EXECUTE_READ)) return false;
-        cursor = (std::min)(end, static_cast<uint8_t*>(info.BaseAddress) + info.RegionSize);
+        auto* regionEnd = static_cast<uint8_t*>(info.BaseAddress) + info.RegionSize;
+        if (checkedRegionEnd) *checkedRegionEnd = regionEnd;
+        cursor = (std::min)(end, regionEnd);
     }
     return true;
 }
@@ -51,11 +99,17 @@ void write32(uint8_t* base, uint32_t address, uint32_t value) {
     memcpy(base + address, &value, 4);
 }
 bool validObject(uint8_t* base, uint32_t address) {
-    if ((address & 3) || !span(base, address, 16, true)) return false;
+    uint8_t* checkedRegionEnd = nullptr;
+    if ((address & 3) || !span(base, address, 16, true, &checkedRegionEnd)) return false;
     uint8_t type = base[address]; // Original PPC initializes Type with stb, not stw.
     uint32_t state = read32(base, address + 4);
     if (type == 0 || type == 1) return state <= 1;
-    if (type != 5 || !span(base, address, 20, true)) return false;
+    if (type != 5 || uint64_t(address) + 20 > PPC_MEMORY_SIZE) return false;
+    // The header query already proves the remainder of its writable region.
+    // Query an uncovered semaphore tail only; no information survives this
+    // validation or bypasses the next operation's fresh permission check.
+    if (base + uint64_t(address) + 20 > checkedRegionEnd &&
+        !span(base, address + 16, 4, true)) return false;
     int32_t limit = int32_t(read32(base, address + 16));
     return limit > 0 && state <= uint32_t(limit);
 }

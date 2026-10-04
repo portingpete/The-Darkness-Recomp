@@ -4,13 +4,21 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <limits>
 #include <stdexcept>
+#include <string>
 
 using namespace DarkRecomp;
 using namespace DarkRecomp::Native;
 static void check(bool ok, const char* why) { if (!ok) throw std::runtime_error(why); }
 static bool approximatelyEqual(double a, double b) { return std::abs(a - b) < 0.00002; }
+static std::string fileBytes(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    check(input.good(), "cannot read isolated settings fixture");
+    return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+}
 int main() {
     const auto path = std::filesystem::temp_directory_path() /
         (L"DarkRecomp-display-test-" + std::to_wstring(GetCurrentProcessId()) + L".ini");
@@ -67,27 +75,59 @@ int main() {
             check(loadGraphicsSettings(path) == aaOff, "invalid antialiasing did not fall back independently");
         }
         check(saveDisplaySettings(path, 93.125f, custom), "restore FXAA after invalid values");
-        for (unsigned gamma : {50u, 85u, 100u, 150u}) {
-            auto selected = custom; selected.gammaPercent = gamma;
+        check(GraphicsSettings{}.anisotropyLevels == 16, "new settings must default to 16x anisotropic filtering");
+        for (unsigned levels : {1u, 2u, 4u, 8u, 16u}) {
+            auto selected = custom; selected.anisotropyLevels = levels;
+            check(setGraphicsSettings(selected) && graphicsSettings() == selected,
+                  "anisotropic filtering packing changed another preference");
             check(saveDisplaySettings(path, 93.125f, selected) && loadGraphicsSettings(path) == selected,
-                  "gamma did not persist independently");
+                  "anisotropic filtering selection did not persist");
         }
-        WritePrivateProfileStringW(L"Display", L"GammaPercent", nullptr, path.c_str());
-        check(loadGraphicsSettings(path) == custom, "legacy settings must default gamma to neutral");
+        check(WritePrivateProfileStringW(L"Display", L"AnisotropyLevels", nullptr, path.c_str()),
+              "remove anisotropy for legacy settings");
+        check(loadGraphicsSettings(path) == custom, "legacy settings must default anisotropic filtering to 16x");
+        for (const auto bad : {L"0", L"3", L"15", L"17", L"-1", L"16x", L"42949672960"}) {
+            WritePrivateProfileStringW(L"Display", L"AnisotropyLevels", bad, path.c_str());
+            check(loadGraphicsSettings(path) == custom, "invalid anisotropic filtering changed another preference");
+        }
+        check(saveDisplaySettings(path, 93.125f, custom), "restore anisotropic filtering");
+        for (unsigned levels : {0u, 3u, 15u, 17u, 32u}) {
+            auto invalid = custom; invalid.anisotropyLevels = levels;
+            check(!setGraphicsSettings(invalid) && graphicsSettings() == custom &&
+                  !saveDisplaySettings(path, 90, invalid) && loadGraphicsSettings(path) == custom,
+                  "invalid anisotropic filtering partially applied settings");
+        }
+        // The retired native power curve has no mapping to the original
+        // profile's gamma calibration. Loading ignores its key without
+        // rewriting the file; unrelated saves preserve the inert value.
+        wchar_t legacyGamma[32]{};
+        GetPrivateProfileStringW(L"Display", L"GammaPercent", L"missing", legacyGamma, 32, path.c_str());
+        check(std::wstring_view(legacyGamma) == L"missing", "fresh settings created a retired gamma key");
+        for (unsigned gamma = 50; gamma <= 150; ++gamma) {
+            const auto text = std::to_wstring(gamma);
+            check(WritePrivateProfileStringW(L"Display", L"GammaPercent", text.c_str(), path.c_str()), "seed legacy gamma");
+            WritePrivateProfileStringW(nullptr, nullptr, nullptr, path.c_str());
+            const auto beforeLoad = fileBytes(path);
+            check(loadGraphicsSettings(path) == custom && loadFieldOfView(path) == 93.125f,
+                  "retired gamma changed graphics settings or FOV");
+            check(fileBytes(path) == beforeLoad, "loading retired gamma rewrote the settings file");
+            check(saveDisplaySettings(path, 93.125f, custom), "save settings with inert legacy gamma");
+            GetPrivateProfileStringW(L"Display", L"GammaPercent", L"missing", legacyGamma, 32, path.c_str());
+            check(std::wstring_view(legacyGamma) == text, "saving settings replaced the inert legacy gamma value");
+        }
         for (const auto bad : {L"49", L"151", L"-1", L"nan", L"1.00", L"42949672960"}) {
-            WritePrivateProfileStringW(L"Display", L"GammaPercent", bad, path.c_str());
-            check(loadGraphicsSettings(path) == custom, "invalid gamma did not fall back independently");
+            check(WritePrivateProfileStringW(L"Display", L"GammaPercent", bad, path.c_str()), "seed malformed retired gamma");
+            WritePrivateProfileStringW(nullptr, nullptr, nullptr, path.c_str());
+            const auto beforeLoad = fileBytes(path);
+            check(loadGraphicsSettings(path) == custom && fileBytes(path) == beforeLoad,
+                  "malformed retired gamma changed settings or rewrote the file");
         }
-        check(saveDisplaySettings(path, 93.125f, custom), "restore gamma after invalid values");
-        auto badGamma = custom; badGamma.gammaPercent = 0;
-        check(!saveDisplaySettings(path, 90, badGamma) && loadGraphicsSettings(path) == custom && loadFieldOfView(path)==93.125f,
-              "invalid gamma save changed existing preferences");
         for (unsigned brightness : {50u, 95u, 100u, 125u, 200u}) {
-            auto selected = custom; selected.gammaPercent = 85; selected.brightnessPercent = brightness;
+            auto selected = custom; selected.brightnessPercent = brightness;
             check(saveDisplaySettings(path, 93.125f, selected) && loadGraphicsSettings(path) == selected,
-                  "brightness did not persist independently of gamma and other settings");
+                  "brightness did not persist independently of other settings");
         }
-        auto legacyBrightness = custom; legacyBrightness.gammaPercent = 85;
+        const auto legacyBrightness = custom;
         WritePrivateProfileStringW(L"Display", L"BrightnessPercent", nullptr, path.c_str());
         check(loadGraphicsSettings(path) == legacyBrightness, "legacy settings must default brightness to neutral");
         for (const auto bad : {L"49", L"201", L"-1", L"nan", L"100%", L"1.00", L"42949672960"}) {

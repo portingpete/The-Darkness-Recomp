@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cstdint>
 #include <mutex>
+#include "keyboard_bindings.h"
 
 namespace DarkRecomp::Native {
 class Memory;
@@ -37,6 +38,12 @@ struct MouseLookDelta {
     uint64_t epoch = 0;
 };
 
+struct MenuCursorSnapshot {
+    int x = 0, y = 0;
+    bool valid = false, leftDown = false;
+    uint64_t movement = 0, presses = 0, epoch = 0;
+};
+
 // Buttons, keyboard movement and physical controllers use the XAM ABI.
 // Relative mouse look is consumed separately at the gameplay look boundary.
 // No guest input structures are cast to Windows structs: every multi-byte
@@ -49,13 +56,21 @@ public:
     NativeInput& operator=(const NativeInput&) = delete;
     void attachWindow(HWND window);
     void setSettingsOpen(bool open);
-    void windowMessage(HWND window, UINT message, WPARAM key, LPARAM detail);
+    // True when native menu capture consumes a keyboard edge before shortcuts.
+    bool windowMessage(HWND window, UINT message, WPARAM key, LPARAM detail);
     void setMouseLookEnabled(bool enabled);
     bool mouseLookEnabled();
     // The original client owns dialogue/menu focus independently of capture.
     // Before its first signal, released capture permits startup menu input.
     void setGuestMenuActive(bool active);
     bool setMouseSensitivity(float sensitivity);
+    KeyboardBindings keyboardBindings();
+    bool setKeyboardBindings(const KeyboardBindings& bindings);
+    void suppressMenuActivationKeys();
+    MenuCursorSnapshot menuCursor();
+    // Before the original client first reports its GUI, startup menus use the
+    // observed root. Afterwards an inactive GUI proves gameplay ownership.
+    bool guestMenuAllowsPointer();
     void mouseMotion(LONG dx, LONG dy);
     MouseLookDelta consumeMouseLook();
     DWORD getState(Memory& owner, uint32_t user, uint32_t flags, uint32_t output);
@@ -74,6 +89,7 @@ private:
         bool rumbling = false;
     };
     void clearKeysLocked();
+    void suppressMenuActivationKeysLocked();
     void stopVibrationLocked();
     XINPUT_GAMEPAD keyboardLocked();
     void clearMouseLocked();
@@ -100,10 +116,13 @@ private:
     WORD wheelButton_ = 0;
     ULONGLONG wheelNext_ = 0;
     std::array<bool, 256> keys_{};
+    std::array<bool, 256> capturedKeys_{};
+    KeyboardBindings bindings_ = defaultKeyboardBindings();
     uint32_t heldKeys_ = 0;
     bool keyboardMouseEvent_ = false;
     int lastMenuX_ = 0, lastMenuY_ = 0;
     bool haveMenuPos_ = false;
+    uint64_t menuMovement_ = 0, menuPresses_ = 0, menuEpoch_ = 0;
     std::array<Slot, XUSER_MAX_COUNT> slots_{};
     InputCounters counters_{};
     std::atomic<PromptInputSource> promptSource_{PromptInputSource::KeyboardMouse};

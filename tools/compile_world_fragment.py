@@ -27,6 +27,8 @@ ASSETS = {
     'System/Gl/ARB_fragment_program/CMWnd_ModTexture_PaintVideo_YUV2RGB.fp': '8581b0740ce479b1352ee0ef4221f938d0cea158a9a6e8270223799b6303452a',
     'System/Gl/ARB_fragment_program/WClientMod_DV5_0.fp': '0b44b474d46f01228f657175c2b817b6f7246ed65a6bfe4fb99af963b7201647',
     'System/Gl/ARB_fragment_program/WClientMod_DV5_1.fp': 'a99c1ce457f9d493975a9d05fffa3b138d714a1ffed6d78df18d97b69e2bdc9c',
+    'System/Gl/ARB_fragment_program/WClientMod_OW1_1.fp': '9aa4636614ffc617af5dde4593d5497ca1afda9cba51440f750f85abfa25c6e8',
+    'System/Gl/ARB_fragment_program/WClientMod_OW1_2.fp': 'c84708bb8d05d09b5746d07ba94e3ef62501b1e2294dc5259266afccdd9befea',
     'System/Gl/ARB_fragment_program/XRShader_FP20_NDS.fp': '4d756e598bbb515c443e5175dbd4cf6967ccff1682dbbb398bc0a00f94e698b5',
     'System/Gl/ARB_fragment_program/VBOp_Fresnel.fp': 'c2eed837a9c13166970d8b03bda9a942a5e009610e7e9c135b52ae374c2361ea',
     'System/Gl/ARB_fragment_program/XRShader_FP20_LF.fp': '0113cb0529fc2eb5c0efe170c0d6ea6ee715a8b1060423e6939badda455b9b43',
@@ -59,6 +61,7 @@ ASSETS = {
 LANES = str.maketrans('rgba', 'xyzw')
 VARIANTS = {'XRShader_FP20_NDSP': [0], 'XRShader_FP20_NDS': [0], 'XRShader_MotionMap': [0], 'GUIFadeToWhite': [0],
             'WClientMod_DV5_0': [0, 1, 2], 'WClientMod_DV5_1': [0, 1, 2],
+            'WClientMod_OW1_1': [0], 'WClientMod_OW1_2': [0],
             'XRShader_FP20_LF': [0, 1], 'XRShader_FP20_NDSEATP': list(range(32)),
             'VBOp_GenEnv2': [0, 1], 'VBOp_Fresnel': [0],
             'XREngine_GaussClamped': [0], 'XREngine_RadialBlur': [0], 'XREngine_RadialBlurHurt': [0],
@@ -126,7 +129,9 @@ def select_template(source, flags, includes=None):
     return '\n'.join(emit(nodes))
 
 
-def compile_source(source):
+def compile_source(source, logical_lookup_slot=None):
+    if logical_lookup_slot not in (None, 1, 2):
+        raise ValueError('Unsupported color lookup slot')
     # Original Xenon preprocessing822441E8 installs precision aliases.
     source = re.sub(r'@TEMP16\b', 'TEMP', source)
     source = re.sub(r'@PARAM16\b', 'PARAM', source)
@@ -159,6 +164,7 @@ def compile_source(source):
         raise ValueError('Unterminated condition')
     declarations, body, textures, symbols = [], [], {}, set()
     uses_pcf4x4 = False
+    uses_color_lookup = False
     output = None
 
     def operand(value):
@@ -256,6 +262,11 @@ def compile_source(source):
                     # The original projected fetch divides the interpolated
                     # coordinates by Q, after applying any source swizzle.
                     coordinates = f'({coordinates} / {operand(args[0])}.w)'
+                if slot == logical_lookup_slot:
+                    if op != 'TEX' or dimension != '2D':
+                        raise ValueError('Unsupported color lookup fetch')
+                    uses_color_lookup = True
+                    coordinates = f'nativeColorLookupUv({coordinates}, {slot})'
                 expr = f'(texture{slot}.Sample(sampler{slot}, {coordinates}) * sampleScale[{slot}])'
         elif op == 'SWZ':
             if len(args) != 5:
@@ -301,6 +312,25 @@ def compile_source(source):
     source = 'cbuffer FragmentConstants : register(b0) { float4 env[256]; }\ncbuffer TextureScales : register(b1) { float4 sampleScale[16]; }\n'
     for slot, dimension in sorted(textures.items()):
         source += f'Texture{"Cube" if dimension == "CUBE" else "2D"}<float4> texture{slot} : register(t{slot});\nSamplerState sampler{slot} : register(s{slot});\n'
+    if uses_color_lookup:
+        # Resolved color cubes retain logical 324x18 texels as scale-by-scale
+        # blocks. Sample across the block boundary with the logical bilinear
+        # weight; the host enables this only for a recognized original lookup.
+        # Returning uv directly preserves every ordinary binding exactly.
+        source += '''cbuffer NativeColorLookup : register(b3) {
+    float inverseLookupScale;
+    uint logicalLookupMask;
+    uint2 lookupPadding;
+}
+float2 nativeColorLookupUv(float2 uv, uint slot) {
+    if ((logicalLookupMask & (1u << slot)) == 0) return uv;
+    float2 logicalSize = float2(324.0, 18.0);
+    float2 p = uv * logicalSize - 0.5;
+    float2 i = floor(p);
+    float2 f = frac(p);
+    return (i + 1.0 + (f - 0.5) * inverseLookupScale) / logicalSize;
+}
+'''
     if uses_pcf4x4:
         # The guest's four-by-four taps are spaced in logical shadow texels.
         # env[9] retains that pitch while the native depth map grows by 2x/3x.
@@ -323,6 +353,15 @@ def compile_source(source):
     source += 'struct Fragment { float4 position : SV_Position; float4 tex[8] : TEXCOORD0; float4 color : COLOR0; };\n'
     source += 'float4 pixelMain(Fragment input) : SV_Target {\n' + '\n'.join(declarations + body) + f'\nreturn {output};\n}}\n'
     return source, {'textures': textures, 'instruction_count': len(body), 'conditions': {'dynmip': False, 'support_normalize': False, 'platform_pc': False, 'xenon': True}}
+
+
+def compile_template(source, name, flags, includes=None):
+    # These named original permutations interpret the texture as a color cube.
+    # Other CCFuser permutations copy/lerp spatial pixels; other Final5 flags
+    # have no lookup at all. Keep their generated HLSL byte-for-byte unchanged.
+    lookup_slot = (1 if name == 'XREngine_CCFuser' and flags == 2 else
+                   2 if name == 'XREngine_Final5' and flags & 4 else None)
+    return compile_source(select_template(source, flags, includes), lookup_slot)
 
 
 def compile_fixed(source):
@@ -367,8 +406,8 @@ def main():
         if name.startswith('MRenderXenon_Attrib_'):
             shader, manifest = compile_fixed(sources[f'System/Xenon/FragmentProgram/{name}.fp'])
         else:
-            shader, manifest = compile_source(select_template(sources[f'System/Gl/ARB_fragment_program/{name}.fp'], flags,
-                {Path(p).name: text for p, text in sources.items() if p.endswith('.fph')}))
+            shader, manifest = compile_template(sources[f'System/Gl/ARB_fragment_program/{name}.fp'], name, flags,
+                {Path(p).name: text for p, text in sources.items() if p.endswith('.fph')})
         key = name if flags == 0 else f'{name}_{flags}'
         (args.output_dir / f'{key}.native.hlsl').write_text(shader, encoding='utf-8', newline='\n')
         header += f'inline constexpr char {key}Source[] = R"DARKFP({shader})DARKFP";\n'

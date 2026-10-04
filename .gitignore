@@ -78,6 +78,9 @@ task/
 queue-pacing-*/
 find-fix-*/
 find-fix-path-buffers/
+framerate-stability-*/
+LaunchBeforeColorGradingFix.cmd
+LaunchXboxReference.cmd
 
 # --- Regenerable dev artifacts (rebuild with tools/build_atlas.py) ---
 tools/code_atlas.json

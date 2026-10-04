@@ -2,6 +2,8 @@
 #include "renderer/engine/world_mesh.h"
 #include "transient_geometry_buffers.h"
 #include "descriptor_cache.h"
+#include "world_vertex_metadata.h"
+#include "world_constant_ranges.h"
 #include <d3d11.h>
 #include <d3dcompiler.h>
 #include <wrl/client.h>
@@ -18,16 +20,26 @@ class WorldVertexShaderD3D11 {
     Ptr<ID3D11InputLayout> layout_;
     Ptr<ID3D11Buffer> constants_, references_;
     std::optional<Native::WorldVertexConstants> uploadedConstants_;
+    WorldConstantRanges constantRanges_=WorldConstantRanges::full();
+    bool vectorsUploaded_=false,referencesUploaded_=false;
+    uint64_t constantUploadCount_=0,constantCompareCalls_=0,constantCompareReadBytes_=0;
+    uint64_t constantPlansBuilt_=0,referenceUploadCount_=0;
 public:
     WorldVertexShaderD3D11(ID3D11Device*,const Native::WorldVertexOptions&,bool rasterize=false);
-    bool bind(ID3D11DeviceContext*,const Native::WorldVertexConstants&,const std::vector<Native::WorldVertex>&,
+    bool bind(ID3D11DeviceContext*,const Native::WorldVertexConstants&,std::span<const Native::WorldVertex>,
               const std::array<std::array<float,2>,8>* indexBounds=nullptr,bool alreadyBound=false);
     ID3DBlob* bytecode() const {return code_.Get();}
+    uint64_t constantUploadCount() const {return constantUploadCount_;}
+    uint64_t constantCompareCalls() const {return constantCompareCalls_;}
+    uint64_t constantCompareReadBytes() const {return constantCompareReadBytes_;}
+    uint64_t constantPlansBuilt() const {return constantPlansBuilt_;}
+    uint64_t referenceUploadCount() const {return referenceUploadCount_;}
 };
 // Compatible views of completed engine storage share retained contents, even
 // when their transient surface objects differ. Resolved textures remain owned
 // by the engine's destination textures for later composition/presentation.
 class WorldRendererD3D11 {
+    friend class EnginePreviewD3D11;
     template<class T> using Ptr=Microsoft::WRL::ComPtr<T>;
     struct StringHash {
         using is_transparent=void;
@@ -40,11 +52,10 @@ class WorldRendererD3D11 {
     template<class T> using StringCache=std::unordered_map<std::string,T,StringHash,StringEqual>;
     Ptr<ID3D11Device> device_;
     Ptr<ID3D11DeviceContext> context_;
-    const uint32_t scale_;
+    uint32_t scale_;
     TransientGeometryBuffers transientBuffers_;
-    struct Geometry {std::shared_ptr<const Native::StoredGeometry> source; std::vector<Native::WorldVertex> vertices; Ptr<ID3D11Buffer> buffer; uint64_t used=0;UINT transientCapacity=0;
-        std::array<std::array<float,2>,8> indexBounds{};
-        size_t bytes() const {return transientCapacity?transientCapacity:vertices.size()*sizeof(Native::WorldVertex);}};
+    struct Geometry {std::shared_ptr<const Native::StoredGeometry> source; WorldVertexMetadata metadata; Ptr<ID3D11Buffer> buffer; uint64_t used=0;UINT transientCapacity=0;
+        size_t bytes() const {return transientCapacity?transientCapacity:size_t(metadata.count)*sizeof(Native::WorldVertex);}};
     struct Indices {std::shared_ptr<const Native::StoredGeometry> source; Ptr<ID3D11Buffer> buffer; uint64_t used=0;uint16_t maximum=0;UINT transientCapacity=0;
         size_t bytes() const {return transientCapacity?transientCapacity:source->indices.size()*sizeof(uint16_t);}};
     // Guest dimensions and ownership stay logical; only GPU storage is scaled.
@@ -126,12 +137,22 @@ class WorldRendererD3D11 {
     size_t captureGpuBytes_=0;
     void captureShadow(const Native::WorldDraw&,unsigned command,unsigned ordinal,unsigned pass,bool after,
         const std::array<ID3D11ShaderResourceView*,16>&) noexcept;
-    void smokeEvidence(const Native::WorldDraw&,uint32_t,const std::vector<Native::WorldVertex>&,unsigned);
-    Ptr<ID3D11Buffer> fragmentConstants_,textureScales_,transferConstants_,viewportConstants_;
+    // Explicit issue42 diagnostics. Read once at construction; ordinary runs
+    // never capture or bypass these original Other World passes.
+    bool otherWorldProbe_=false,otherWorldBypass_=false;
+    unsigned otherWorldPhase_=0,otherWorldGrainDraw_=0,otherWorldCopyDraw_=0,otherWorldBypassLogs_=0;
+    uint64_t otherWorldSurface_=0,otherWorldMask_=0;
+    void captureOtherWorldTexture(ID3D11Texture2D*,unsigned command,unsigned ordinal,unsigned pass,
+        std::string_view stage,std::string_view role,uint64_t key,unsigned slot) noexcept;
+    void captureOtherWorldDraw(const Native::WorldDraw&,unsigned command,unsigned ordinal,unsigned pass,
+        bool after,bool bypassed=false) noexcept;
+    void smokeEvidence(const Native::WorldDraw&,uint32_t,unsigned);
+    Ptr<ID3D11Buffer> fragmentConstants_,textureScales_,colorLookupConstants_,transferConstants_,viewportConstants_;
     Native::EngineVector uploadedViewport_{};
     std::array<Native::EngineVector,256> uploadedFragment_{};
     std::array<Native::EngineVector,16> uploadedScales_{};
     std::array<uint8_t,16> uploadedAlpha_{};
+    std::array<uint8_t,16> uploadedColorLookup_{};
     bool viewportUploaded_=false,pixelConstantsUploaded_=false;
     bool bindingsValid_=false;
     bool pixelBuffersBound_=false;
@@ -165,12 +186,15 @@ class WorldRendererD3D11 {
     std::array<Ptr<ID3D11Query>,5> queries_;
     std::array<bool,5> queryPending_{};
     std::array<uint64_t,5> drawOrdinals_{},queryOrdinals_{};
-    struct HistogramQuery {std::shared_ptr<Native::WorldQuery> source;Ptr<ID3D11Query> query;std::vector<Ptr<ID3D11Query>> segments;};
+    struct HistogramQuery {std::shared_ptr<Native::WorldQuery> source;Ptr<ID3D11Query> query;std::vector<Ptr<ID3D11Query>> segments;uint32_t scale=1;};
     HistogramQuery activeHistogram_;
     std::vector<HistogramQuery> pendingHistograms_;
     bool pauseHistogram();
     void resumeHistogram();
     Ptr<ID3D11Buffer> alphaTestConstants_;
+    void requireResizeBoundary() const;
+    Ptr<ID3D11Texture2D> resizedTexture(ID3D11Texture2D*,uint32_t width,uint32_t height);
+    Surface resizedSurface(const Surface&,uint32_t scale);
     Surface& surface(uint64_t storageKey,uint32_t width,uint32_t height,bool depth);
     std::vector<uint8_t> readSurfaceKey(uint64_t storageKey,bool depth);
     ID3D11ShaderResourceView* image(const std::shared_ptr<const ColorImage>&);
@@ -182,6 +206,10 @@ class WorldRendererD3D11 {
     bool motionBlur_ = false;
 public:
     WorldRendererD3D11(ID3D11Device*,ID3D11DeviceContext*,uint32_t scale=1);
+    // Render-thread-only, between completed frames. Preserves retained GPU
+    // contents and pending measurements; failed allocation leaves the old scale.
+    bool setRenderScale(uint32_t scale);
+    uint32_t renderScale() const {return scale_;}
     void inspectNextFrame();
     void endFrame();
     void setDiagnostics(bool enabled) {diagnostics_=enabled;}

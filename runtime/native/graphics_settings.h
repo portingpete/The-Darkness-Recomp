@@ -12,11 +12,14 @@ struct GraphicsSettings {
     bool bloom = true;
     bool motionBlur = false;
     bool antialiasing = false; // FXAA at presentation; applies without a restart.
-    unsigned gammaPercent = 100; // 50..150; 100 is neutral, lower is darker.
     unsigned brightnessPercent = 100; // 50..200; final image intensity, 100 is neutral.
+    unsigned anisotropyLevels = 16; // 1 preserves original filtering; otherwise 2, 4, 8 or 16.
     bool operator==(const GraphicsSettings&) const = default;
 };
 bool validGraphicsSettings(const GraphicsSettings&) noexcept;
+constexpr bool validAnisotropyLevels(unsigned levels) noexcept {
+    return levels == 1 || levels == 2 || levels == 4 || levels == 8 || levels == 16;
+}
 GraphicsSettings graphicsSettings() noexcept;
 bool setGraphicsSettings(const GraphicsSettings&) noexcept;
 

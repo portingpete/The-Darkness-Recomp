@@ -1,9 +1,10 @@
 #pragma once
 // Opt-in --test-input line parser. This application's explicit own-process
 // test interface only: it maps bounded numeric key codes into the same native
-// input adapter exercised by InputContract, or F5's own window handler.
+// input adapter exercised by InputContract, or F5/F6's own window handlers.
 // No OS-wide injection, SendInput or guest-data patch. Ordinary gameplay keys
-// preserve the existing focus/controller rules; F5 uses the panel lifecycle.
+// preserve the existing focus/controller rules; F5 opens the developer panel,
+// while F6 requests the live render-resolution toggle.
 // Strict grammar: "<key>" or "<key> <holdMs>", nothing else. Bare numeric
 // lines keep historical holds (camera I/J/K/L 2000ms, other menu keys 250ms).
 // Anything malformed returns false with outputs untouched, so the caller
@@ -18,7 +19,7 @@ inline constexpr ULONGLONG kTestInputMenuHoldMs = 250;
 inline constexpr ULONGLONG kTestInputCameraHoldMs = 2000;
 inline bool isTestInputKey(unsigned key) {
     switch (key) {
-        case VK_RETURN: case VK_SPACE: case VK_ESCAPE: case VK_F5:
+        case VK_RETURN: case VK_SPACE: case VK_ESCAPE: case VK_F5: case VK_F6:
         case VK_LEFT: case VK_UP: case VK_RIGHT: case VK_DOWN:
         case VK_TAB: case VK_BACK: case VK_SHIFT: case VK_CONTROL:
         case 'W': case 'A': case 'S': case 'D':

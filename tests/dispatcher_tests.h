@@ -2,6 +2,8 @@
 #include "dispatcher_wake_tests.h"
 #include "dispatcher_timeout_tests.h"
 #include "dispatcher_wait_all_tests.h"
+#include "dispatcher_validation_tests.h"
+#include "dispatcher_image_tests.h"
 
 static uint32_t releaseSemaphoreException(PPCContext& ctx, uint8_t* base) {
     __try { __imp__KeReleaseSemaphore(ctx, base); return 0; }
@@ -11,6 +13,8 @@ static uint32_t releaseSemaphoreException(PPCContext& ctx, uint8_t* base) {
 }
 
 static void testDispatcher() {
+    testDispatcherValidation();
+    testDispatcherImageValidation();
     auto* base = memory->base();
     uint32_t scratch = memory->allocate(4096);
     check(scratch != 0, "Dispatcher fixture allocation failed");

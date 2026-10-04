@@ -22,11 +22,10 @@ using DarkRecomp::Native::GameLanguage;
 constexpr int kPlayButton = IDOK;
 constexpr int kCancelButton = IDCANCEL;
 constexpr int kClientWidth = 620;
-constexpr int kClientHeight = 610;
+constexpr int kClientHeight = 650;
 
 enum Row : size_t {
     Brightness,
-    Gamma,
     FieldOfView,
     Bloom,
     VerticalSync,
@@ -36,12 +35,13 @@ enum Row : size_t {
     MotionBlur,
     Antialiasing,
     Language,
+    TextureFiltering,
     RowCount,
 };
 
 constexpr std::array<const wchar_t*, RowCount> kRowNames{
-    L"Brightness", L"Gamma", L"Field of view", L"Bloom", L"Vertical sync",
-    L"Frame limit", L"Resolution", L"Display", L"Motion blur", L"Antialiasing", L"Language",
+    L"Brightness", L"Field of view", L"Bloom", L"Vertical sync",
+    L"Frame limit", L"Resolution", L"Display", L"Motion blur", L"Antialiasing", L"Language", L"Texture filtering",
 };
 
 struct Choice {
@@ -131,7 +131,6 @@ std::wstring savedValueLabel(Row row, double value) {
     wchar_t text[80]{};
     switch (row) {
     case Brightness: std::swprintf(text, 80, L"%u%% (saved)", unsigned(value)); break;
-    case Gamma: std::swprintf(text, 80, L"%.2f (saved)", value / 100.0); break;
     case FieldOfView: std::swprintf(text, 80, L"%.3f (saved)", value); break;
     case FrameLimit: std::swprintf(text, 80, L"%u FPS (saved)", unsigned(value)); break;
     case Resolution: std::swprintf(text, 80, L"%up (saved)", unsigned(value)); break;
@@ -160,11 +159,6 @@ void populateChoices(Launcher& launcher) {
     auto& rows = launcher.rows;
     for (unsigned value = 50; value <= 200; value += 5)
         addChoice(rows[Brightness], std::to_wstring(value) + L"%", value);
-    for (unsigned value = 50; value <= 150; value += 5) {
-        wchar_t label[16]{};
-        std::swprintf(label, 16, L"%u.%02u", value / 100, value % 100);
-        addChoice(rows[Gamma], label, value);
-    }
     addChoice(rows[FieldOfView], L"Original", 0);
     for (unsigned value = 60; value <= 120; ++value)
         addChoice(rows[FieldOfView], std::to_wstring(value), value);
@@ -183,6 +177,9 @@ void populateChoices(Launcher& launcher) {
     addChoice(rows[MotionBlur], L"On", 1);
     addChoice(rows[Antialiasing], L"Off", 0);
     addChoice(rows[Antialiasing], L"FXAA", 1);
+    addChoice(rows[TextureFiltering], L"Original", 1);
+    for (unsigned level : {2u, 4u, 8u, 16u})
+        addChoice(rows[TextureFiltering], std::to_wstring(level) + L"x anisotropic", level);
     for (const auto language : {GameLanguage::System, GameLanguage::English, GameLanguage::German,
                                GameLanguage::French, GameLanguage::Spanish, GameLanguage::Italian})
         addChoice(rows[Language], std::wstring(DarkRecomp::Native::gameLanguageDisplayName(language)),
@@ -190,7 +187,6 @@ void populateChoices(Launcher& launcher) {
 
     const auto& settings = launcher.settings;
     selectValue(launcher, Brightness, settings.brightnessPercent);
-    selectValue(launcher, Gamma, settings.gammaPercent);
     selectValue(launcher, FieldOfView, launcher.fieldOfView);
     selectValue(launcher, Bloom, settings.bloom);
     selectValue(launcher, VerticalSync, settings.verticalSync);
@@ -199,6 +195,7 @@ void populateChoices(Launcher& launcher) {
     selectValue(launcher, Display, settings.fullscreen);
     selectValue(launcher, MotionBlur, settings.motionBlur);
     selectValue(launcher, Antialiasing, settings.antialiasing);
+    selectValue(launcher, TextureFiltering, settings.anisotropyLevels);
     selectValue(launcher, Language, unsigned(launcher.language));
 }
 
@@ -215,13 +212,15 @@ void createControls(HWND window, Launcher& launcher) {
             200, y, 380, 280, 2000 + int(index));
     }
     populateChoices(launcher);
+    control(window, L"STATIC", L"Gamma calibration uses the in-game Video settings menu.",
+            0, 26, 522, 565, 20);
     control(window, L"STATIC",
             L"Settings save when you click Play. Internal resolution takes effect at startup.",
-            0, 26, 526, 565, 36);
+            0, 26, 566, 565, 36);
     control(window, L"BUTTON", L"Play", BS_DEFPUSHBUTTON | WS_TABSTOP,
-            384, 569, 95, 29, kPlayButton);
+            384, 609, 95, 29, kPlayButton);
     control(window, L"BUTTON", L"Cancel", BS_PUSHBUTTON | WS_TABSTOP,
-            485, 569, 95, 29, kCancelButton);
+            485, 609, 95, 29, kCancelButton);
 }
 
 double chosenValue(const Launcher& launcher, Row row) {
@@ -235,7 +234,6 @@ double chosenValue(const Launcher& launcher, Row row) {
 void saveAndLaunch(HWND window, Launcher& launcher) {
     GraphicsSettings settings = launcher.settings;
     settings.brightnessPercent = unsigned(chosenValue(launcher, Brightness));
-    settings.gammaPercent = unsigned(chosenValue(launcher, Gamma));
     const float fov = float(chosenValue(launcher, FieldOfView));
     settings.bloom = chosenValue(launcher, Bloom) != 0;
     settings.verticalSync = chosenValue(launcher, VerticalSync) != 0;
@@ -244,6 +242,7 @@ void saveAndLaunch(HWND window, Launcher& launcher) {
     settings.fullscreen = chosenValue(launcher, Display) != 0;
     settings.motionBlur = chosenValue(launcher, MotionBlur) != 0;
     settings.antialiasing = chosenValue(launcher, Antialiasing) != 0;
+    settings.anisotropyLevels = unsigned(chosenValue(launcher, TextureFiltering));
     const auto language = GameLanguage(unsigned(chosenValue(launcher, Language)));
 
     if (!DarkRecomp::saveDisplaySettings(launcher.settingsPath, fov, settings, language))

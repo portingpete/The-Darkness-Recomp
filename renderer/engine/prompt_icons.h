@@ -2,7 +2,9 @@
 #include "renderer/engine/prompt_origin.h"
 #include "renderer/engine/simple_mesh.h"
 #include "renderer/engine/xelu_light.generated.h"
+#include "renderer/engine/prompt_bindings.h"
 #include <atomic>
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <memory>
@@ -93,31 +95,11 @@ inline constexpr TextureRef kTextureRefs[] = {
 // 360_S/SLR/SUD serve both move (WASD) and look (mouse) and 360_C serves both
 // crouch (Ctrl) and aim (Shift) per CubeWnd rows, so they also combine.
 inline const char* keyboardLabel(Button button, Context) {
-    switch (button) {
-    case Button::A: return "E";
-    case Button::B: return "R/Esc";
-    case Button::X: return "F";
-    case Button::Y: return "Spc";
-    case Button::LB: return "Q";
-    case Button::RB: return "G";
-    case Button::LT: return "RMB";
-    case Button::RT: return "LMB";
-    case Button::LS: return "Ct";
-    case Button::RS: return "Sh/MMB";
-    case Button::Start: return "Ent";
-    case Button::Back: return "Tab";
-    case Button::DLeft: return "1/<";
-    case Button::DRight: return "2/>";
-    case Button::DUp: return "3/^";
-    case Button::DDown: return "4/v";
-    case Button::DUD: return "3/4";
-    case Button::DRL: return "1/2";
-    case Button::LeftStick: return "WASD";
-    case Button::RightStick: return "Mse";
-    case Button::MoveLook: return "WASD/Mse";
-    case Button::CrouchAim: return "Ct/Sh";
-    default: return nullptr;
-    }
+    if (size_t(button) >= BindingLabels{}.size()) return nullptr;
+    // Retain the returned C string until the caller's next label lookup.
+    thread_local std::shared_ptr<const BindingLabels> snapshot;
+    snapshot = bindingLabels();
+    return (*snapshot)[size_t(button)].c_str();
 }
 inline Context contextFromMouseLook(bool) { return Context::Menu; }
 
@@ -138,7 +120,62 @@ inline ColorImage makeKeycap(const char* label) {
         }
         return image;
     }
-    return {};
+    // User-selected keys are not limited to the shipped prompt artwork.
+    // Keep Xelu's existing keycap face and draw a small readable label for
+    // arbitrary keys; default controls retain their exact authored sprites.
+    ColorImage image = makeKeycap("?");
+    constexpr uint16_t letters[]{
+        0x7B6D,0x6BAE,0x7927,0x6B6E,0x79A7,0x79A4,0x796F,0x5BED,0x7497,
+        0x124F,0x5BAD,0x4927,0x5FED,0x5FFD,0x7B6F,0x7BA4,0x7B7B,0x7BAD,
+        0x788F,0x7492,0x5B6F,0x5B6A,0x5BFD,0x5AAD,0x5A92,0x72A7};
+    constexpr uint16_t digits[]{0x7B6F,0x2C97,0x62A7,0x628E,0x5BC9,0x798E,0x79EF,0x7249,0x7BEF,0x7BCF};
+    const auto glyph = [&](char c) -> uint16_t {
+        if (c == 'v') return 0x00AA;
+        if (c >= 'a' && c <= 'z') c = char(c - 'a' + 'A');
+        if (c >= 'A' && c <= 'Z') return letters[c - 'A'];
+        if (c >= '0' && c <= '9') return digits[c - '0'];
+        switch (c) {
+        case '<': return 0x1544; case '>': return 0x4454; case '^': return 0x2A00;
+        case '-': return 0x01C0; case '+': return 0x05D0; case '/': return 0x12A4;
+        case '\\': return 0x4429; case '.': return 0x0002; case ',': return 0x0014;
+        case '[': return 0x6926; case ']': return 0x324B; case ';': return 0x0414;
+        case '\'': return 0x2400; case '`': return 0x4400; case '*': return 0x0ABA;
+        default: return 0;
+        }
+    };
+    const auto put = [&](unsigned x, unsigned y, uint8_t value) {
+        auto* pixel = image.pixels.data() + (size_t(y) * 32 + x) * 4;
+        pixel[0] = pixel[1] = pixel[2] = value; pixel[3] = 255;
+    };
+    for (unsigned y = 4; y < 28; ++y) for (unsigned x = 4; x < 28; ++x) put(x, y, 235);
+    std::string text(label);
+    std::vector<std::string> lines;
+    size_t start = 0;
+    for (size_t i = 0; i <= text.size(); ++i)
+        if (i == text.size() || (text[i] == '/' && text.size() > 1)) {
+            if (i > start) lines.push_back(text.substr(start, i - start));
+            start = i + 1;
+        }
+    if (lines.empty()) lines.push_back(text);
+    if (lines.size() > 4 || std::any_of(lines.begin(), lines.end(), [](const auto& line) { return line.size() > 6; })) return {};
+    const unsigned scale = lines.size() <= 2 &&
+        std::all_of(lines.begin(), lines.end(), [](const auto& line) { return line.size() <= 3; }) ? 2 : 1;
+    const unsigned height = unsigned(lines.size()) * (5 * scale + 1) - 1;
+    unsigned y = (32 - height) / 2;
+    for (const auto& line : lines) {
+        const auto count = (std::min)(line.size(), size_t(6));
+        unsigned x = (32 - unsigned(count) * 4 * scale + scale) / 2;
+        for (size_t i = 0; i < count; ++i) {
+            const uint16_t bits = glyph(line[i]);
+            for (unsigned row = 0; row < 5; ++row) for (unsigned col = 0; col < 3; ++col)
+                if (bits & (1u << (14 - (row * 3 + col))))
+                    for (unsigned dy = 0; dy < scale; ++dy) for (unsigned dx = 0; dx < scale; ++dx)
+                        put(x + col * scale + dx, y + row * scale + dy, 36);
+            x += 4 * scale;
+        }
+        y += 5 * scale + 1;
+    }
+    return image;
 }
 enum class MouseIcon : uint8_t { Left, Right, Middle, Wheel };
 inline ColorImage makeMouseIcon(MouseIcon icon) {
@@ -150,8 +187,8 @@ inline ColorImage makeMouseIcon(MouseIcon icon) {
     }
     return {};
 }
-inline std::shared_ptr<const ColorImage> iconFor(Button button, Context context) {
-    const char* label = keyboardLabel(button, context);
+inline std::shared_ptr<const ColorImage> iconFor(Button button, Context context, const char* configuredLabel = nullptr) {
+    const char* label = configuredLabel ? configuredLabel : keyboardLabel(button, context);
     if (!label) return nullptr;
     auto image = makeKeycap(label);
     if (!image.valid()) return nullptr;
@@ -197,7 +234,8 @@ inline TileRect promptTileRect(float u0, float v0, float u1, float v1, uint32_t 
     tile.valid = true;
     return tile;
 }
-inline ColorImage composePromptIcon(const ColorImage& base, Button button, Context context, TileRect tile) {
+inline ColorImage composePromptIcon(const ColorImage& base, Button button, Context context, TileRect tile,
+                                   const char* configuredLabel = nullptr) {
     ColorImage canvas;
     canvas.width = base.width; canvas.height = base.height;
     canvas.promptOrigin = base.promptOrigin;
@@ -212,7 +250,7 @@ inline ColorImage composePromptIcon(const ColorImage& base, Button button, Conte
         xEnd > canvas.width || yEnd > canvas.height)
         return canvas;
     canvas.pixels.assign(size_t(canvas.width) * canvas.height * 4, 0);
-    const auto icon = iconFor(button, context);
+    const auto icon = iconFor(button, context, configuredLabel);
     if (!icon || !icon->valid()) return canvas;
     float scale = float(tile.w < tile.h ? tile.w : tile.h) / float(icon->width);
     if (!(scale > 0)) return canvas;
@@ -241,9 +279,10 @@ inline ColorImage composePromptIcon(const ColorImage& base, Button button, Conte
 struct IconKey {
     uint8_t button = 0, context = 0;
     uint32_t w = 0, h = 0, tx = 0, ty = 0, tw = 0, th = 0;
+    std::string label;
     bool operator==(const IconKey& other) const {
         return button == other.button && context == other.context && w == other.w && h == other.h &&
-            tx == other.tx && ty == other.ty && tw == other.tw && th == other.th;
+            tx == other.tx && ty == other.ty && tw == other.tw && th == other.th && label == other.label;
     }
 };
 struct IconKeyHash {
@@ -256,6 +295,7 @@ struct IconKeyHash {
         h ^= size_t(key.ty) + 0x9e3779b9 + (h << 6) + (h >> 2);
         h ^= size_t(key.tw) + 0x9e3779b9 + (h << 6) + (h >> 2);
         h ^= size_t(key.th) + 0x9e3779b9 + (h << 6) + (h >> 2);
+        h ^= std::hash<std::string>{}(key.label) + 0x9e3779b9 + (h << 6) + (h >> 2);
         return h;
     }
 };
@@ -272,6 +312,7 @@ struct Registry {
         key.context = uint8_t(context);
         key.w = w; key.h = h;
         key.tx = tile.x; key.ty = tile.y; key.tw = tile.w; key.th = tile.h;
+        if (const char* label = keyboardLabel(button, context)) key.label = label;
         return key;
     }
 };
@@ -304,7 +345,7 @@ inline std::shared_ptr<const ColorImage> replacementForUv(uint32_t textureId,
     const IconKey key = Registry::iconKey(button, context, image->width, image->height, tile);
     if (auto it = registry.icons.find(key); it != registry.icons.end()) return it->second;
     if (registry.icons.size() >= 128) registry.icons.clear();
-    auto icon = std::make_shared<const ColorImage>(composePromptIcon(*image, button, context, tile));
+    auto icon = std::make_shared<const ColorImage>(composePromptIcon(*image, button, context, tile, key.label.c_str()));
     if (!icon || !icon->valid()) return nullptr;
     registry.icons[key] = icon;
     if (!full) {

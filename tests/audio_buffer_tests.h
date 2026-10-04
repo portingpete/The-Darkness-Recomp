@@ -1,5 +1,6 @@
 #pragma once
 #include "audio_pcm_tap_tests.h"
+#include "audio_pcm_storage_tests.h"
 
 // A gated real-sink probe distinguishes prefill and actual source starvation
 // from the weaker condition that submitted/completed counters keep increasing.
@@ -26,6 +27,9 @@ static PPC_FUNC(audioContinuityProbe) {
 }
 
 static void testAudioContinuity() {
+    verifyAudioPcmConversion(check, audioConvertPlanarBEFloat);
+    verifyAudioPcmQueue(check);
+    puts("PCM bit-preserving unaligned conversion and bounded ring ownership/rejection/reuse passed.");
     auto& driver = AudioRenderDriver::instance();
     auto* base = memory->base();
     auto* original = PPC_LOOKUP_FUNC(base, PPC_CODE_BASE);

@@ -1772,7 +1772,10 @@ extern "C" PPC_FUNC(__imp__sub_823471F8);
 PPC_FUNC(sub_823471F8) {
     const uint32_t caller = uint32_t(ctx.lr), drawContext = ctx.r3.u32;
     __imp__sub_823471F8(ctx, base);
-    const bool fitted = fitLegacyMenuMatrix(drawContext);
+    // Original 823F9630 rebuilds this canvas exclusively for the player fade,
+    // paints (0,0,640,480), then resets it. Its native width/640 scale must
+    // cover the whole display; fitting it like a menu leaves ultrawide gaps.
+    const bool fitted = caller != 0x823F98F0 && fitLegacyMenuMatrix(drawContext);
     static thread_local uint32_t seen[24]{};
     static thread_local unsigned count = 0;
     if (count < 24 && std::find(seen, seen+count, caller) == seen+count) {
@@ -1874,7 +1877,12 @@ PPC_FUNC(__imp__VdRetrainEDRAM) { ctx.r3.u64 = 0; }
 PPC_FUNC(__imp__VdRetrainEDRAMWorker) { ctx.r3.u64 = 0; }
 PPC_FUNC(__imp__VdQueryVideoFlags) { ctx.r3.u64 = 0; }
 PPC_FUNC(__imp__VdCallGraphicsNotificationRoutines) { ctx.r3.u64 = 0; }
-PPC_FUNC(__imp__VdGetCurrentDisplayGamma) { ctx.r3.u64 = 0; }
+PPC_FUNC(__imp__VdGetCurrentDisplayGamma) {
+    // Xbox HDTV transfer. The original D3D helpers consume BOTH ABI outputs.
+    if(ctx.r3.u32)PPC_STORE_U32(ctx.r3.u32,2);
+    if(ctx.r4.u32)PPC_STORE_U32(ctx.r4.u32,std::bit_cast<uint32_t>(2.22222233f));
+    ctx.r3.u64=0;
+}
 
 
 PPC_FUNC(__imp__VdInitializeRingBuffer) { ctx.r3.u64 = 0; }
@@ -2367,7 +2375,39 @@ PPC_FUNC(__imp__NtWaitForSingleObjectEx) {
     if (!target) { ctx.r3.u64 = 0xc0000008; return; }
     DWORD timeout = timeoutMilliseconds(base, ctx.r6.u32);
     const int64_t ticks = ctx.r6.u32 ? int64_t(PPC_LOAD_U64(ctx.r6.u32)) : 0;
+    // Opt-in producer-wait diagnosis. The main guest PCR is installed by
+    // Memory::initThread; workers have independent storage. Use integer
+    // duration arithmetic so recording does not change guest FP status.
+    const bool profileWait = profileEngineCpu && ctx.r13.u32 == 0x7ff00000u;
+    const auto waitStarted = profileWait ? std::chrono::steady_clock::now() :
+        std::chrono::steady_clock::time_point{};
     DWORD result = nativeTimedWait(target->handle, ctx.r5.u32 != 0, ctx.r6.u32 ? &ticks : nullptr);
+    if (profileWait) {
+        const auto waitUs = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - waitStarted).count();
+        if (waitUs >= 8000) {
+            static thread_local uint32_t longWaits = 0;
+            const auto sequence = ++longWaits;
+            if (sequence <= 64 || (sequence <= 2112 && sequence % 64 == 0)) {
+                // SDK wrapper 828A9EB8 saves its caller LR at old SP-8,
+                // then allocates 128 bytes. Read only this proven frame slot.
+                uint32_t caller = 0, outerCaller = 0;
+                if (uint32_t(ctx.lr) == 0x828A9EF0u && uint64_t(ctx.r1.u32) + 124 <= PPC_MEMORY_SIZE &&
+                    guestBufferAccessible(ctx.r1.u32 + 120, 4))
+                    caller = memory->read32(ctx.r1.u32 + 120);
+                // The game's generic event wrapper adds a 96-byte frame.
+                if (caller == 0x82107680u && uint64_t(ctx.r1.u32) + 220 <= PPC_MEMORY_SIZE &&
+                    guestBufferAccessible(ctx.r1.u32 + 216, 4))
+                    outerCaller = memory->read32(ctx.r1.u32 + 216);
+                std::fprintf(stderr, "[EngineWait] sequence=%u tick=%llu tid=%lu handle=0x%08X event=%u thread=%u alertable=%u hasTimeout=%u ticks=%lld waitUs=%lld result=0x%08X guest=0x%08X lr=0x%08X r31=0x%08X caller=0x%08X outerCaller=0x%08X\n",
+                    sequence, GetTickCount64(), GetCurrentThreadId(), ctx.r3.u32,
+                    unsigned(target->isEvent), unsigned(target->isThread), unsigned(ctx.r5.u32 != 0),
+                    unsigned(ctx.r6.u32 != 0), static_cast<long long>(ticks),
+                    static_cast<long long>(waitUs), uint32_t(result), ctx.lastFunction,
+                    uint32_t(ctx.lr), ctx.r31.u32, caller, outerCaller);
+            }
+        }
+    }
     static std::atomic<uint32_t> waitLogs = 0;
     uint32_t log = waitLogs.fetch_add(1);
     if (log < 40 || (result != WAIT_OBJECT_0 && result != WAIT_TIMEOUT))

@@ -333,9 +333,15 @@ static void deathSceneContract(WorldRendererD3D11& renderer,unsigned scale) {
         uint16_t rgba[4];std::memcpy(rgba,pixels.data()+(size_t(y)*physicalWidth+x)*8,8);
         for(unsigned lane=0;lane<4;++lane) {
             const double actual=half(rgba[lane]);
-            if(!std::isfinite(actual) || std::abs(actual-expected[lane]/255.0)>=.002) {
+            // Original format54 stores ten RGB bits and two alpha bits. The
+            // final white-atlas modulation preserves those resolved values;
+            // expecting the source's eight-bit alpha would misread the console
+            // frontbuffer contract (160/255, for example, resolves to 2/3).
+            const double maximum=lane==3?3.0:1023.0;
+            const double resolved=std::floor(expected[lane]*maximum/255.0+.5)/maximum;
+            if(!std::isfinite(actual) || std::abs(actual-resolved)>=.002) {
                 std::fprintf(stderr,"DeathScene scale=%u pixel=%u,%u lane=%u actual=%g expected=%g\n",
-                    scale,x,y,lane,actual,expected[lane]/255.0);
+                    scale,x,y,lane,actual,resolved);
                 throw std::runtime_error("Original death chain lost scene brightness, alpha or full-output coverage");
             }
             ++checks;

@@ -1,6 +1,7 @@
 // Deterministic host-device fixtures exercise the production guest ABI. Window
 // messages below are test input, not a claim of interactive gameplay.
 #include "runtime/native/input.h"
+#include "runtime/native/keyboard_menu.h"
 
 namespace {
 std::array<DWORD, 4> inputStatus{};
@@ -113,6 +114,24 @@ static void testInputContract(PPCContext& ctx) {
     input.attachWindow(window);
     inputStatus.fill(ERROR_DEVICE_NOT_CONNECTED);
     SendMessageW(window, WM_SETFOCUS, 0, 0);
+    check(input.guestMenuAllowsPointer(), "Unknown startup client must permit observed menu roots");
+    check(!input.menuCursor().valid, "Menu pointer must be inert before its first position");
+    SendMessageW(window, WM_MOUSEMOVE, 0, MAKELPARAM(25, 50));
+    const auto firstPointer = input.menuCursor();
+    check(firstPointer.valid && firstPointer.x == 25 && firstPointer.y == 50,
+          "Menu pointer must preserve client coordinates");
+    SendMessageW(window, WM_LBUTTONDOWN, 0, MAKELPARAM(120, 110));
+    const auto pressedPointer = input.menuCursor();
+    SendMessageW(window, WM_LBUTTONUP, 0, MAKELPARAM(120, 110));
+    const auto releasedPointer = input.menuCursor();
+    check(pressedPointer.leftDown && pressedPointer.presses == firstPointer.presses + 1 &&
+          releasedPointer.valid && !releasedPointer.leftDown && releasedPointer.presses == pressedPointer.presses &&
+          releasedPointer.x == 120 && releasedPointer.y == 110,
+          "Quick click must retain one press and its own client coordinates after release");
+    input.setMouseLookEnabled(true);
+    check(!input.menuCursor().valid && input.menuCursor().epoch != releasedPointer.epoch,
+          "Gameplay capture must invalidate pointer ownership and stale clicks");
+    input.setMouseLookEnabled(false);
     check(state() == ERROR_SUCCESS && zero(output + 4, 12), "Attached keyboard did not provide a neutral controller");
     uint32_t packet = memory->read32(output);
     // Initial menus have no client/GUI signal yet. Keep their released wheel
@@ -121,6 +140,7 @@ static void testInputContract(PPCContext& ctx) {
     SendMessageW(window,WM_MOUSEWHEEL,MAKEWPARAM(0,short(-240)),0);state();
     check(PPC_LOAD_U16(output+4)==XINPUT_GAMEPAD_DPAD_DOWN,"Startup menu wheel fallback was lost");
     input.setGuestMenuActive(false);state();
+    check(!input.guestMenuAllowsPointer(), "Known gameplay must reject HUD roots as menus");
     check(PPC_LOAD_U16(output+4)==0,"First gameplay signal replayed startup menu wheel input");
     SendMessageW(window,WM_MOUSEWHEEL,MAKEWPARAM(0,WHEEL_DELTA),0);state();
     check(PPC_LOAD_U16(output+4)==0,"Released gameplay wheel changed a power after the first guest signal");
@@ -182,6 +202,51 @@ static void testInputContract(PPCContext& ctx) {
     SendMessageW(window,WM_KEYDOWN,VK_ESCAPE,0);
     check(state()==ERROR_SUCCESS && PPC_LOAD_U16(output+4)==XINPUT_GAMEPAD_B,"Menu Escape did not cancel");
     SendMessageW(window,WM_KEYUP,VK_ESCAPE,0);
+
+    // A saved selection feeds the production guest ABI, removes former keys,
+    // and leaves fixed menu navigation usable after gameplay keys are unbound.
+    auto customKeys = defaultKeyboardBindings();
+    check(assignKeyboardKey(customKeys, KeyboardAction::MoveForward, 0, VK_UP) &&
+          assignKeyboardKey(customKeys, KeyboardAction::Jump, 0, 'P') &&
+          assignKeyboardKey(customKeys, KeyboardAction::Use, 0, 'U') && input.setKeyboardBindings(customKeys),
+          "Cannot apply custom keyboard selection");
+    input.setMouseLookEnabled(true);
+    SendMessageW(window,WM_KEYDOWN,'W',0);SendMessageW(window,WM_KEYDOWN,'E',0);state();
+    check(zero(output+4,12), "Former movement or use key remained bound in gameplay");
+    SendMessageW(window,WM_KEYUP,'W',0);SendMessageW(window,WM_KEYUP,'E',0);
+    SendMessageW(window,WM_KEYDOWN,VK_UP,0);state();
+    check(PPC_LOAD_U16(output+10)==32767 && PPC_LOAD_U16(output+4)==0,
+          "Custom arrow movement switched a Darkness power");
+    SendMessageW(window,WM_KEYUP,VK_UP,0);
+    SendMessageW(window,WM_KEYDOWN,'P',0);state();
+    check(PPC_LOAD_U16(output+4)==XINPUT_GAMEPAD_Y,"Remapped jump did not reach the original action");
+    SendMessageW(window,WM_KEYUP,'P',0);SendMessageW(window,WM_KEYDOWN,'U',0);state();
+    check(PPC_LOAD_U16(output+4)==XINPUT_GAMEPAD_A,"Remapped use did not reach the original action");
+    auto invalidKeys = customKeys; invalidKeys.keys[size_t(KeyboardAction::Use)][0]=VK_ESCAPE;
+    check(!input.setKeyboardBindings(invalidKeys) && input.keyboardBindings()==customKeys,
+          "Invalid runtime mapping replaced valid controls");
+    check(input.setKeyboardBindings(KeyboardBindings{}),"Cannot unbind gameplay keys");state();
+    check(zero(output+4,12),"Changing controls retained the formerly held action");
+    SendMessageW(window,WM_KEYDOWN,'E',0);SendMessageW(window,WM_KEYDOWN,VK_UP,0);state();
+    check(PPC_LOAD_U16(output+4)==(XINPUT_GAMEPAD_A|XINPUT_GAMEPAD_DPAD_UP),
+          "Unbound gameplay settings removed fixed menu navigation");
+    check(input.setKeyboardBindings(defaultKeyboardBindings()),"Cannot restore keyboard defaults");
+
+    auto menuConflict = defaultKeyboardBindings();
+    check(assignKeyboardKey(menuConflict, KeyboardAction::Reload, 0, 'E') &&
+          assignKeyboardKey(menuConflict, KeyboardAction::RedirectDarkling, 0, VK_UP) &&
+          input.setKeyboardBindings(menuConflict), "Cannot configure fixed-menu key conflict fixture");
+    SendMessageW(window,WM_KEYDOWN,'E',0);state();
+    check(PPC_LOAD_U16(output+4)==XINPUT_GAMEPAD_A,"Fixed menu E delivered both confirm and remapped reload");
+    SendMessageW(window,WM_KEYUP,'E',0);SendMessageW(window,WM_KEYDOWN,VK_UP,0);state();
+    check(PPC_LOAD_U16(output+4)==XINPUT_GAMEPAD_DPAD_UP,"Fixed menu arrow delivered remapped gameplay action");
+    SendMessageW(window,WM_KEYUP,VK_UP,0);
+    input.setGuestMenuActive(true);input.setMouseLookEnabled(true);
+    check(input.guestMenuAllowsPointer(), "Observed active menu must replace stale gameplay ownership");
+    SendMessageW(window,WM_KEYDOWN,'E',0);state();
+    check(PPC_LOAD_U16(output+4)==XINPUT_GAMEPAD_A,"Guest menu with capture delivered conflicting gameplay action");
+    check(input.setKeyboardBindings(defaultKeyboardBindings()),"Cannot restore keyboard controls after menu conflict test");
+    input.setGuestMenuActive(false);
 
     auto rx=[&] {return int16_t(PPC_LOAD_U16(output+12));};
     auto ry=[&] {return int16_t(PPC_LOAD_U16(output+14));};
@@ -554,6 +619,70 @@ static void testInputContract(PPCContext& ctx) {
     check(promptState() == ERROR_SUCCESS && zero(output + 4, 12), "Slot test regain replayed input");
     puts("Native input prompts: default, idle, jitter, churn, edges, held, simultaneous, mouse, disconnect and focus passed.");
     puts("Native input prompt retrigger: negative diagonal, anchor accumulation, bounded jitter, menu cursor and primary-only slots passed.");
+
+    // Capture uses raw window edges while the original menu receives a neutral
+    // controller. Quick clicks and the newly assigned held key cannot replay.
+    cancelKeyboardMenuCapture();
+    inputStatus.fill(ERROR_DEVICE_NOT_CONNECTED); inputStates = {};
+    SendMessageW(window, WM_SETFOCUS, 0, 0);
+    input.setMouseLookEnabled(false); input.setGuestMenuActive(true);
+    input.setKeyboardBindings(defaultKeyboardBindings());
+    SendMessageW(window, WM_SYSKEYDOWN, VK_RETURN, LPARAM(1) << 29);
+    check(state() == ERROR_SUCCESS && zero(output + 4, 12), "Alt+Enter fullscreen shortcut leaked guest Start");
+    SendMessageW(window, WM_SYSKEYUP, VK_RETURN, LPARAM(1) << 29);
+    SendMessageW(window, WM_KEYDOWN, VK_RETURN, 0);
+    check(state() == ERROR_SUCCESS && PPC_LOAD_U16(output + 4) == XINPUT_GAMEPAD_START,
+          "Ordinary Enter stopped navigating the original menu");
+    SendMessageW(window, WM_SYSKEYUP, VK_RETURN, LPARAM(1) << 29);
+    check(state() == ERROR_SUCCESS && zero(output + 4, 12),
+          "Releasing ordinary Enter with Alt held retained guest Start");
+    SendMessageW(window, WM_KEYDOWN, 'E', 0);
+    check(beginKeyboardMenu(input.keyboardBindings()) &&
+          keyboardMenuAction("darkrecomp.keyboard.bind.10.0"), "Native menu capture did not start");
+    check(state() == ERROR_SUCCESS && zero(output + 4, 12), "Activation key leaked during capture");
+    SendMessageW(window, WM_KEYUP, 'E', 0);
+    const auto beforeCaptureClick = input.menuCursor();
+    SendMessageW(window, WM_LBUTTONDOWN, 0, MAKELPARAM(100,100));
+    SendMessageW(window, WM_LBUTTONUP, 0, MAKELPARAM(100,100));
+    SendMessageW(window, WM_MOUSEWHEEL, MAKEWPARAM(0,WHEEL_DELTA), 0);
+    SendMessageW(window, WM_KEYDOWN, 'T', 0);
+    check(!keyboardMenuCaptureActive() && keyboardMenuLabel("darkrecomp.keyboard.bind.10.0").find('T') != std::string::npos,
+          "Fresh raw key was not staged by the game menu");
+    check(state() == ERROR_SUCCESS && zero(output + 4, 12) &&
+          input.menuCursor().presses == beforeCaptureClick.presses,
+          "Capture replayed a quick mouse click, wheel detent or assigned key");
+    SendMessageW(window, WM_KEYDOWN, 'T', LPARAM(1) << 30);
+    check(state() == ERROR_SUCCESS && zero(output + 4, 12), "Assigned-key repeat escaped capture suppression");
+    SendMessageW(window, WM_KEYUP, 'T', 0);
+    check(keyboardMenuAction("darkrecomp.keyboard.bind.11.0"), "Second capture did not start");
+    inputStatus[0] = ERROR_SUCCESS; inputStates[0].Gamepad.wButtons = XINPUT_GAMEPAD_A;
+    check(state() == ERROR_SUCCESS && zero(output + 4, 12), "Physical controller navigated while capturing");
+    SendMessageW(window, WM_KEYDOWN, VK_ESCAPE, 0);
+    check(!keyboardMenuCaptureActive() && state() == ERROR_SUCCESS && zero(output + 4, 12),
+          "Capture Escape or held physical confirm leaked to the menu");
+    SendMessageW(window, WM_KEYUP, VK_ESCAPE, 0);
+    inputStates[0].Gamepad = {}; state();
+    inputStates[0].Gamepad.wButtons = XINPUT_GAMEPAD_A;
+    check(state() == ERROR_SUCCESS && PPC_LOAD_U16(output + 4) == XINPUT_GAMEPAD_A,
+          "Controller navigation did not resume after physical release");
+    inputStates[0].Gamepad = {}; state();
+    keyboardMenuAction("darkrecomp.keyboard.bind.11.0");
+    SendMessageW(window, WM_KILLFOCUS, 0, 0);
+    check(!keyboardMenuCaptureActive() && keyboardMenuLabel("darkrecomp.keyboard.bind.10.0").find('T') != std::string::npos,
+          "Focus loss retained capture or discarded staged bindings");
+    SendMessageW(window, WM_SETFOCUS, 0, 0);
+    SendMessageW(window, WM_KEYDOWN, 'E', 0);
+    keyboardMenuAction("darkrecomp.keyboard.cancel");
+    input.suppressMenuActivationKeys();
+    endKeyboardMenu();
+    check(state() == ERROR_SUCCESS && zero(output + 4, 12), "Held Cancel confirmation reopened Controls submenu");
+    SendMessageW(window, WM_KEYDOWN, 'E', LPARAM(1) << 30);
+    check(state() == ERROR_SUCCESS && zero(output + 4, 12), "Cancel autorepeat leaked after page pop");
+    SendMessageW(window, WM_KEYUP, 'E', 0);
+    SendMessageW(window, WM_KEYDOWN, 'E', 0);
+    check(state() == ERROR_SUCCESS && PPC_LOAD_U16(output + 4) == XINPUT_GAMEPAD_A,
+          "Fresh confirmation did not resume after Cancel release");
+    SendMessageW(window, WM_KEYUP, 'E', 0);
 
     // Finally call the title's actual SDK wrapper through native Windows
     // message routing. Physical device presence does not affect these checks:

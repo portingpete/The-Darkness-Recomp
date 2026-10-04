@@ -7,7 +7,7 @@
 
 namespace DarkRecomp::Native {
 enum class EnginePhase { stored, immediate, indexed, vertexProgram, descriptor, conversion, textures, palette, snapshot, handoff, sleep,
-                         queryXma, queryKernel, queryDispatcher, queryAudio, queryFile, count };
+                         queryXma, queryKernel, queryDispatcher, queryAudio, queryFile, queryDispatcherWorkingSet, count };
 struct EnginePhaseCounters {std::atomic<uint64_t> nanoseconds{}, calls{};};
 inline std::array<EnginePhaseCounters,size_t(EnginePhase::count)> enginePhases;
 inline bool profileEngineCpu=false; // Set before starting the engine thread.
@@ -23,6 +23,8 @@ inline void setRenderSamplePhase(RenderSamplePhase phase) {
 inline std::atomic<uint64_t> renderMemoryFaults{};
 inline std::array<std::atomic<unsigned>,256> engineFrameProcessors{};
 inline std::atomic<uint64_t> xmaProfileBatchCalls{}, xmaProfileBatchContexts{}, xmaProfileSingleBatches{};
+inline std::atomic<uint64_t> dispatcherWorkingSetAccepted{}, dispatcherWorkingSetDenied{},
+    dispatcherWorkingSetApiFallback{}, dispatcherWorkingSetNonresidentFallback{}, dispatcherWorkingSetPages{};
 inline void recordXmaProfileBatch(size_t contexts) {
     if(!profileEngineCpu)return;
     xmaProfileBatchCalls.fetch_add(1,std::memory_order_relaxed);
@@ -59,7 +61,7 @@ inline SIZE_T engineProfileVirtualQuery(EnginePhase phase,LPCVOID address,
 inline void printEngineCpuPerformance() {
     if(!profileEngineCpu)return;
     constexpr const char* names[]{"stored","immediate","indexed","vertexProgram","descriptor","conversion","textures","palette","snapshot","handoff","mainSleep",
-                                 "vqXma","vqKernel","vqDispatcher","vqAudio","vqFile"};
+                                 "vqXma","vqKernel","vqDispatcher","vqAudio","vqFile","wsDispatcher"};
     static_assert(std::size(names)==size_t(EnginePhase::count));
     std::fprintf(stderr,"[EngineCPU] inclusiveMs");
     for(size_t i=0;i<enginePhases.size();++i) {
@@ -68,6 +70,12 @@ inline void printEngineCpuPerformance() {
         std::fprintf(stderr," %s=%.2f/%llu",names[i],double(ns)/1e6,calls);
     }
     std::fputc('\n',stderr);
+    std::fprintf(stderr,"[DispatcherWorkingSet] acceptedSpans=%llu deniedSpans=%llu apiFallbackSpans=%llu nonresidentFallbackSpans=%llu queriedPages=%llu\n",
+        dispatcherWorkingSetAccepted.exchange(0,std::memory_order_relaxed),
+        dispatcherWorkingSetDenied.exchange(0,std::memory_order_relaxed),
+        dispatcherWorkingSetApiFallback.exchange(0,std::memory_order_relaxed),
+        dispatcherWorkingSetNonresidentFallback.exchange(0,std::memory_order_relaxed),
+        dispatcherWorkingSetPages.exchange(0,std::memory_order_relaxed));
     // These are bridge batches entered after Memory's first ownership check.
     // Requested contexts include an undecoded suffix when a batch fails.
     const auto batches=xmaProfileBatchCalls.exchange(0,std::memory_order_relaxed);

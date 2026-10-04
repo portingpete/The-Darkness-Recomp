@@ -9,7 +9,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
-from compile_world_fragment import ASSETS, VARIANTS, compile_source, compile_fixed, select_template
+from compile_world_fragment import ASSETS, VARIANTS, compile_source, compile_fixed, compile_template, select_template
 
 
 class WorldFragmentTests(unittest.TestCase):
@@ -89,6 +89,47 @@ END''')
         with self.assertRaises(ValueError):
             compile_source('OUTPUT o = result.color; KIL missing; END')
 
+    def test_other_world_grain_preserves_xenon_depth_world_noise_and_distance_fade(self):
+        source = (ROOT / 'Darkness/System/Gl/ARB_fragment_program/WClientMod_OW1_1.fp').read_text(encoding='latin-1')
+        self.assertEqual(VARIANTS['WClientMod_OW1_1'], [0])
+        code, metadata = compile_source(select_template(source, 0))
+        self.assertEqual(metadata['textures'], {0: '2D', 1: '2D', 2: '2D'})
+        self.assertEqual(metadata['instruction_count'], 62)
+        self.assertTrue(metadata['conditions']['xenon'])
+        # The console uses a float reversed-depth resolve. Packed RGB depth
+        # and the PC-only reconstruction branch would put the grain elsewhere.
+        self.assertIn('tdepth.w = (((float4)(1.0)) - (tdepth.xxxx)).w;', code)
+        self.assertNotIn('floor(', code)
+        self.assertIn('PixelPosV.z = ((r2.yyyy) * (-VPConst.zzzz)).z;', code)
+        for row in range(3):
+            self.assertIn(f'V2WRow{row} = env[{row + 5}]', code)
+            self.assertIn(f'dot((PixelPosV).xyzw, (V2WRow{row}).xyzw)', code)
+        self.assertEqual(code.count('texture1.Sample('), 4)
+        self.assertEqual(code.count('texture0.Sample('), 5)
+        self.assertIn('r1.yw = ((TimeLevels.xxxx) * ((float4)(1)) + (r1)).yw;', code)
+        self.assertIn('r1 = ((r1) * (TimeLevels.wwww));', code)
+        self.assertEqual(code.count('r1 = ((r1) * (r1));'), 3)
+        # The original fades grain from view distance 16 to 26 while keeping
+        # alpha opaque; it does not fade the whole resulting color vector.
+        self.assertIn('r1.w = ((PixelPosV.zzzz) - ((float4)(16))).w;', code)
+        self.assertIn('r1.w = (saturate((r1.wwww) * ((float4)(0.1)))).w;', code)
+        self.assertIn('r0.xyz = ((r0) * (r1.wwww)).xyz;', code)
+        self.assertIn('r0.w = (((float4)(1))).w;', code)
+        self.assertNotIn('@', code)
+
+    def test_other_world_composite_subtracts_grain_with_only_lower_clamp(self):
+        source = (ROOT / 'Darkness/System/Gl/ARB_fragment_program/WClientMod_OW1_2.fp').read_text(encoding='latin-1')
+        self.assertEqual(VARIANTS['WClientMod_OW1_2'], [0])
+        code, metadata = compile_source(select_template(source, 0))
+        self.assertEqual(metadata['textures'], {0: '2D', 1: '2D'})
+        self.assertEqual(metadata['instruction_count'], 5)
+        self.assertIn('texture0.Sample(sampler0, (tc0).xy)', code)
+        self.assertIn('texture1.Sample(sampler1, (tc1).xy)', code)
+        self.assertIn('r0 = ((t0) - (t1));', code)
+        self.assertIn('r0 = (max((r0), ((float4)(0))));', code)
+        self.assertIn('oCol = ((r0));', code)
+        self.assertNotIn('saturate(', code) # Preserve scene values above one.
+
     def test_final_composite_without_motion_blur_and_optional_bloom(self):
         source = (ROOT / 'Darkness/System/Gl/ARB_fragment_program/XREngine_Final5.fp').read_text(encoding='latin-1')
         for flags in range(0, 16, 2):
@@ -99,6 +140,54 @@ END''')
             self.assertEqual(code.count('texture0.Sample('), 1)
             self.assertEqual(1 in metadata['textures'], bool(flags & 8))
             self.assertEqual(2 in metadata['textures'], bool(flags & 4))
+
+    def test_color_lookup_coordinates_change_only_the_two_named_consumers(self):
+        directory = ROOT / 'Darkness/System/Gl/ARB_fragment_program'
+        consumers = [('XREngine_CCFuser', 2, 1)] + [
+            ('XREngine_Final5', flags, 2) for flags in range(16) if flags & 4]
+        for name, flags, slot in consumers:
+            with self.subTest(name=name, flags=flags):
+                source = (directory / (name + '.fp')).read_text(encoding='latin-1')
+                original, original_metadata = compile_source(select_template(source, flags))
+                code, metadata = compile_template(source, name, flags)
+                self.assertEqual(metadata, original_metadata)
+                self.assertIn('cbuffer NativeColorLookup : register(b3)', code)
+                self.assertIn('float inverseLookupScale;\n    uint logicalLookupMask;\n    uint2 lookupPadding;', code)
+                self.assertIn('if ((logicalLookupMask & (1u << slot)) == 0) return uv;', code)
+                self.assertIn('float2 logicalSize = float2(324.0, 18.0);', code)
+                self.assertIn('float2 p = uv * logicalSize - 0.5;', code)
+                self.assertIn('float2 i = floor(p);\n    float2 f = frac(p);', code)
+                self.assertIn('return (i + 1.0 + (f - 0.5) * inverseLookupScale) / logicalSize;', code)
+                self.assertEqual(code.count(f'texture{slot}.Sample('), 2)
+                corrected = f'nativeColorLookupUv((r2).xy, {slot})'
+                self.assertEqual(code.count(corrected), 2)
+                self.assertIn(f'texture{slot}.Sample(sampler{slot}, {corrected}) * sampleScale[{slot}]', code)
+                # Strip only the host helper and its two coordinate wrappers.
+                # Every original sample, address mode, exponent multiply,
+                # masked instruction and blue-slice interpolation must survive.
+                begin = code.index('cbuffer NativeColorLookup')
+                end = code.index('struct Fragment', begin)
+                restored = (code[:begin] + code[end:]).replace(corrected, '(r2).xy')
+                self.assertEqual(restored, original)
+
+    def test_non_lookup_generated_sources_remain_byte_identical(self):
+        directory = ROOT / 'Darkness/System/Gl/ARB_fragment_program'
+        includes = {Path(name).name: (ROOT / 'Darkness' / name).read_text(encoding='latin-1')
+                    for name in ASSETS if name.endswith('.fph')}
+        for name, variants in VARIANTS.items():
+            source = (directory / (name + '.fp')).read_text(encoding='latin-1')
+            for flags in variants:
+                if (name == 'XREngine_CCFuser' and flags == 2 or
+                        name == 'XREngine_Final5' and flags & 4):
+                    continue
+                with self.subTest(name=name, flags=flags):
+                    self.assertEqual(compile_template(source, name, flags, includes),
+                                     compile_source(select_template(source, flags, includes)))
+        # An identical instruction stream under another name cannot opt in.
+        for name, flags in (('XREngine_CCFuser', 2), ('XREngine_Final5', 4)):
+            source = (directory / (name + '.fp')).read_text(encoding='latin-1')
+            self.assertEqual(compile_template(source, name + '_other', flags),
+                             compile_source(select_template(source, flags)))
 
     def test_shadow_projector_uses_logical_texel_filter_at_native_scale(self):
         source = (ROOT / 'Darkness/System/Gl/ARB_fragment_program/XREngine_ShadowProj.fp').read_text(encoding='latin-1')

@@ -36,7 +36,9 @@ public:
     static uint32_t physicalAddress(uint32_t address);
     static constexpr uint32_t cAliasBegin = 0xc0000000u;
     static constexpr uint32_t cAliasEnd = 0xe0000000u;
-    static constexpr uint32_t cViewBytes = 0x01000000u;
+    // Host query granularity. Guest physical page sizes and allocation
+    // alignment are handled independently by the allocation imports.
+    static constexpr uint32_t cViewBytes = 0x00040000u;
     static constexpr uint32_t cViewEnd(uint32_t address) {
         return (address & ~(cViewBytes - 1)) + cViewBytes;
     }

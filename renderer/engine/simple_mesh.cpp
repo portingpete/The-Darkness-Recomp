@@ -1,4 +1,5 @@
 #include "simple_mesh.h"
+#include "display_gamma.h"
 #include "prompt_icons.h"
 #include "texture_mip_layout.h"
 #include "engine_performance.h"
@@ -959,25 +960,16 @@ void previewObserveWorld(uint8_t* base,const StoredDraw& geometry) {
                    (draw->fragmentName=="XREngine_CCFuser" && s==1) ||
                    // DV5's pulse and perturbation tables are CPU noise images.
                    // Scene/depth/atlas slots0/1/5 remain GPU resolve inputs.
-                   (draw->fragmentName=="WClientMod_DV5_0" && (s==2 || s==4))) {
+                   (draw->fragmentName=="WClientMod_DV5_0" && (s==2 || s==4)) ||
+                   // Other World's grain uses authored noise at slot1; its
+                   // scene0/depth2 and final OW1_2 inputs stay GPU resolves.
+                   (draw->fragmentName=="WClientMod_OW1_1" && s==1)) {
                     auto decoded=std::make_shared<ColorImage>();
                     if(!decodeWorldTextureImage(base,draw->textureObjects[s].object,*decoded,draw->textureObjects[s].firstMip)) {
-                        if(s==1 && draw->fragmentName=="CMWnd_ModTexture_PaintVideo_YUV2RGB" &&
-                           decoded->sourceCodec==10) {
-                            // The live decoder writes BE V,U. Original A8L8
-                            // upload swaps the pair, and its RRRG fetch view
-                            // restores V,V,V,U. Match the owned CPU upload's
-                            // logical U,U,U,V view only for this video plane;
-                            // generic fetch10 decoding retains its selectors.
-                            auto normalize=[](std::vector<uint8_t>& pixels) {
-                                for(size_t i=0;i<pixels.size();i+=4) {
-                                    const auto v=pixels[i],u=pixels[i+3];
-                                    pixels[i]=pixels[i+1]=pixels[i+2]=u;pixels[i+3]=v;
-                                }
-                            };
-                            normalize(decoded->pixels);
-                            for(auto& mip:decoded->mips)normalize(mip);
-                        }
+                        // Original82256008 fills video storage directly with
+                        // decoder V,U bytes, without the initial upload's
+                        // temporary pair swap. Fetch10 endian/selector decoding
+                        // already exposes the shader's logical U,U,U,V view.
                         if(auto old=colorTextures.find(draw->textureIds[s]);old!=colorTextures.end()) {
                             colorBytes-=old->second.image->bytes();colorTextures.erase(old);
                         }
@@ -1118,6 +1110,28 @@ void previewObservePresent(uint8_t* base,uint32_t frontbuffer) {
         std::unique_lock lock(queueMutex);
         if(liveStreaming())reservePreviewCommand(lock);
         SimpleMesh command;command.worldPresent=std::move(texture);pending.push_back(std::move(command));
+    }catch(...){}
+}
+void previewObserveDisplayGamma(uint8_t* base,uint32_t ramp,bool piecewise) {
+    if(!active)return;
+    try {
+        std::array<uint8_t,1536> bytes{};
+        if(!copyRenderMemory(base,ramp,bytes.data(),bytes.size()))return;
+        DisplayGamma gamma;gamma.piecewise=piecewise;
+        for(unsigned channel=0;channel<3;++channel) {
+            for(unsigned entry=0;entry<(piecewise?128u:256u);++entry) {
+                const auto* value=bytes.data()+channel*512+entry*(piecewise?4:2);
+                gamma.entries[entry*3+channel]={uint32_t(u16(value)),piecewise?uint32_t(u16(value+2)):0u};
+                if(!piecewise)gamma.entries[entry*3+channel][0]&=0xFFC0;
+            }
+        }
+        std::unique_lock lock(queueMutex);
+        static std::shared_ptr<const DisplayGamma> previous;
+        if(previous && *previous==gamma)return;
+        if(liveStreaming())reservePreviewCommand(lock);
+        auto table=std::make_shared<DisplayGamma>(std::move(gamma));
+        SimpleMesh command;command.displayGamma=table;pending.push_back(std::move(command));
+        previous=std::move(table);
     }catch(...){}
 }
 void setPreviewFrameBackpressure(bool enabled,bool streaming) {

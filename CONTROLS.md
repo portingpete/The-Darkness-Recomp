@@ -4,7 +4,8 @@ Run `Launch.cmd` for audio, or `Launch.cmd mute` for a muted game.
 Run `LaunchWithSettings.cmd` to choose video options and language before the game
 opens, then play with audio. It reads and saves `DarkRecomp.settings.ini`, so
 the pre-game launcher and in-game Video Settings share your choices.
-The game runs until you close its window. `Launch.cmd preview` and
+Choose **Exit Game** in the pause or main menu and confirm to close the game,
+or close its window. `Launch.cmd preview` and
 `build_native/Release/DarkRecompPreview.exe` still default to muted;
 the preview executable also accepts `--sound` or `--mute`.
 
@@ -35,11 +36,19 @@ apply after restarting the game. `--windowed --width 2560 --height 1080` selects
 a window size and aspect ratio. Internal rendering supports up to 4096 x 2160,
 preserving aspect at the width limit and rounding to even guest dimensions.
 
+Press **F6** during play to switch directly between **720p and 1440p** without
+reloading the level. A brief message shows the new resolution, which saves
+automatically. The switch preserves the launch aspect ratio and existing game
+buffers. It works with a 720-pixel-high game buffer: normal 16:9 launches at
+720p, 1440p or 2160p, and typical 21:9 launches at 720p or 1440p. Other launch
+resolutions or capped wide aspects show an unavailable message; choose 720p
+before launching on a normal or 21:9 display to enable it.
+
 Open **Options > Video Settings** for the game's native graphics rows:
 
 - **Brightness:** 50% to 200%, with 100% neutral.
-- **Gamma:** 0.50 to 1.50, with 1.00 neutral. Lower values darken the image;
-  changes apply immediately and save automatically.
+- **Gamma:** the original 12-step calibration control, with the middle position
+  as default. Use Left/Right to adjust and choose Yes when leaving Options to save.
 - **Field of view:** Original or **60�120 horizontal degrees at 16:9**;
   ultrawide displays show more at the sides.
 - **Bloom:** on by default; toggle the final-composite glow.
@@ -50,12 +59,16 @@ Open **Options > Video Settings** for the game's native graphics rows:
 - **Motion blur:** Off (default) or On.
 - **Antialiasing:** Off (default) or FXAA; smooths edges immediately and saves automatically.
 - **Language:** System, English, German, French, Spanish, or Italian; requires a restart.
+- **Texture filtering:** Original, 2x, 4x, 8x, or **16x anisotropic (default)**.
+  Applies immediately to world textures while preserving the original UI and effects sampling.
+  Explicit levels override the original world-texture setting; Original preserves it.
 
 Use the normal menu navigation: Up/Down selects a row,
 Left/Right changes its value, and confirm cycles forward. The controller D-pad
 and A work through the same original menu controls. Escape/Backspace or B goes
-back. Changes save automatically to `DarkRecomp.settings.ini` beside `Darkness`
-and apply immediately except resolution and language. A failed save is shown in the row text.
+back. PC graphics changes save automatically to `DarkRecomp.settings.ini` beside
+`Darkness` and apply immediately except resolution and language. Gamma uses the
+original game profile and save confirmation. A failed PC settings save is shown in the row text.
 
 All play modes use saved settings. Direct-launch options `--fov 100`, `--fps 120`,
 `--render-height 720`, `--fullscreen` / `--windowed`, and `--vsync` / `--no-vsync`
@@ -82,7 +95,9 @@ The matching language content must be present in your own dump. Run
 language names are also accepted. This override applies only to that run and
 does not replace your saved language choice when you adjust graphics settings.
 
-Click inside the game to capture the mouse. The first click only captures it.
+In menus, move the cursor over a choice and click to select it. The game releases
+mouse capture while a menu is open. Click inside gameplay to capture the mouse;
+that first gameplay click only captures it.
 Press **F1** for the controls guide, **F2** to toggle capture, or **Escape**
 to pause and release the cursor. Alt-Tab, loss of focus, and closing the window
 also release it. Click again after returning to the game.
@@ -100,6 +115,16 @@ also release it. Click again after returning to the game.
 - **Menus:** arrows to navigate, **E** or released **Space** to confirm,
   **Escape** or **Backspace** to go back.
 - **Keyboard alternatives:** I / J / K / L to look, Z / X to fire left / right.
+
+These are the default bindings. Open **Options > Controls > Keyboard bindings**
+to change gameplay keys inside the original game menu. **Previous** and **Next**
+switch between four pages of actions. Select a primary or secondary slot, then
+press the new key; **Escape** cancels capture and **Delete** clears the slot.
+**Defaults** stages the original selection. **Save** applies the changes
+and writes the `[Keyboard]` section of `DarkRecomp.settings.ini`.
+**Cancel** or Back discards unsaved edits. Menu navigation stays available outside
+key capture; reserved host shortcuts cannot be assigned.
+In-game keyboard prompts follow the selected bindings.
 
 The original game's camera sensitivity controls the controller. Mouse look
 uses a separate, linear sensitivity and follows the game's inversion option.

@@ -152,17 +152,36 @@ class Registry:
         return data
 
 
-SETTINGS = ("brightness", "gamma", "fov", "bloom", "vsync", "fps", "resolution", "mode", "motionblur", "antialiasing", "language")
-SETTING_NAMES = ("Brightness", "Gamma", "Field of view", "Bloom", "Vertical sync", "Frame limit", "Resolution", "Display", "Motion blur", "Antialiasing", "Language")
-INITIAL_VALUES = ("100%", "1.00", "Original", "On", "Off", "60", "720p", "Borderless", "Off", "Off", "System")
+SETTINGS = ("brightness", "fov", "bloom", "vsync", "fps", "resolution", "mode", "motionblur", "antialiasing", "language", "anisotropy")
+SETTING_NAMES = ("BRIGHTNESS", "FIELD OF VIEW", "BLOOM", "VERTICAL SYNC", "FRAME LIMIT", "RESOLUTION", "DISPLAY", "MOTION BLUR", "ANTIALIASING", "LANGUAGE", "TEXTURE FILTERING")
+INITIAL_VALUES = ("100%", "ORIGINAL", "ON", "OFF", "60", "720P", "BORDERLESS", "OFF", "OFF", "SYSTEM", "16X")
+# Match KeyboardAction's order. Compact labels fit the original small-font
+# action column; binding values retain fixed widths for native hit rectangles.
+KEYBOARD_ACTIONS = ("MOVE FORWARD", "MOVE BACKWARD", "MOVE LEFT", "MOVE RIGHT", "LOOK UP", "LOOK DOWN",
+                    "LOOK LEFT", "LOOK RIGHT", "JUMP", "USE / CONFIRM", "RELOAD", "CROUCH", "ZOOM",
+                    "FIRE RIGHT WEAPON", "FIRE LEFT WEAPON", "PREVIOUS WEAPON", "NEXT WEAPON",
+                    "PREV DARKNESS", "NEXT DARKNESS", "MANIFEST DARKNESS", "USE DARKNESS POWER",
+                    "REDIRECT DARKLING", "JOURNAL", "PAUSE")
+KEYBOARD_PRIMARY = ("W", "S", "A", "D", "I", "K", "J", "L", "SPACE", "E", "R", "CTRL", "SHIFT",
+                    "X", "Z", "1", "2", "3", "4", "Q", "G", "F", "TAB", "ENTER")
+KEYBOARD_SECONDARY = tuple("C" if action == "CROUCH" else "UNBOUND" for action in KEYBOARD_ACTIONS)
 
 
 def replace_video_page(registry):
     r = registry
     page, = [n for n in r.roots if r.decode(n) == ("WINDOW", "options_video")]
-    template, = [n for n in r.roots if r.decode(n) == ("WINDOW", "options_video_dev")]
-    properties = [c for c in template.children if r.decode(c)[0] not in
-                  ("WINDOW", "ACCELLERATOR_3", "ACCELLERATOR_4", "ACCELLERATOR_5", "ACCELLERATOR_6")]
+    # Preserve the original calibration page class, properties and navigation.
+    # Its Gamma controls use the original option_update/save dispatch.
+    properties = [c for c in page.children if r.decode(c)[0] != "WINDOW"]
+    original_controls = [(n, dict(r.decode(c) for c in n.children))
+                         for n in page.children if r.decode(n)[0] == "WINDOW"]
+    gamma_label, = [n for n, p in original_controls if p.get("TEXT") == "sc, §LMENU_GAMMA"]
+    gamma_controls = [n for n, p in original_controls if p.get("GROUP") == "gamma"]
+    assert len(gamma_controls) == 2
+    def relocated(original, region):
+        children = [r.make("RGN", region) if r.decode(c)[0] == "RGN" else c
+                    for c in original.children]
+        return r.make("WINDOW", r.decode(original)[1], children)
     def window(cls, text, region, script=None):
         children = [r.make("CLASSNAME", cls), r.make("TEXT", text)]
         if script:
@@ -173,14 +192,103 @@ def replace_video_page(registry):
         return r.make("WINDOW", "", children)
     properties.append(window("CubeText", "nc, §LMENU_VIDEO_HEADING", "0,2,20,2"))
     for row, (key, name, initial) in enumerate(zip(SETTINGS, SETTING_NAMES, INITIAL_VALUES)):
-        y = 4 + row
+        y = 4 + row + (row > 0)
         properties.append(window("CubeText", "sc, " + name, f"1,{y},10,1"))
         properties.append(window("CubeButton", "sc, < " + initial.center(12) + " >", f"11,{y},8,1", "darkrecomp." + key))
-    properties.append(window("CubeText", "sc, Brightness: 100% is neutral", "0,15,20,1"))
-    properties.append(window("CubeText", "sc, Gamma: lower is darker; 1.00 is neutral", "0,16,20,1"))
-    properties.append(window("CubeText", "sc, Resolution/language: restart to apply", "0,17,20,1"))
-    properties.append(window("CubeText", "sc, Left/Right: change; confirm: next", "0,18,20,1"))
+        if row == 0:
+            properties.append(relocated(gamma_label, "1,5,10,1"))
+            properties.extend(relocated(n, "11,5,8,1") for n in gamma_controls)
+    properties.append(window("CubeText", "sc, BRIGHTNESS: 100% IS NEUTRAL", "0,16,20,1"))
+    properties.append(window("CubeText", "sc, GAMMA: ORIGINAL GAME CALIBRATION", "0,17,20,1"))
+    properties.append(window("CubeText", "sc, RESOLUTION/LANGUAGE: RESTART TO APPLY", "0,18,20,1"))
+    properties.append(window("CubeText", "sc, LEFT/RIGHT: CHANGE; CONFIRM: NEXT", "0,19,20,1"))
     r.set_children(page, properties)
+
+
+def add_pc_menu_actions(r):
+    def window(cls, text, region, script=None, *, style=None, always_paint=False, identifier=None):
+        children = [r.make("CLASSNAME", cls), r.make("TEXT", text)]
+        if script:
+            children.append(r.make("SCRIPT_PRESSED", script))
+        if always_paint:
+            children.append(r.make("ALWAYSPAINT", "1"))
+        if style:
+            children.append(r.make("STYLE", style))
+        if identifier:
+            children.append(r.make("ID", identifier))
+        children.append(r.make("RGN", region))
+        return r.make("WINDOW", "", children)
+
+    # Extend the actual retail menus (MainMenu/GAMEMENU are only forks).
+    for name in ("MainMenu_NoCheckpoint", "MainMenu_GotCheckpoint", "GAMEMENU_real"):
+        page, = [n for n in r.roots if r.decode(n) == ("WINDOW", name)]
+        buttons = [dict(r.decode(c) for c in n.children) for n in page.children
+                   if r.decode(n)[0] == "WINDOW"]
+        last_row = max(int(b["RGN"].split(",")[1]) for b in buttons if b.get("CLASSNAME") == "CubeButton")
+        r.set_children(page, [*page.children, window("CubeButton", "nc, EXIT GAME",
+            f"0,{last_row + 2},20,1", "cg_submenu('darkrecomp_exit_confirm')")])
+
+    controls, = [n for n in r.roots if r.decode(n) == ("WINDOW", "options_controller")]
+    children = list(controls.children)
+    # Insert in authored navigation order between Advanced and Invert Y.
+    index = next(i for i, n in enumerate(children) if r.decode(n)[0] == "WINDOW"
+                 and dict(r.decode(c) for c in n.children).get("RGN") == "1, 11, 10, 1")
+    children.insert(index, window("CubeButton", "nc, KEYBOARD BINDINGS", "0,9,20,1", "darkrecomp.keybindings"))
+    r.set_children(controls, children)
+
+    original_root_count = len(r.roots)
+    # Keep confirmation inside the game and put Cancel first in focus order.
+    r.roots.append(r.make("WINDOW", "darkrecomp_exit_confirm", [
+        r.make("CLASSNAME", "CubeMenu"),
+        r.make("ACCELLERATOR_1", "gui_cancel,,cg_prevmenu()"),
+        r.make("ACCELLERATOR_2", "gui_back,,cg_prevmenu()"),
+        # CubeMenu's original registry loader (sub_8239AE50) initializes its
+        # glyph/cell lookup only when this property exists. Empty is the
+        # retail spelling; omitting it leaves an entirely black menu.
+        r.make("DEFAULTLOOKUP", ""), r.make("RGN", "0,0,640,480"),
+        r.make("STYLE", "HIDDENFOCUS"),
+        window("CubeText", "nc, EXIT GAME?", "0,5,20,2"),
+        window("CubeText", "sc, UNSAVED PROGRESS WILL BE LOST.", "0,8,20,1"),
+        window("CubeButton", "nc, CANCEL", "0,11,20,1", "cg_prevmenu()"),
+        window("CubeButton", "nc, EXIT GAME", "0,13,20,1", "darkrecomp.exit"),
+    ]))
+    for page in range(4):
+        # cg_switchmenu is the retail controller-template pagination route.
+        # It replaces the current page without adding a submenu history level.
+        previous, following = (page - 1) % 4 + 1, (page + 1) % 4 + 1
+        children = [r.make("CLASSNAME", "CubeMenu"),
+            r.make("ID", f"DARKRECOMP_KEYBOARD_{page + 1}"),
+            r.make("ACCELLERATOR_1", "gui_cancel,,cg_prevmenu()"),
+            r.make("ACCELLERATOR_2", "gui_back,,cg_prevmenu()"),
+            r.make("DEFAULTLOOKUP", ""), r.make("RGN", "0,0,640,480"),
+            r.make("STYLE", "HIDDENFOCUS"),
+            window("CubeText", "nc, KEYBOARD BINDINGS", "0,4,20,2"),
+            window("CubeText", "sc, ACTION", "1,6,9,1"),
+            window("CubeText", "sc, PRIMARY", "10,6,5,1"),
+            window("CubeText", "sc, SECONDARY", "15,6,5,1")]
+        for row in range(6):
+            action = page * 6 + row
+            y = 7 + row
+            children.append(window("CubeText", "sc, " + KEYBOARD_ACTIONS[action], f"1,{y},9,1"))
+            # Retail TEXT sizing trims plain padding. Visible endpoints keep
+            # the full five-cell hit/paint region for every live key name.
+            for slot, x, width, values in ((0, 10, 5, KEYBOARD_PRIMARY), (1, 15, 5, KEYBOARD_SECONDARY)):
+                children.append(window("CubeButton", "sc, [" + values[action].center(8) + "]",
+                    f"{x},{y},{width},1", f"darkrecomp.keyboard.bind.{action}.{slot}", always_paint=True))
+        children.extend([
+            window("CubeButton", "sc, PREVIOUS", "1,14,6,1", f"cg_switchmenu('darkrecomp_keyboard_{previous}')"),
+            window("CubeText", f"sc, PAGE {page + 1}/4", "7,14,6,1"),
+            window("CubeButton", "sc, NEXT", "13,14,6,1", f"cg_switchmenu('darkrecomp_keyboard_{following}')"),
+            window("CubeButton", "sc, DEFAULTS", "1,16,7,1", "darkrecomp.keyboard.defaults"),
+            window("CubeButton", "sc, SAVE", "8,16,5,1", "darkrecomp.keyboard.save", always_paint=True),
+            window("CubeButton", "sc, CANCEL", "13,16,6,1", "darkrecomp.keyboard.cancel")])
+        r.roots.append(r.make("WINDOW", f"darkrecomp_keyboard_{page + 1}", children))
+    # Preserve the parallel root lookup table, including descriptor roots.
+    h = 5381
+    for c in b"window":
+        h = (h * 33 + c) & 0xffffffff
+    r.root_hashes = r.root_hashes[:original_root_count * 2] + struct.pack("<H", (h - 5381) & 0xffff) * (len(r.roots) - original_root_count)
+    r.root_hashes += b"\0" * (-len(r.root_hashes) % 4)
 
 
 def compile_menu(source):
@@ -192,6 +300,7 @@ def compile_menu(source):
         assert version == 0x203
         r = Registry(data[offset:offset + size], endian)
         replace_video_page(r)
+        add_pc_menu_actions(r)
         payloads.append(r.encode())
     output = data[:0x90]
     for entry, payload in zip((0x30, 0x60), payloads):

@@ -10,13 +10,25 @@ static void testCViewBoundaries(PPCContext& ctx) {
         check(VirtualQuery(base+view, &info, sizeof(info)) != 0 &&
               info.AllocationBase == base+view && info.Type == MEM_MAPPED &&
               static_cast<uint8_t*>(info.BaseAddress)+info.RegionSize <= base+Memory::cViewEnd(view),
-              "C mapping is not bounded by its owned 16 MiB view");
+              "C mapping is not bounded by its owned host view");
     }
     constexpr uint32_t bytes = Memory::cViewBytes+0x4000;
     struct Allocation {
         uint32_t address = 0;
         ~Allocation() { if (address) memory->release(address); }
     } allocation;
+    Allocation stats;
+    stats.address = memory->allocate(4096);
+    check(stats.address != 0, "Cannot allocate guest memory statistics fixture");
+    auto statistics = [&] {
+        memory->write32(stats.address, 104);
+        ctx.r3.u64 = stats.address;
+        __imp__MmQueryStatistics(ctx, base);
+        check(ctx.r3.u32 == 0, "Guest memory statistics import failed");
+        return std::array<uint32_t, 3>{memory->read32(stats.address + 20),
+            memory->read32(stats.address + 40), memory->read32(stats.address + 12)};
+    };
+    const auto before = statistics();
     uint32_t boundary = 0;
     for (uint32_t edge = Memory::cAliasBegin+Memory::cViewBytes;
          edge+Memory::cViewBytes < Memory::cAliasEnd; edge += Memory::cViewBytes) {
@@ -28,6 +40,20 @@ static void testCViewBoundaries(PPCContext& ctx) {
     const uint32_t a = allocation.address;
     const uint32_t c = Memory::cAliasBegin+Memory::physicalAddress(a);
     const uint32_t e = Memory::cAliasEnd+Memory::physicalAddress(a)-4096;
+    ctx.r3.u64 = a;
+    __imp__MmQueryAllocationSize(ctx, base);
+    check(ctx.r3.u32 == bytes && memory->allocationSize(a) == bytes,
+          "Host C views changed the exact guest allocation size");
+    ctx.r3.u64 = a + 0x2000;
+    __imp__MmQueryAllocationSize(ctx, base);
+    check(ctx.r3.u32 == 0, "Host C views published a guest allocation at an interior address");
+    const auto allocated = statistics();
+    check(allocated[0] == before[0] + bytes && allocated[1] == before[1] + bytes / 4096 &&
+          allocated[2] + bytes / 4096 == before[2],
+          "Host C views changed guest byte/page/available-page accounting");
+    ctx.r3.u64 = c;
+    __imp__MmQueryAddressProtect(ctx, base);
+    check(ctx.r3.u32 == PAGE_READWRITE, "Host C views changed the guest address protection import");
     const std::array<uint32_t, 6> probes{0, 0x1ffc, 0x2000,
         Memory::cViewBytes+0x1ffc, Memory::cViewBytes+0x2000, bytes-4};
     auto protections = [&](DWORD expected) {
@@ -40,6 +66,12 @@ static void testCViewBoundaries(PPCContext& ctx) {
     };
     protections(PAGE_READWRITE);
     for (uint32_t offset : probes) {
+        for (uint32_t alias : {a,c,e}) {
+            ctx.r3.u64 = alias + offset;
+            __imp__MmGetPhysicalAddress(ctx, base);
+            check(ctx.r3.u32 == Memory::physicalAddress(a) + offset && ctx.r4.u32 == 0,
+                  "Host C view boundary changed the guest physical-address import");
+        }
         memory->write32(a+offset, 0x11223344u+offset);
         check(memory->read32(c+offset) == 0x11223344u+offset &&
               memory->read32(e+offset) == 0x11223344u+offset, "C view backing offset or E bias changed");
@@ -115,6 +147,7 @@ static void testCViewBoundaries(PPCContext& ctx) {
     check(memory->release(a), "Release across guarded C views failed");
     allocation.address = 0;
     protections(PAGE_NOACCESS);
+    check(statistics() == before, "Released C-view backing remained in guest allocation statistics");
     check(readRequest(boundary-4) == 0x80070057u, "Kernel accepted released C input");
     allocation.address = memory->allocate(bytes, 4096, a, uint64_t(a)+bytes);
     check(allocation.address == a, "C view splitting changed exact physical allocation reuse");
@@ -124,5 +157,29 @@ static void testCViewBoundaries(PPCContext& ctx) {
     check(memory->releaseContaining(a+bytes-4), "Interior release across C views failed");
     allocation.address = 0;
     protections(PAGE_NOACCESS);
-    puts("Native C views preserve A/C/E backing, cross-view commit/release, fresh permissions and kernel real-region boundaries.");
+    check(statistics() == before, "Interior C-view release changed guest allocation accounting");
+
+    // The title requests 16 MiB physical pages independently of the smaller
+    // host mapping views. Exercise the actual guest allocation/free imports.
+    Allocation guestPage;
+    ctx.r3.u64 = 0; ctx.r4.u64 = 4096; ctx.r5.u64 = 0x80000004u;
+    ctx.r6.u64 = 0; ctx.r7.u64 = 0xffffffffu; ctx.r8.u64 = 0;
+    __imp__MmAllocatePhysicalMemoryEx(ctx, base);
+    guestPage.address = ctx.r3.u32;
+    check(guestPage.address && (guestPage.address & 0xe0000000u) == Memory::cAliasBegin &&
+          (guestPage.address & 0x00ffffffu) == 0,
+          "Host C views changed the guest 16 MiB allocation alias or alignment");
+    ctx.r3.u64 = guestPage.address;
+    __imp__MmQueryAllocationSize(ctx, base);
+    check(ctx.r3.u32 == 0x01000000u, "Host C views changed guest 16 MiB physical page rounding");
+    const auto pageStats = statistics();
+    check(pageStats[0] == before[0] + 0x01000000u && pageStats[1] == before[1] + 4096 &&
+          pageStats[2] + 4096 == before[2], "Guest 16 MiB allocation was accounted once per host view");
+    ctx.r4.u64 = guestPage.address;
+    __imp__MmFreePhysicalMemory(ctx, base);
+    check(memory->allocationSize(guestPage.address) == 0,
+          "Guest physical free did not release the complete 16 MiB allocation");
+    guestPage.address = 0;
+    check(statistics() == before, "Guest physical free did not restore allocation accounting");
+    puts("Native C views preserve guest 16 MiB allocation/accounting, physical imports, A/C/E backing, cross-view permissions and release/reuse.");
 }

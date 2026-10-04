@@ -1401,6 +1401,18 @@ PPC_FUNC(sub_82865FD0) {
     __imp__sub_82865FD0(ctx,base);
 }
 extern "C" PPC_FUNC(__imp__sub_82867620);
+// Original completed LUT emitters, after D3D's conversion for the display.
+// Queue immutable state in command order, including menu/video-only frames.
+extern "C" PPC_FUNC(__imp__sub_828709C0);
+PPC_FUNC(sub_828709C0) {
+    DarkRecomp::Native::previewObserveDisplayGamma(base,ctx.r4.u32,true);
+    __imp__sub_828709C0(ctx,base);
+}
+extern "C" PPC_FUNC(__imp__sub_828708E0);
+PPC_FUNC(sub_828708E0) {
+    DarkRecomp::Native::previewObserveDisplayGamma(base,ctx.r4.u32,false);
+    __imp__sub_828708E0(ctx,base);
+}
 PPC_FUNC(sub_82867620) {
     captureWorldBoundary(0x82867620,ctx,base);
     const auto mxcsr=_mm_getcsr();

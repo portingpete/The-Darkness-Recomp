@@ -30,6 +30,10 @@ void updateConstants(ID3D11DeviceContext* context,ID3D11Buffer* buffer,const voi
     std::memcpy(mapped.pData,data,bytes);
     context->Unmap(buffer,0);
 }
+uint32_t rgba8From10(uint32_t value) {
+    auto channel=[&](unsigned shift){return (((value>>shift)&1023)*255+511)/1023;};
+    return channel(0)|(channel(10)<<8)|(channel(20)<<16)|((value>>30)*85<<24);
+}
 constexpr char shader[] = R"(
 cbuffer Transform : register(b0) { row_major float4x4 projection; };
 struct Input { float3 position : POSITION; float2 uv : TEXCOORD0; float4 color : COLOR0; };
@@ -66,9 +70,25 @@ Presentation presentationVertex(uint id : SV_VertexID) {
     return o;
 }
 Texture2D<float4> presentationImage : register(t3);
+Buffer<uint2> displayGammaRamp : register(t4);
 cbuffer PresentationSettings : register(b1) { float4 displayTone; };
+float displayGammaChannel(float value,uint channel) {
+    if(displayTone.z!=0.0) {
+        uint q=(uint)(saturate(value)*1023.0+0.5);
+        uint2 ramp=displayGammaRamp[(q>>3)*3+channel];
+        return saturate((float(ramp.x)+float((q&7)*ramp.y)/8.0)/(64.0*1023.0));
+    }
+    uint q=(uint)(saturate(value)*255.0+0.5);
+    return saturate(float(displayGammaRamp[q*3+channel].x)/(64.0*1023.0));
+}
+float4 displayGammaPixel(Presentation f) : SV_TARGET {
+    // Apply the Xbox LUT to source texels before scaling or optional FXAA.
+    float4 color=presentationImage.Load(int3(int2(f.position.xy),0));
+    color.rgb=float3(displayGammaChannel(color.r,0),displayGammaChannel(color.g,1),displayGammaChannel(color.b,2));
+    color.a=1.0;
+    return color;
+}
 float4 applyDisplayTone(float4 color) {
-    if (displayTone.x != 1.0) color.rgb = pow(saturate(color.rgb), displayTone.xxx);
     if (displayTone.y != 1.0) color.rgb = saturate(color.rgb * displayTone.y);
     return color;
 }
@@ -109,8 +129,8 @@ float4 antialiasingPixel(Presentation f) : SV_TARGET {
 }
 
 EnginePreviewD3D11::EnginePreviewD3D11(ID3D11Device* device, ID3D11DeviceContext* context, IDXGISwapChain* swapChain,
-                                     uint32_t renderWidth, uint32_t renderHeight, uint32_t scale)
-    : device_(device), context_(context), swapChain_(swapChain) {
+                                     uint32_t renderWidth, uint32_t renderHeight, uint32_t scale,bool highPrecisionDisplay)
+    : device_(device), context_(context), swapChain_(swapChain),highPrecisionDisplay_(highPrecisionDisplay) {
     if (!device || !context || !swapChain) throw std::invalid_argument("Engine preview requires initialized display");
     if (scale<1 || scale>3) throw std::invalid_argument("World render scale must be between one and three");
     Ptr<ID3D11Texture2D> back;
@@ -118,6 +138,7 @@ EnginePreviewD3D11::EnginePreviewD3D11(ID3D11Device* device, ID3D11DeviceContext
     D3D11_TEXTURE2D_DESC desc{}; back->GetDesc(&desc);
     if (renderWidth && renderHeight) { desc.Width = renderWidth; desc.Height = renderHeight; }
     width_ = desc.Width; height_ = desc.Height;
+    if(highPrecisionDisplay_)desc.Format=DXGI_FORMAT_R10G10B10A2_UNORM;
     desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE; desc.MiscFlags = 0;
     check(device_->CreateTexture2D(&desc, nullptr, &target_), "create target");
     check(device_->CreateRenderTargetView(target_.Get(), nullptr, &rtv_), "create target view");
@@ -153,6 +174,14 @@ EnginePreviewD3D11::EnginePreviewD3D11(ID3D11Device* device, ID3D11DeviceContext
     check(device_->CreateBuffer(&buffer, nullptr, &constants_), "create matrix buffer");
     buffer.ByteWidth = 16;
     check(device_->CreateBuffer(&buffer, nullptr, &presentationConstants_), "create presentation settings buffer");
+    D3D11_BUFFER_DESC gammaBuffer{};
+    gammaBuffer.ByteWidth=sizeof(Native::DisplayGamma{}.entries);
+    gammaBuffer.Usage=D3D11_USAGE_DEFAULT;gammaBuffer.BindFlags=D3D11_BIND_SHADER_RESOURCE;
+    check(device_->CreateBuffer(&gammaBuffer,nullptr,&displayGammaBuffer_),"create display gamma buffer");
+    D3D11_SHADER_RESOURCE_VIEW_DESC gammaView{};
+    gammaView.Format=DXGI_FORMAT_R32G32_UINT;gammaView.ViewDimension=D3D11_SRV_DIMENSION_BUFFER;
+    gammaView.Buffer.NumElements=768;
+    check(device_->CreateShaderResourceView(displayGammaBuffer_.Get(),&gammaView,&displayGammaView_),"create display gamma view");
     // Worst-case single immediate mesh: 16384 vertices (36 bytes each) and
     // 49152 indices. One DISCARD upload per mesh avoids per-frame kernel
     // allocations while keeping each draw's contents independent.
@@ -185,6 +214,10 @@ EnginePreviewD3D11::EnginePreviewD3D11(ID3D11Device* device, ID3D11DeviceContext
                     "presentationPixel", "ps_5_0", D3DCOMPILE_ENABLE_STRICTNESS, 0, &pixel, nullptr), "compile presentation pixel");
     check(device_->CreateVertexShader(vertex->GetBufferPointer(), vertex->GetBufferSize(), nullptr, &presentationVs_), "create presentation vertex");
     check(device_->CreatePixelShader(pixel->GetBufferPointer(), pixel->GetBufferSize(), nullptr, &presentationPs_), "create presentation pixel");
+    pixel.Reset();errors.Reset();
+    check(D3DCompile(shader,sizeof(shader)-1,"display_gamma",nullptr,nullptr,
+                    "displayGammaPixel","ps_5_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&pixel,&errors),"compile display gamma shader");
+    check(device_->CreatePixelShader(pixel->GetBufferPointer(),pixel->GetBufferSize(),nullptr,&displayGammaPs_),"create display gamma shader");
     pixel.Reset(); errors.Reset();
     hr = D3DCompile(shader, sizeof(shader)-1, "presentation", nullptr, nullptr,
                     "antialiasingPixel", "ps_5_0", D3DCOMPILE_ENABLE_STRICTNESS, 0, &pixel, &errors);
@@ -193,6 +226,50 @@ EnginePreviewD3D11::EnginePreviewD3D11(ID3D11Device* device, ID3D11DeviceContext
     check(device_->CreatePixelShader(pixel->GetBufferPointer(), pixel->GetBufferSize(), nullptr, &antialiasingPs_), "create FXAA pixel shader");
     world_=std::make_unique<WorldRendererD3D11>(device,context,scale);
     render({});
+}
+
+bool EnginePreviewD3D11::resizeRenderTarget(uint32_t width,uint32_t height,uint32_t scale) {
+    if(frameOpen_)throw std::logic_error("Cannot resize an unfinished preview frame");
+    if(scale<1 || scale>3 || !width || !height ||
+       width>D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION || height>D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION)
+        throw std::invalid_argument("Invalid preview render size or scale");
+    const auto previousScale=world_->renderScale();
+    if(width_%previousScale || height_%previousScale || width%scale || height%scale ||
+       width/scale!=width_/previousScale || height/scale!=height_/previousScale)
+        throw std::invalid_argument("Live resizing must preserve logical guest dimensions");
+    world_->requireResizeBoundary();
+    if(width==width_ && height==height_ && scale==previousScale)return false;
+    context_->ClearState();world_->invalidateBindings();
+    // Prepare the preview target and all of its views before changing world
+    // scale. After world migration commits, only nonthrowing owner moves remain.
+    auto target=world_->resizedTexture(target_.Get(),width,height);
+    Ptr<ID3D11RenderTargetView> rtv;
+    Ptr<ID3D11ShaderResourceView> presentationSource;
+    Ptr<ID3D11Texture2D> staging;
+    check(device_->CreateRenderTargetView(target.Get(),nullptr,&rtv),"resized target view");
+    check(device_->CreateShaderResourceView(target.Get(),nullptr,&presentationSource),"resized presentation source");
+    D3D11_TEXTURE2D_DESC desc{};target->GetDesc(&desc);
+    desc.BindFlags=desc.MiscFlags=0;desc.Usage=D3D11_USAGE_STAGING;desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+    check(device_->CreateTexture2D(&desc,nullptr,&staging),"resized readback");
+    Ptr<ID3D11Texture2D> calibrated,calibratedStaging;
+    Ptr<ID3D11ShaderResourceView> calibratedSource;
+    Ptr<ID3D11RenderTargetView> calibratedTarget;
+    if(displayGamma_) {
+        // Calibration allocations belong to the same resize transaction. An
+        // allocation failure must leave the previous F6 output usable.
+        target->GetDesc(&desc);desc.Format=DXGI_FORMAT_R10G10B10A2_UNORM;
+        check(device_->CreateTexture2D(&desc,nullptr,&calibrated),"resized calibrated image");
+        check(device_->CreateShaderResourceView(calibrated.Get(),nullptr,&calibratedSource),"resized calibrated source");
+        check(device_->CreateRenderTargetView(calibrated.Get(),nullptr,&calibratedTarget),"resized calibrated target");
+        desc.BindFlags=0;desc.Usage=D3D11_USAGE_STAGING;desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+        check(device_->CreateTexture2D(&desc,nullptr,&calibratedStaging),"resized calibrated readback");
+    }
+    world_->setRenderScale(scale);
+    target_=std::move(target);rtv_=std::move(rtv);presentationSource_=std::move(presentationSource);
+    staging_=std::move(staging);width_=width;height_=height;
+    calibrated_=std::move(calibrated);calibratedStaging_=std::move(calibratedStaging);
+    calibratedSource_=std::move(calibratedSource);calibratedTarget_=std::move(calibratedTarget);calibrationDirty_=true;
+    return true;
 }
 
 void EnginePreviewD3D11::uploadVideoFrame(const VideoFrame& video) {
@@ -231,6 +308,7 @@ void EnginePreviewD3D11::render(const std::vector<SimpleMesh>& meshes,Native::Pr
     world_->beginFrame();
     if(inspectionPending_) {world_->inspectNextFrame();inspectionPending_=false;}
     worldPresented_=false;
+    calibrationDirty_=true;
     // Prompt source is read once per frame: no per-mesh input locks, and all
     // prompt meshes in the frame agree. Labels are combined truthful icons, so
     // no mouse-capture context is claimed; the same source feeds the world.
@@ -266,6 +344,12 @@ void EnginePreviewD3D11::render(const std::vector<SimpleMesh>& meshes,Native::Pr
     bool simpleStateDirty = true;
     for (const auto& mesh : meshes) {
         Native::setRenderSamplePhase(Native::RenderSamplePhase::other);
+        if(mesh.displayGamma) {
+            if(!displayGamma_ || *displayGamma_!=*mesh.displayGamma)
+                context_->UpdateSubresource(displayGammaBuffer_.Get(),0,nullptr,mesh.displayGamma->entries.data(),0,0);
+            displayGamma_=mesh.displayGamma;calibrationDirty_=true;
+            continue;
+        }
         if(mesh.worldQuery) {world_->histogram(mesh.worldQuery,mesh.worldQueryBegin);continue;}
         // Partial clears replace the pipeline; surface growth also unbinds targets.
         if (mesh.worldClear) {world_->clear(*mesh.worldClear);simpleStateDirty=true;continue;}
@@ -398,19 +482,51 @@ void EnginePreviewD3D11::releaseDisplayTarget() {
     presentationTarget_.Reset();
     world_->invalidateBindings();
 }
+void EnginePreviewD3D11::updateCalibratedImage() {
+    if(!displayGamma_ || !calibrationDirty_)return;
+    if(!calibrated_) {
+        D3D11_TEXTURE2D_DESC desc{};target_->GetDesc(&desc);
+        desc.Format=DXGI_FORMAT_R10G10B10A2_UNORM;
+        Ptr<ID3D11Texture2D> texture,staging;
+        Ptr<ID3D11RenderTargetView> target;
+        Ptr<ID3D11ShaderResourceView> source;
+        check(device_->CreateTexture2D(&desc,nullptr,&texture),"create calibrated image");
+        check(device_->CreateRenderTargetView(texture.Get(),nullptr,&target),"create calibrated target");
+        check(device_->CreateShaderResourceView(texture.Get(),nullptr,&source),"create calibrated source");
+        desc.BindFlags=0;desc.Usage=D3D11_USAGE_STAGING;desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+        check(device_->CreateTexture2D(&desc,nullptr,&staging),"create calibrated readback");
+        calibrated_=std::move(texture);calibratedTarget_=std::move(target);
+        calibratedSource_=std::move(source);calibratedStaging_=std::move(staging);
+    }
+    context_->ClearState();world_->invalidateBindings();
+    ID3D11RenderTargetView* target=calibratedTarget_.Get();context_->OMSetRenderTargets(1,&target,nullptr);
+    context_->OMSetDepthStencilState(depth_.Get(),0);context_->RSSetState(raster_.Get());
+    const D3D11_VIEWPORT viewport{0,0,float(width_),float(height_),0,1};context_->RSSetViewports(1,&viewport);
+    context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    context_->VSSetShader(presentationVs_.Get(),nullptr,0);context_->PSSetShader(displayGammaPs_.Get(),nullptr,0);
+    const float tone[]{0,1,displayGamma_->piecewise?1.0f:0.0f,0};
+    updateConstants(context_.Get(),presentationConstants_.Get(),tone,sizeof(tone));
+    ID3D11Buffer* constants=presentationConstants_.Get();context_->PSSetConstantBuffers(1,1,&constants);
+    ID3D11ShaderResourceView* sources[]{presentationSource_.Get(),displayGammaView_.Get()};context_->PSSetShaderResources(3,2,sources);
+    context_->Draw(3,0);
+    ID3D11ShaderResourceView* empty[2]{};context_->PSSetShaderResources(3,2,empty);
+    context_->OMSetRenderTargets(0,nullptr,nullptr);
+    calibrationDirty_=false;
+}
 void EnginePreviewD3D11::copyToDisplay() {
     if(frameOpen_)throw std::logic_error("Cannot display an unfinished preview frame");
     Ptr<ID3D11Texture2D> back; check(swapChain_->GetBuffer(0, IID_PPV_ARGS(&back)), "get display target");
     D3D11_TEXTURE2D_DESC desc{}; back->GetDesc(&desc);
     const auto settings = Native::graphicsSettings();
     const bool antialiasing = settings.antialiasing;
-    if (!antialiasing && settings.gammaPercent == 100 && settings.brightnessPercent == 100 &&
+    if (!antialiasing && !displayGamma_ && !highPrecisionDisplay_ && settings.brightnessPercent == 100 &&
         desc.Width == width_ && desc.Height == height_) {
         context_->CopyResource(back.Get(), target_.Get());
         return;
     }
     if (!presentationTarget_)
         check(device_->CreateRenderTargetView(back.Get(), nullptr, &presentationTarget_), "create presentation target");
+    updateCalibratedImage();
     context_->ClearState(); world_->invalidateBindings();
     const float black[]{0, 0, 0, 1};
     context_->ClearRenderTargetView(presentationTarget_.Get(), black);
@@ -424,11 +540,11 @@ void EnginePreviewD3D11::copyToDisplay() {
     context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     context_->VSSetShader(presentationVs_.Get(), nullptr, 0);
     context_->PSSetShader(antialiasing ? antialiasingPs_.Get() : presentationPs_.Get(), nullptr, 0);
-    const float tone[]{100.0f / settings.gammaPercent, settings.brightnessPercent / 100.0f, 0, 0};
+    const float tone[]{0,settings.brightnessPercent/100.0f,0,0};
     updateConstants(context_.Get(),presentationConstants_.Get(),tone,sizeof(tone));
     ID3D11Buffer* constants = presentationConstants_.Get(); context_->PSSetConstantBuffers(1, 1, &constants);
     ID3D11SamplerState* sampler = sampler_.Get(); context_->PSSetSamplers(0, 1, &sampler);
-    ID3D11ShaderResourceView* source = presentationSource_.Get(); context_->PSSetShaderResources(3, 1, &source);
+    ID3D11ShaderResourceView* source = displayGamma_?calibratedSource_.Get():presentationSource_.Get(); context_->PSSetShaderResources(3, 1, &source);
     context_->Draw(3, 0);
     source = nullptr; context_->PSSetShaderResources(3, 1, &source);
 }
@@ -438,7 +554,7 @@ uint32_t EnginePreviewD3D11::readPixel(uint32_t x, uint32_t y) {
     context_->CopyResource(staging_.Get(), target_.Get());
     D3D11_MAPPED_SUBRESOURCE mapped{}; check(context_->Map(staging_.Get(),0,D3D11_MAP_READ,0,&mapped), "read pixel");
     uint32_t value; std::memcpy(&value, static_cast<const uint8_t*>(mapped.pData)+y*mapped.RowPitch+x*4,4);
-    context_->Unmap(staging_.Get(),0); return value;
+    context_->Unmap(staging_.Get(),0); return highPrecisionDisplay_?rgba8From10(value):value;
 }
 bool EnginePreviewD3D11::trySaveShadowCapture(const std::filesystem::path& path) noexcept {
     try {
@@ -455,16 +571,20 @@ bool EnginePreviewD3D11::trySaveShadowCapture(const std::filesystem::path& path)
 void EnginePreviewD3D11::saveBmp(const std::filesystem::path& path) {
     if(frameOpen_)throw std::logic_error("Cannot capture an unfinished preview frame");
     std::vector<uint8_t> pixels(size_t(width_)*height_*4);
-    context_->CopyResource(staging_.Get(), target_.Get());
-    D3D11_MAPPED_SUBRESOURCE mapped{}; check(context_->Map(staging_.Get(),0,D3D11_MAP_READ,0,&mapped), "capture frame");
+    updateCalibratedImage();
+    auto* staging=displayGamma_?calibratedStaging_.Get():staging_.Get();
+    context_->CopyResource(staging,displayGamma_?calibrated_.Get():target_.Get());
+    D3D11_MAPPED_SUBRESOURCE mapped{}; check(context_->Map(staging,0,D3D11_MAP_READ,0,&mapped), "capture frame");
     for (uint32_t y=0;y<height_;++y) {
         const auto* row = static_cast<const uint8_t*>(mapped.pData)+y*mapped.RowPitch;
         for (uint32_t x=0;x<width_;++x) {
             auto* output = pixels.data()+(size_t(y)*width_+x)*4;
-            output[0]=row[x*4+2]; output[1]=row[x*4+1]; output[2]=row[x*4]; output[3]=255;
+            uint32_t value;std::memcpy(&value,row+x*4,4);
+            if(displayGamma_ || highPrecisionDisplay_)value=rgba8From10(value);
+            output[0]=uint8_t(value>>16);output[1]=uint8_t(value>>8);output[2]=uint8_t(value);output[3]=255;
         }
     }
-    context_->Unmap(staging_.Get(),0);
+    context_->Unmap(staging,0);
     BITMAPFILEHEADER file{}; file.bfType=0x4D42; file.bfOffBits=sizeof(file)+sizeof(BITMAPINFOHEADER);
     file.bfSize=file.bfOffBits+DWORD(pixels.size());
     BITMAPINFOHEADER info{}; info.biSize=sizeof(info); info.biWidth=width_; info.biHeight=-LONG(height_);

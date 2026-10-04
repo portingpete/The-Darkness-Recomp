@@ -8,7 +8,7 @@
 #include <vector>
 
 namespace DarkRecomp {
-namespace Native {struct WorldDraw;struct WorldClear;struct WorldResolve;struct WorldTexture;struct StoredDraw;struct WorldQuery;}
+namespace Native {struct WorldDraw;struct WorldClear;struct WorldResolve;struct WorldTexture;struct StoredDraw;struct WorldQuery;struct DisplayGamma;}
 struct SimpleVertex { float position[3]; float uv[2]; float color[4]; };
 struct AlphaImage {
     uint32_t width = 0, height = 0;
@@ -56,6 +56,7 @@ struct VideoFrame {
     double timestampSeconds = 0;
 };
 struct SimpleMesh {
+    std::shared_ptr<const Native::DisplayGamma> displayGamma;
     std::shared_ptr<Native::WorldQuery> worldQuery;
     bool worldQueryBegin=false;
     std::shared_ptr<const Native::WorldDraw> world;
@@ -147,6 +148,8 @@ bool previewWorldActive();
 void previewObserveResolve(uint8_t*,uint32_t device,uint32_t flags,uint32_t rectangle,uint32_t destination,
                            uint32_t offset,uint32_t color,float depth,uint32_t stencil,uint32_t face,uint32_t mip);
 void previewObservePresent(uint8_t*,uint32_t frontbuffer);
+// Observe the original completed display table at its PM4 emission boundary.
+void previewObserveDisplayGamma(uint8_t*,uint32_t ramp,bool piecewise);
 // Original histogram callbacks bracket draws and consume prior completed bins.
 void previewBeginHistogram(unsigned bin);
 void previewEndHistogram();

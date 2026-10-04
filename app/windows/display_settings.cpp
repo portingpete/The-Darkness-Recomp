@@ -68,6 +68,10 @@ bool saveFieldOfView(const std::filesystem::path& path, float value) noexcept {
 
 GraphicsSettings loadGraphicsSettings(const std::filesystem::path& path) noexcept {
     const GraphicsSettings defaults;
+    const auto anisotropy = readUnsigned(path, L"AnisotropyLevels", defaults.anisotropyLevels, 1, 16);
+    // Original gamma calibration is persisted by the guest profile. Legacy
+    // GammaPercent is an unrelated retired curve; ignore it and preserve it
+    // as an inert key when saving the remaining native preferences.
     return {readUnsigned(path, L"FrameRateLimit", defaults.frameRateLimit, 0, 1000),
             readUnsigned(path, L"RenderHeight", defaults.renderHeight, 180, kMaximumRenderHeight),
             readUnsigned(path, L"VerticalSync", defaults.verticalSync, 0, 1) != 0,
@@ -75,8 +79,8 @@ GraphicsSettings loadGraphicsSettings(const std::filesystem::path& path) noexcep
             readUnsigned(path, L"Bloom", defaults.bloom, 0, 1) != 0,
             readUnsigned(path, L"MotionBlur", defaults.motionBlur, 0, 1) != 0,
             readUnsigned(path, L"Antialiasing", defaults.antialiasing, 0, 1) != 0,
-            readUnsigned(path, L"GammaPercent", defaults.gammaPercent, 50, 150),
-            readUnsigned(path, L"BrightnessPercent", defaults.brightnessPercent, 50, 200)};
+            readUnsigned(path, L"BrightnessPercent", defaults.brightnessPercent, 50, 200),
+            validAnisotropyLevels(anisotropy) ? anisotropy : defaults.anisotropyLevels};
 }
 
 namespace {
@@ -103,8 +107,8 @@ bool saveSettings(const std::filesystem::path& path, float fov, const GraphicsSe
             !writeUnsigned(staging, L"Bloom", settings.bloom) ||
             !writeUnsigned(staging, L"MotionBlur", settings.motionBlur) ||
             !writeUnsigned(staging, L"Antialiasing", settings.antialiasing) ||
-            !writeUnsigned(staging, L"GammaPercent", settings.gammaPercent) ||
             !writeUnsigned(staging, L"BrightnessPercent", settings.brightnessPercent) ||
+            !writeUnsigned(staging, L"AnisotropyLevels", settings.anisotropyLevels) ||
             (language && !saveGameLanguage(staging, *language))) return false;
         WritePrivateProfileStringW(nullptr, nullptr, nullptr, temporary);
         return MoveFileExW(temporary, path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != FALSE;

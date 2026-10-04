@@ -2,6 +2,8 @@
 #include "audio_pcm_tap.h"
 #include "audio_resampler_trace.h"
 #include "audio_output_headroom.h"
+#include "audio_pcm_convert.h"
+#include "audio_pcm_storage.h"
 #include "runtime.h"
 #include "renderer/engine/engine_performance.h"
 #include "ppc_recomp_shared.h"
@@ -11,7 +13,6 @@
 #include <avrt.h>
 #include <atomic>
 #include <condition_variable>
-#include <deque>
 #include <mutex>
 #include <vector>
 
@@ -91,16 +92,7 @@ bool audioGuestWritable(Memory* owner, uint32_t address, uint32_t bytes) {
 }  // namespace
 
 void audioConvertPlanarBEFloat(const uint8_t* planarBE, float* interleavedOut) {
-    for (uint32_t frame = 0; frame < kAudioFramesPerSubmit; ++frame) {
-        for (uint32_t ch = 0; ch < kAudioChannels; ++ch) {
-            const uint8_t* src = planarBE + (size_t(ch) * kAudioFramesPerSubmit + frame) * 4;
-            uint32_t bits = (uint32_t(src[0]) << 24) | (uint32_t(src[1]) << 16) |
-                            (uint32_t(src[2]) << 8) | uint32_t(src[3]);
-            float value;
-            memcpy(&value, &bits, 4);
-            interleavedOut[size_t(frame) * kAudioChannels + ch] = value;
-        }
-    }
+    audioConvertPlanarBEFloatSamples(planarBE, interleavedOut);
 }
 
 struct AudioRenderDriver::Impl {
@@ -137,7 +129,7 @@ struct AudioRenderDriver::Impl {
         std::atomic<HRESULT> voiceError{S_OK};
         std::atomic<uint32_t> volumeChangeMask{0};
         // PCM ownership uses the driver mutex; device callbacks never touch it.
-        std::deque<std::vector<float>> queued;
+        AudioPcmQueue queued;
         std::atomic<uint64_t> completedSeq{0};
         uint64_t reclaimed = 0;
         uint64_t submittedSeq = 0;
@@ -148,7 +140,8 @@ struct AudioRenderDriver::Impl {
         std::atomic<bool> startupCallbacksSpent{false};
         std::atomic<bool> playbackStarted{false};
         std::atomic<bool> workerMmcss{false};
-        std::vector<float> lastSubmitted;
+        AudioPcmFrame lastSubmitted;
+        bool hasLastSubmitted = false;
         AudioPcmTap pcmTap;
     };
 
@@ -385,7 +378,7 @@ void audioTeardownClient(AudioRenderDriver::Impl::Client* client) {
         client->voice = nullptr;
     }
     client->queued.clear();
-    client->lastSubmitted.clear();
+    client->hasLastSubmitted = false;
     if (client->creditEvent) {
         CloseHandle(client->creditEvent);
         client->creditEvent = nullptr;
@@ -483,8 +476,9 @@ AudioRenderDriver& AudioRenderDriver::instance() {
 
 bool audioDriverPeekLastSubmitted(std::vector<float>& out) {
     std::lock_guard lock(gDriver.mutex);
-    if (!gDriver.active || gDriver.active->lastSubmitted.empty()) return false;
-    out = gDriver.active->lastSubmitted;
+    if (!gDriver.active || !gDriver.active->hasLastSubmitted) return false;
+    const auto& last = gDriver.active->lastSubmitted;
+    out.assign(last.begin(), last.end());
     return true;
 }
 
@@ -654,20 +648,14 @@ uint32_t AudioRenderDriver::submitFrame(uint32_t token, uint32_t samplesGuest) {
     if (!audioGuestSpan(owner, samplesGuest, kAudioSubmitBytes)) return kBadHandle;
     audioReclaimCompleted(client);
     if (client->queued.size() >= kMaxQueued) return kBusyHresult;
-    std::vector<float> snapshot;
     XAUDIO2_BUFFER buffer{};
     buffer.AudioBytes = kAudioSubmitBytes;
-    try {
-        std::vector<float> interleaved(size_t(kAudioFramesPerSubmit) * kAudioChannels);
-        audioConvertPlanarBEFloat(owner->base() + samplesGuest, interleaved.data());
-        snapshot = interleaved;
-        buffer.pAudioData = reinterpret_cast<const BYTE*>(interleaved.data());
-        // Establish ownership before XAudio2 can read the buffer. No throwing
-        // allocation may occur between acceptance and retaining its storage.
-        client->queued.push_back(std::move(interleaved));
-    } catch (const std::bad_alloc&) {
-        return uint32_t(E_OUTOFMEMORY);
-    }
+    auto& interleaved = client->queued.next();
+    audioConvertPlanarBEFloat(owner->base() + samplesGuest, interleaved.data());
+    buffer.pAudioData = reinterpret_cast<const BYTE*>(interleaved.data());
+    // Each slot stays owned until its completion is reclaimed. Establish that
+    // ownership before the device can read it; steady submissions allocate nothing.
+    client->queued.push();
     HRESULT hr = client->voice->SubmitSourceBuffer(&buffer);
     if (FAILED(hr)) {
         client->queued.pop_back(); // Rejected buffers never get OnBufferEnd.
@@ -675,7 +663,8 @@ uint32_t AudioRenderDriver::submitFrame(uint32_t token, uint32_t samplesGuest) {
         fprintf(stderr, "[Audio] SubmitSourceBuffer failed hr=0x%08X\n", unsigned(hr));
         return uint32_t(hr);
     }
-    client->lastSubmitted = std::move(snapshot);
+    memcpy(client->lastSubmitted.data(), interleaved.data(), kAudioSubmitBytes);
+    client->hasLastSubmitted = true;
     client->submittedSeq++;
     // Exact accepted game PCM only. The opt-in tap copies to preallocated memory;
     // its writer performs all capture file I/O away from the producer/device.
