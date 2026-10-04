@@ -140,8 +140,8 @@ int wmain(int argc, wchar_t** argv) {
     uint32_t windowWidth = 0, windowHeight = 0, renderHeight = 720;
     float commandLineFov = 0;
     bool overrideFov = false;
-    GameLanguage commandLineLanguage=GameLanguage::System;
-    bool overrideLanguage=false;
+    GameLanguage commandLineLanguage = GameLanguage::System;
+    bool overrideLanguage = false;
     bool overrideFps = false, overrideFullscreen = false, overrideRenderHeight = false;
     bool overrideVsync = false, verticalSync = false;
     for (int i = 1; i < argc; ++i) {
@@ -184,7 +184,7 @@ int wmain(int argc, wchar_t** argv) {
             if (!parseGameLanguage(argv[++i], commandLineLanguage)) {
                 fputs("Language must be auto, en, de, fr, es or it.\n", stderr); return 1;
             }
-            overrideLanguage=true;
+            overrideLanguage = true;
         }
         else if (arg == L"--fov" && i + 1 < argc) {
             if (!DarkRecomp::parseFieldOfView(argv[++i], commandLineFov)) {

@@ -81,18 +81,18 @@ class ReleaseTests(unittest.TestCase):
             self.assertNotIn('build_native/Release/Unrelated.dll', names)
             self.assertIn('build_native/Release/vcruntime140_1.dll', names)
             self.assertIn('build_native/Release/DarkRecompSettings.exe', names)
-            self.assertIn('LaunchWithSettings.cmd', names)
+            self.assertEqual(bundle.read('LaunchWithSettings.cmd'), (ROOT / 'LaunchWithSettings.cmd').read_bytes())
             self.assertIn('Launch.sh', names)
             self.assertIn('SetupLinux.cmd', names)
             self.assertIn('PlayLinux.cmd', names)
-            for tool in release.LINUX_SETUP_TOOLS:
-                self.assertIn(f'tools/{tool}', names)
-            launcher = bundle.getinfo('Launch.sh')
-            self.assertEqual(launcher.create_system, 3)
-            self.assertEqual((launcher.external_attr >> 16) & 0o777, 0o755)
-            self.assertNotIn(b'\r\n', bundle.read('Launch.sh'))
             self.assertIn('STEAM_DECK.md', names)
-            self.assertIn('tools/add_steam_shortcut.py', names)
+            for name in release.LINUX_SETUP_TOOLS:
+                self.assertEqual(bundle.read(f'tools/{name}'), (ROOT / 'tools' / name).read_bytes())
+            shell = bundle.getinfo('Launch.sh')
+            self.assertEqual(shell.create_system, 3)
+            self.assertEqual(shell.external_attr >> 16, 0o100755)
+            self.assertNotIn(b'\r\n', bundle.read('Launch.sh'))
+            self.assertEqual(bundle.read('tools/add_steam_shortcut.py'), (ROOT / 'tools/add_steam_shortcut.py').read_bytes())
             self.assertIn('START_HERE.txt', names)
             manifest = json.loads(bundle.read('RELEASE.json'))
             self.assertEqual(manifest['commit'], 'abc123')
@@ -110,6 +110,32 @@ class ReleaseTests(unittest.TestCase):
         (self.crt / 'msvcp140.dll').unlink()
         with self.assertRaisesRegex(RuntimeError, 'msvcp140.dll'):
             release.collect_files(self.root, self.crt)
+
+    def test_incomplete_linux_setup_package_is_rejected(self):
+        paths = [self.root / name for name in ('Launch.sh', 'SetupLinux.cmd', 'PlayLinux.cmd', 'STEAM_DECK.md')]
+        paths += [self.root / 'tools' / name for name in release.LINUX_SETUP_TOOLS]
+        for path in paths:
+            with self.subTest(path=path.name):
+                original = path.read_bytes()
+                path.unlink()
+                try:
+                    with self.assertRaisesRegex(RuntimeError, path.name.replace('.', r'\.')):
+                        release.package(self.root, self.crt, self.root / 'out', 'v0.1.1', 'abc123')
+                    self.assertFalse((self.root / 'out').exists())
+                finally:
+                    path.write_bytes(original)
+
+    def test_incomplete_settings_launcher_package_is_rejected(self):
+        for path in (self.bin / 'DarkRecompSettings.exe', self.root / 'LaunchWithSettings.cmd'):
+            with self.subTest(path=path.name):
+                original = path.read_bytes()
+                path.unlink()
+                try:
+                    with self.assertRaisesRegex(RuntimeError, path.name.replace('.', r'\.')):
+                        release.package(self.root, self.crt, self.root / 'out', 'v0.1.1', 'abc123')
+                    self.assertFalse((self.root / 'out').exists())
+                finally:
+                    path.write_bytes(original)
 
     def test_existing_release_is_preserved(self):
         path = release.package(self.root, self.crt, self.root / 'out', 'v0.1.1', 'abc123')
@@ -146,6 +172,17 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn('Extract the ENTIRE Windows release ZIP', result.stdout)
         self.assertNotIn('Build it first', result.stdout)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows launcher')
+    def test_missing_settings_launcher_points_to_complete_release(self):
+        (self.bin / 'DarkRecompSettings.exe').unlink()
+        result = subprocess.run('cmd /d /c LaunchWithSettings.cmd', cwd=self.root,
+                                input='\n', capture_output=True, text=True, timeout=15,
+                                creationflags=subprocess.CREATE_NO_WINDOW)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('Extract the ENTIRE Windows release ZIP', result.stdout)
+        self.assertIn('LaunchWithSettings.cmd', result.stdout)
+        self.assertFalse((self.root / 'build_native/run').exists())
 
     @unittest.skipUnless(os.name == 'nt', 'Windows launcher')
     def test_help_does_not_require_game_files(self):

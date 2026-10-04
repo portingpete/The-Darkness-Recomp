@@ -407,6 +407,9 @@ follow the active input source; see `CONTROLS.md` for the switching behavior.
   native sampling converts it to logical U,V without changing immutable frame
   generations. Hardware/WARP tests exercise their rendered
   output at 1x, 2x and 3x resolution; capture tests call the original binders.
+- Retain each original decoded triangle-list index chunk until its matching
+  indexed draw, then copy it into the owned render queue. Invalid or mismatched
+  draws consume the pending chunk so later draws cannot reuse stale indices.
 - Follow the original resource's primary/alternate texture selection, including
   inline texture objects and readiness checks.
 - Follow completed sampler filtering, addressing, LOD and anisotropy settings.

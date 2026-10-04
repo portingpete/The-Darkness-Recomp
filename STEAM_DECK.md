@@ -15,7 +15,8 @@ WineD3D/OpenGL run used the PC's RTX 5080 and reached the opening first-person
 level after New Game / Medium difficulty selection, creating Chapter1 and
 Checkpoint saves. XAudio2 started with audio callbacks and no reported audio
 errors. Native memory, import-boundary, file I/O and save-storage contract tests
-passed; all 73 Windows CTests also passed. Wine 9.0 failed physical memory alias
+passed. All 73 Windows CTests passed in the tested development checkout, which
+included other development changes. Wine 9.0 failed physical memory alias
 setup and is not a suitable fallback for this build.
 
 The WSL hardware test used a private runtime overlay exposing WSL's graphics

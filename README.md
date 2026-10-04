@@ -22,8 +22,9 @@ The GitHub **Source code** downloads are for building the project yourself.
 2. Copy your own extracted Xbox 360 game dump into the included **Darkness**
    folder: the original `default.xex`, `Content`, `System`, and all the other
    files and folders from your dump. No XexTool preparation is required.
-3. Double-click **Launch.cmd** to play with sound, or
-   **LaunchWithSettings.cmd** to choose video settings before playing.
+3. Double-click **Launch.cmd** to play with sound.
+
+Use **LaunchWithSettings.cmd** to choose settings and language before playing.
 
 No compiler, Python, or separate audio setup is needed for the Windows release.
 Use 64-bit Windows 10/11 with a Direct3D 11-capable graphics device.
@@ -49,16 +50,18 @@ and the full input guide.
 
 ## Steam Deck and Linux
 
-The Windows build can run through Proton on Linux. The current source includes
-`Launch.sh` for UMU and file I/O compatibility fixes tested with GE-Proton11-7
-in Ubuntu 24.04 under WSL2. The opening level renders with audio and creates
-checkpoint saves; memory, file I/O and save-storage tests pass. Steam Deck
-gameplay and performance remain unverified.
-See [STEAM_DECK.md](STEAM_DECK.md) for the tested setup, Steam shortcut,
-dependencies and diagnostic logs. A native Linux build is not available.
+The Windows build can run through Proton on Linux. `Launch.sh` and the file I/O
+compatibility fixes were tested with GE-Proton11-7 in Ubuntu 24.04 under WSL2.
+The opening level rendered with audio and created checkpoint saves; memory,
+file I/O and save-storage tests passed. Visible camera movement and completion
+of the opening tutorial were not confirmed. Steam Deck gameplay and performance
+remain unverified; a native Linux build is not available.
+
 For automatic setup from Windows with Ubuntu in WSL2, double-click
 **SetupLinux.cmd**, then **PlayLinux.cmd**. The installer copies the game to
 Linux storage and preserves that copy's saves and settings on later updates.
+See [STEAM_DECK.md](STEAM_DECK.md) for prerequisites, options, Steam shortcuts
+and the verified test scope.
 
 ## Other games and title updates
 
@@ -123,7 +126,7 @@ The XMA audio build also requires MSYS2 at `C:\msys64` with MinGW64 GCC and
 | Command | What it does |
 |---|---|
 | `Launch.cmd` | Play with sound |
-| `LaunchWithSettings.cmd` | Choose video settings, then play with sound |
+| `LaunchWithSettings.cmd` | Choose settings and language, then play with sound |
 | `Launch.cmd mute` | Play muted |
 | `Launch.cmd preview` | Engine preview build (muted by default) |
 | `Launch.cmd stutter` | Play with sound while recording slow-frame timings |

@@ -26,18 +26,18 @@ THE DARKNESS RECOMP - START HERE
    dump, including its original default.xex. The game decodes it in memory.
    This build supports the same game revision used to build it.
 
-3. Double-click Launch.cmd to play immediately, or LaunchWithSettings.cmd to
-   choose video settings before the game opens. No build or developer tools
-   are needed.
+3. Double-click Launch.cmd. That's it - no build or developer tools needed.
+   To choose settings and language before playing, use LaunchWithSettings.cmd.
 
 Windows 10/11, 64-bit, with a Direct3D 11-capable graphics device is required.
 The audio and Visual C++ runtime files are included. Keep them with the game.
 
 Linux from Windows: with Ubuntu configured in WSL2, double-click SetupLinux.cmd,
-then PlayLinux.cmd. The setup installs the tested Proton tools and copies the
-game into Linux storage. Rerun SetupLinux.cmd to update without replacing saves.
+then PlayLinux.cmd. Setup installs the tested Proton tools and copies the game
+into Linux storage. Rerun SetupLinux.cmd to update without replacing Linux saves.
 See STEAM_DECK.md for prerequisites, options and the verified test scope.
-Steam Deck gameplay and performance are not verified.
+Steam Deck gameplay and performance are not verified. The opening Linux scene
+rendered, but camera movement and tutorial completion were not confirmed.
 This release checks the supported The Darkness revision automatically at launch.
 Other Xbox games and updated executables need their own port; changing a hash
 will not add support.
@@ -50,7 +50,7 @@ Options > Controls > Keyboard bindings. Exit Game is in the main/pause menu.
 Alt+Enter switches fullscreen/windowed. Controllers are supported.
 Change graphics options and language in Options > Video Settings, or use
 LaunchWithSettings.cmd before starting the game. Both save to the same settings
-file. Internal resolution and language changes take effect when the game starts.
+file. In-game language changes take effect after restarting.
 
 UPDATING AN OLDER RELEASE
 Close the game. Extract the new Windows ZIP into your existing game folder

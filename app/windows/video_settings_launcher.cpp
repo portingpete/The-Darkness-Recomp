@@ -215,7 +215,7 @@ void createControls(HWND window, Launcher& launcher) {
     control(window, L"STATIC", L"Gamma calibration uses the in-game Video settings menu.",
             0, 26, 522, 565, 20);
     control(window, L"STATIC",
-            L"Settings save when you click Play. Internal resolution takes effect at startup.",
+            L"Settings save when you click Play. Resolution and language apply at startup.",
             0, 26, 566, 565, 36);
     control(window, L"BUTTON", L"Play", BS_DEFPUSHBUTTON | WS_TABSTOP,
             384, 609, 95, 29, kPlayButton);

@@ -49,6 +49,20 @@ class WorldFragmentTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             compile_source('OUTPUT o = result.color; ABS o, 1, 2; END')
 
+    def test_world_video_keeps_both_planes_chroma_channels_and_alpha(self):
+        name = 'CMWnd_ModTexture_PaintVideo_YUV2RGB'
+        source = (ROOT / 'Darkness/System/Gl/ARB_fragment_program' / (name + '.fp')).read_text(encoding='latin-1')
+        self.assertEqual(VARIANTS[name], [0])
+        code, metadata = compile_source(source)
+        self.assertEqual(metadata['textures'], {0: '2D', 1: '2D'})
+        self.assertEqual(metadata['instruction_count'], 11)
+        # The owned A8L8 view supplies U in RGB and V in alpha. Preserve
+        # their separate blue/red coefficients, authored tint and zero alpha.
+        self.assertIn('RGB.xy = ((VScale.xyzw) * (YUV.wwww) + (RGB)).xy;', code)
+        self.assertIn('RGB.yz = ((UScale.xyzw) * (YUV.yyyy) + (RGB)).yz;', code)
+        self.assertIn('RESULT.xyz = (saturate((RGB) * (iCol))).xyz;', code)
+        self.assertIn('RESULT.w = ((UScale.xxxx)).w;', code)
+
     def test_darkness_vision_permutations_and_xenon_depth(self):
         directory = ROOT / 'Darkness/System/Gl/ARB_fragment_program'
         for stage in (0, 1):

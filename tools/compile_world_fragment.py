@@ -59,7 +59,8 @@ ASSETS = {
     'System/Gl/ARB_fragment_program/TexEnvProj1.fp': '37436dd86a283197fe337255dd4e2be24a9c4d6f4bef16d3c71e22990e3ecb3b',
 }
 LANES = str.maketrans('rgba', 'xyzw')
-VARIANTS = {'XRShader_FP20_NDSP': [0], 'XRShader_FP20_NDS': [0], 'XRShader_MotionMap': [0], 'GUIFadeToWhite': [0],
+VARIANTS = {'CMWnd_ModTexture_PaintVideo_YUV2RGB': [0],
+            'XRShader_FP20_NDSP': [0], 'XRShader_FP20_NDS': [0], 'XRShader_MotionMap': [0], 'GUIFadeToWhite': [0],
             'WClientMod_DV5_0': [0, 1, 2], 'WClientMod_DV5_1': [0, 1, 2],
             'WClientMod_OW1_1': [0], 'WClientMod_OW1_2': [0],
             'XRShader_FP20_LF': [0, 1], 'XRShader_FP20_NDSEATP': list(range(32)),
@@ -78,7 +79,7 @@ VARIANTS = {'XRShader_FP20_NDSP': [0], 'XRShader_FP20_NDS': [0], 'XRShader_Motio
             'XREngine_DepthFog': list(range(4)), 'XREngine_GaussClampedHurt': [0],
             'XREngine_MulFilter': [0]}
 
-# Shipped *generate decal light/projector combinations, with/without trimesh.
+# Shipped decal light/projector combinations, with and without trimesh.
 DECAL_VARIANTS = sorted({flags | trimesh for flags in
     (0, 2, 6, 14, 18, 22, 30, 54, 62, 126) for trimesh in (0, 1)})
 VARIANTS.update({
