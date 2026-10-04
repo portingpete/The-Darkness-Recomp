@@ -51,6 +51,8 @@ static void check(bool success, const char* message) { if (!success) throw std::
 #include "video_settings_tests.h"
 #include "developer_tools_tests.h"
 #include "developer_invincibility_tests.h"
+#include "developer_noclip_tests.h"
+#include "developer_darkness_tests.h"
 #include "developer_player_lookup_tests.h"
 #include "developer_player_tests.h"
 #include "developer_missions_tests.h"
@@ -1535,6 +1537,8 @@ int main(int argc, char** argv) {
         if (argc == 3 && strcmp(argv[2], "--developer-tools") == 0) {
             testDeveloperToolsRequests();
             testDeveloperInvincibility(ctx);
+            testDeveloperNoclip(ctx);
+            testDeveloperDarkness(ctx);
             testDeveloperPlayerLookup(ctx);
             testDeveloperPlayer(ctx);
             testDeveloperMissions(ctx);

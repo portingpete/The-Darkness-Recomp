@@ -16,7 +16,8 @@ are capped at 4096 pixels wide and 2160 high, preserving aspect when the width
 limit is reached and rounding to even guest dimensions. Internal resolution
 changes apply on restart.
 
-F6 switches native rasterization between 720p and 1440p during play when the
+After enabling **F6 resolution shortcut** in the F5 developer panel, F6 switches
+native rasterization between 720p and 1440p during play when the
 startup guest buffer is 720 pixels high. It retains the guest dimensions and
 aspect, waits for a completed frame, and migrates retained color, depth,
 stencil and resolved texture contents before committing the new targets.

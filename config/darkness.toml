@@ -38,6 +38,34 @@ name = "ApplyDeveloperInvincibilityMidAsmHook"
 address = 0x82189B08
 registers = ["r30", "r15", "r11"]
 
+# Use the original player-only mode 4 movement and commit paths for noclip.
+# Override consumed mode registers; serialized movement flags stay untouched.
+[[midasm_hook]]
+name = "ApplyDeveloperNoclipMidAsmHook"
+address = 0x82133E54
+registers = ["r31", "r21", "r16"]
+
+[[midasm_hook]]
+name = "ApplyDeveloperNoclipMidAsmHook"
+address = 0x82137824
+registers = ["r31", "r29", "r11"]
+
+[[midasm_hook]]
+name = "ApplyDeveloperNoclipMidAsmHook"
+address = 0x82175F9C
+registers = ["r29", "r31", "r11"]
+
+[[midasm_hook]]
+name = "ApplyDeveloperNoclipStateMidAsmHook"
+address = 0x821720E8
+registers = ["r31", "r11"]
+
+# Original noclip also disables the selected player's outer collision sweep.
+[[midasm_hook]]
+name = "ApplyDeveloperNoclipCollisionMidAsmHook"
+address = 0x82472E1C
+registers = ["r24", "r11"]
+
 
 [[midasm_hook]]
 name = "CompleteGpuFenceMidAsmHook"

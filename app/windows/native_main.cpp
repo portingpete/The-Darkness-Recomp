@@ -5,6 +5,7 @@
 #include "runtime/native/input.h"
 #include "native_mouse.h"
 #include "developer_tools_window.h"
+#include "developer_resolution_shortcut.h"
 #include "keyboard_settings.h"
 #include "runtime/native/keyboard_menu.h"
 #include "display_options.h"
@@ -42,15 +43,7 @@ static NativeMouseWindow* mouseWindow = nullptr;
 static DeveloperToolsWindow* developerToolsWindow = nullptr;
 static bool displayResizePending = false;
 static bool fullscreenTogglePending = false;
-static bool resolutionTogglePending = false;
-// Consume both edges before guest input. Windows' held-key repeats must not
-// flip the setting; two new presses queued before a frame boundary cancel.
-static bool handleResolutionHotkey(UINT message, WPARAM key, LPARAM detail) {
-    if (key != VK_F6 || (message != WM_KEYDOWN && message != WM_KEYUP)) return false;
-    if (message == WM_KEYDOWN && !(detail & (LPARAM(1) << 30)))
-        resolutionTogglePending = !resolutionTogglePending;
-    return true;
-}
+static DeveloperResolutionShortcut resolutionShortcut;
 // The owned renderer target survives flip-discard presents. Once DXGI accepts
 // its display copy, keep that image until rendering or display state changes.
 static NativeDisplayReuse displayReuse;
@@ -76,7 +69,7 @@ static void printAudioHealth() {
 }
 static LRESULT CALLBACK NativeWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     if (nativeInput().windowMessage(window, message, wParam, lParam)) return 0;
-    if (handleResolutionHotkey(message, wParam, lParam)) return 0;
+    if (resolutionShortcut.handle(message, wParam, lParam)) return 0;
     if (message == WM_GETMINMAXINFO) {
         RECT minimum{0, 0, 320, 180};
         AdjustWindowRect(&minimum, WS_OVERLAPPEDWINDOW, FALSE);
@@ -209,8 +202,8 @@ int wmain(int argc, wchar_t** argv) {
         else if (arg == L"--preview-frame" && i + 1 < argc) previewFrame = argv[++i];
         else {
             fputs("Usage: DarkRecomp --game-dir <directory> [--timeout-ms 30000 (0 disables deadline)] [--renderer-smoke] [--trace-renderer <new directory>] [--engine-preview] [--mute] [--fps 60 (default; 0 uncapped)] [--profile-engine] [--sample-engine] [--mouse-sensitivity 1.0] [--language auto|en|de|fr|es|it] [--preview-frame <new BMP path>] [--test-input <file>] [--test-start] [--test-skip-intros]\n", stderr);
-            fputs("  --test-input file lines (max 64, own-process diagnostics only): numeric '<key> [<holdMs 1..10000>]' (bare menu keys hold 250ms, I/J/K/L hold 2000ms; gameplay keys WASD/E/R/F/X/Z/C/Q/G/1-4/Tab/Back/Shift/Ctrl plus arrows/Space/Return/Esc/IJKL; 116=F5 panel); 'mouse <dx> <dy>' (+/-10000, held 2000ms); 'capture' game screenshots; '0' inspects; 'dev open|close|status', 'dev mission <ID>', 'dev speed <preset>', 'dev invincible on|off', 'dev capture <absolute BMP path>'; an invalid line blocks later commands until that line is fixed.\n", stderr);
-            fputs("  Display: --fullscreen or --windowed; --width W --height H selects window/aspect size; --render-height H controls internal resolution (180..2160, default 720). Alt+Enter toggles borderless fullscreen; F6 switches live 720p/1440p when started with a 720-high guest mode.\n", stderr);
+            fputs("  --test-input file lines (max 64, own-process diagnostics only): numeric '<key> [<holdMs 1..10000>]' (bare menu keys hold 250ms, I/J/K/L hold 2000ms; gameplay keys WASD/E/R/F/X/Z/C/Q/G/1-4/Tab/Back/Shift/Ctrl plus arrows/Space/Return/Esc/IJKL; 116=F5 panel,117=gated F6); 'mouse <dx> <dy>' (+/-10000, held 2000ms); 'capture' game screenshots; '0' inspects; 'dev open|close|status|defaults', 'dev mission <ID>', 'dev speed <preset>', 'dev invincible|noclip|resolution on|off', 'dev darkness unlock|max', 'dev capture <absolute BMP path>'; an invalid line blocks later commands until that line is fixed.\n", stderr);
+            fputs("  Display: --fullscreen or --windowed; --width W --height H selects window/aspect size; --render-height H controls internal resolution (180..2160, default 720). Alt+Enter toggles borderless fullscreen; enable the F6 resolution shortcut in the F5 developer panel to switch live 720p/1440p when started with a 720-high guest mode (disabled by default).\n", stderr);
             fputs("  Options > Video Settings contains native PC graphics controls. Saved settings apply unless explicitly overridden. --vsync / --no-vsync overrides vertical sync; --fov 0 (Original) or 60..120 overrides horizontal FOV at 16:9 for this run.\n", stderr);
             fputs("  --trace-frame-hitches records bounded slow-frame stage timings without enabling per-draw profiling or instruction sampling.\n", stderr);
             fputs("  --sample-renderer samples only active rendering on this game's display thread; opt-in diagnostics add overhead.\n", stderr);
@@ -310,11 +303,13 @@ int wmain(int argc, wchar_t** argv) {
         NativeMouseWindow mouse(window); mouseWindow = &mouse;
         NativeResolutionStatus resolutionStatus(window);
         if (!mouse.registered()) throw std::runtime_error("Cannot register native raw mouse input");
-        DeveloperToolsWindow developerTools(window, mouse); developerToolsWindow = &developerTools;
+        DeveloperToolsWindow developerTools(window, mouse, [](bool enabled) {
+            resolutionShortcut.setEnabled(enabled);
+        }); developerToolsWindow = &developerTools;
         ClearMouseWindow clearMouseWindow;
-        puts("[Input] Native Win32 keyboard/raw mouse ready. Click to capture, Esc releases, F1 controls, F5 developer tools, F6 720p/1440p. WASD=move; E=use; R=reload; captured Space=jump; menu Space=confirm/skip.");
+        puts("[Input] Native Win32 keyboard/raw mouse ready. Click to capture, Esc releases, F1 controls, F5 developer tools; optional F6 720p/1440p shortcut starts disabled. WASD=move; E=use; R=reload; captured Space=jump; menu Space=confirm/skip.");
         if (!testInputPath.empty())
-            puts("[InputTest] Opt-in script active: '<key> [<holdMs 1..10000>]' (bare menu 250ms, I/J/K/L 2000ms; 116=F5 panel), 'mouse <dx> <dy>', 'capture', '0' inspect; 'dev open|close|status', 'dev mission <ID>', 'dev speed <preset>', 'dev invincible on|off', 'dev capture <absolute BMP path>'; an invalid line blocks later commands until fixed; release lines report poll/nonneutral/change deltas.");
+            puts("[InputTest] Opt-in script active: '<key> [<holdMs 1..10000>]' (bare menu 250ms, I/J/K/L 2000ms; 116=F5 panel,117=gated F6), 'mouse <dx> <dy>', 'capture', '0' inspect; 'dev open|close|status|defaults', 'dev mission <ID>', 'dev speed <preset>', 'dev invincible|noclip|resolution on|off', 'dev darkness unlock|max', 'dev capture <absolute BMP path>'; an invalid line blocks later commands until fixed; release lines report poll/nonneutral/change deltas.");
 
         DarkRecomp::CDisplayContextD3D11 display;
         RECT actualClient{}; GetClientRect(window, &actualClient);
@@ -478,8 +473,7 @@ int wmain(int argc, wchar_t** argv) {
             try {
                 const bool frameOpen=preview && preview->frameInProgress();
                 if (!frameOpen) {
-                    if (resolutionTogglePending) {
-                        resolutionTogglePending = false;
+                    if (resolutionShortcut.takeToggle()) {
                         const auto guestMode = nativeVideoMode();
                         if (!preview || guestMode.height != 720) {
                             resolutionStatus.show(L"F6 is unavailable at this launch resolution/aspect.");
@@ -560,7 +554,7 @@ int wmain(int argc, wchar_t** argv) {
             if(testKey && inputNow>=keyRelease) {
                 MSG keyMessage{window, WM_KEYUP, WPARAM(testKey), 0};
                 if (!nativeInput().windowMessage(window,WM_KEYUP,testKey,0) &&
-                    !handleResolutionHotkey(WM_KEYUP, testKey, 0)) developerTools.handleMessage(keyMessage);
+                    !resolutionShortcut.handle(WM_KEYUP, testKey, 0)) developerTools.handleMessage(keyMessage);
                 nativeInput().windowMessage(window,WM_ACTIVATEAPP,GetForegroundWindow()==window,0);
                 const auto released=nativeInput().counters();
                 std::printf("[InputTest] released key=%u elapsed=%llu polls=+%llu nonneutral=+%llu changes=+%llu\n",testKey,inputNow-inputTestEpoch,
@@ -657,7 +651,7 @@ int wmain(int argc, wchar_t** argv) {
                 if (testKey != VK_F5) nativeInput().windowMessage(window,WM_SETFOCUS,0,0);
                 MSG keyMessage{window, WM_KEYDOWN, WPARAM(testKey), 0};
                 if (!nativeInput().windowMessage(window,WM_KEYDOWN,testKey,0) &&
-                    !handleResolutionHotkey(WM_KEYDOWN, testKey, 0)) developerTools.handleMessage(keyMessage);
+                    !resolutionShortcut.handle(WM_KEYDOWN, testKey, 0)) developerTools.handleMessage(keyMessage);
                 testKeyBase=nativeInput().counters();
                 keyRelease=inputNow+testKeyHoldMs;
                 std::printf("[InputTest] pressed key=%u hold=%llums elapsed=%llu\n",testKey,testKeyHoldMs,inputNow-inputTestEpoch);
@@ -882,4 +876,3 @@ int wmain(int argc, wchar_t** argv) {
         return 1;
     }
 }
-

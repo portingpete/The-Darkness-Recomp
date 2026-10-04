@@ -67,8 +67,8 @@ public:
                 MessageBoxW(window_,
                     L"Click in the window to play. Escape pauses and releases the mouse.\n"
                     L"F2 captures/releases the mouse. Alt-Tab releases it automatically.\n"
-                    L"F5: developer tools (mission, player speed and invincibility).\n\n"
-                    L"F6: switch render resolution between 720p and 1440p during play.\n"
+                    L"F5: developer tools (mission, speed, invincibility, noclip and Darkness).\n\n"
+                    L"F6: 720p/1440p resolution switch; enable this shortcut in F5 first.\n"
                     L"Availability depends on the launch resolution and display aspect.\n\n"
                     L"Options > Video Settings: graphics    Alt+Enter: fullscreen\n"
                     L"Bloom, motion blur, texture filtering, VSync, frame cap, resolution and field of view.\n\n"
@@ -113,7 +113,7 @@ private:
             L"The Darkness - Mouse look | Esc releases | F1 controls" :
             L"The Darkness - Click to play | F1 controls | F2 mouse capture";
         if (IsWindow(window_)) SetWindowTextW(window_, (title + L" | " + std::to_wstring(renderHeight_) +
-            L"p | F6 resolution | " + std::to_wstring(fps_) + L" FPS").c_str());
+            L"p | F5 developer tools | " + std::to_wstring(fps_) + L" FPS").c_str());
     }
     HWND window_{};
     RECT clip_{};

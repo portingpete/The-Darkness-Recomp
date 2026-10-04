@@ -41,8 +41,10 @@ Use **Options > Controls > Keyboard bindings** to remap gameplay keys.
 The four-page game menu supports primary/secondary keys, clear, defaults, and Save/Cancel.
 **Exit Game** in the pause or main menu closes the game after confirmation.
 Press **F5** to open developer tools for mission selection, player speed,
-and invincibility. Mission loading can autosave; see
-[CONTROLS.md](CONTROLS.md#developer-tools) before selecting a destination.
+invincibility, noclip, all Darkness abilities and maximum Darkness level.
+Enable the F6 resolution shortcut there to allow live 720p/1440p switching;
+the shortcut starts off. Mission loading and Darkness grants can autosave;
+see [CONTROLS.md](CONTROLS.md#developer-tools) before changing progression.
 Choose **Language** in **Options > Video Settings** or the settings launcher:
 System default, English, German, French, Spanish, or Italian. In-game changes
 take effect after restarting. See [CONTROLS.md](CONTROLS.md) for language overrides

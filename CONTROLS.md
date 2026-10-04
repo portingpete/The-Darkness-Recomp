@@ -36,8 +36,10 @@ apply after restarting the game. `--windowed --width 2560 --height 1080` selects
 a window size and aspect ratio. Internal rendering supports up to 4096 x 2160,
 preserving aspect at the width limit and rounding to even guest dimensions.
 
-Press **F6** during play to switch directly between **720p and 1440p** without
-reloading the level. A brief message shows the new resolution, which saves
+Open **F5** and check **Enable F6 resolution shortcut**, then press **F6** during
+play to switch between **720p and 1440p** without reloading the level. The shortcut
+starts disabled each launch; unchecking the option also cancels a pending switch.
+A brief message shows the new resolution, which saves
 automatically. The switch preserves the launch aspect ratio and existing game
 buffers. It works with a 720-pixel-high game buffer: normal 16:9 launches at
 720p, 1440p or 2160p, and typical 21:9 launches at 720p or 1440p. Other launch
@@ -137,8 +139,14 @@ mode plays with sound instead of `--mute`.
 
 Press **F5** to open or close the developer panel. Select a campaign destination
 and press **Load**, choose a player speed from **0.25× to 4×**, or toggle
-**Invincible**. Player controls become available once a player is active.
-**Restore defaults** returns to 1× speed with invincibility off.
+**Invincible** and **Noclip**. Player controls become available once a player is active.
+**Unlock all Darkness** grants all six original Darkness abilities.
+**Max Darkness level** raises progression to the original maximum, level 5;
+it preserves an existing higher heart count. These one-shot grants can be included
+in later autosaves. Back up your checkpoint before changing progression.
+**Enable F6 resolution shortcut** allows the live resolution hotkey for this session;
+it starts off. **Restore defaults** returns to 1× speed and disables invincibility,
+noclip and the F6 shortcut. It does not undo Darkness progression grants.
 **Load** closes the panel before the mission's opening sequence; press F5 to reopen it.
 
 Loading a mission restarts the current session, then loads the destination

@@ -21,6 +21,7 @@ struct DeveloperSnapshot {
     bool hasActivePlayer = false;
     float playerSpeed = 1;
     bool invincible = false;
+    bool noclip = false;
     std::string status = "Waiting for the game.";
     uint64_t revision = 0;
 };
@@ -28,6 +29,9 @@ DeveloperSnapshot developerSnapshot();
 bool requestDeveloperMission(std::string_view id);
 bool requestDeveloperSpeed(float multiplier);
 void requestDeveloperInvincibility(bool enabled);
+void requestDeveloperNoclip(bool enabled);
+void requestDeveloperUnlockDarkness();
+void requestDeveloperMaxDarkness();
 void resetDeveloperTools();
 
 // Returns true after a mission command: the caller must not reuse its old

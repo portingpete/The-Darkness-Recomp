@@ -55,7 +55,8 @@ target_sources(DarkRuntime PRIVATE runtime/native/keyboard_menu.cpp runtime/nati
 target_sources(DarkRuntime PRIVATE runtime/native/developer_tools.cpp
     runtime/native/developer_player.cpp runtime/native/developer_missions.cpp
     runtime/native/developer_invincibility.cpp runtime/native/developer_player_lookup.cpp
-    runtime/native/developer_update.cpp)
+    runtime/native/developer_update.cpp runtime/native/developer_noclip.cpp
+    runtime/native/developer_darkness.cpp)
 target_include_directories(DarkRuntime PUBLIC "${CMAKE_SOURCE_DIR}")
 target_sources(DarkRuntime PRIVATE renderer/engine/render_trace.cpp)
 target_sources(DarkRuntime PRIVATE renderer/engine/stored_geometry.cpp)
@@ -191,6 +192,9 @@ if(BUILD_TESTING)
     add_executable(MenuPointerTests tests/menu_pointer_tests.cpp)
     target_include_directories(MenuPointerTests PRIVATE "${CMAKE_SOURCE_DIR}")
     add_test(NAME MenuPointerContract COMMAND MenuPointerTests)
+    add_executable(DeveloperResolutionShortcutTests tests/developer_resolution_shortcut_contract.cpp)
+    target_include_directories(DeveloperResolutionShortcutTests PRIVATE "${CMAKE_SOURCE_DIR}")
+    add_test(NAME DeveloperResolutionShortcutContract COMMAND DeveloperResolutionShortcutTests)
     add_executable(KeyboardBindingsTests tests/keyboard_bindings_tests.cpp
         app/windows/keyboard_settings.cpp runtime/native/keyboard_bindings.cpp)
     target_include_directories(KeyboardBindingsTests PRIVATE "${CMAKE_SOURCE_DIR}")

@@ -2,11 +2,14 @@
 #include "developer_missions.h"
 #include "developer_player.h"
 #include "developer_invincibility.h"
+#include "developer_darkness.h"
+#include "developer_player_lookup.h"
 #include "ppc_recomp_shared.h"
 #include <algorithm>
 #include <cmath>
 #include <mutex>
 #include <optional>
+#include <utility>
 
 namespace DarkRecomp::Native {
 namespace {
@@ -14,6 +17,8 @@ std::mutex stateMutex;
 DeveloperSnapshot state;
 std::optional<std::string> pendingMission;
 bool playerToolsEnabled = false;
+bool pendingDarknessUnlock = false;
+bool pendingDarknessLevel = false;
 uint64_t requestRevision = 0;
 
 void requested(std::string_view status) {
@@ -28,7 +33,8 @@ void publish(uint64_t request, bool canLoad, bool hasPlayer, std::string_view st
     state.canLoadMission = canLoad;
     state.hasActivePlayer = hasPlayer;
     if (playerApplied && status.empty() &&
-        (state.status == "Player speed queued." || state.status == "Invincibility queued."))
+        (state.status == "Player speed queued." || state.status == "Invincibility queued." ||
+         state.status == "Noclip queued."))
         status = "Player settings applied.";
     const bool statusChanged = requestRevision == request && !status.empty() && state.status != status;
     if (statusChanged) state.status = status;
@@ -68,11 +74,31 @@ void requestDeveloperInvincibility(bool enabled) {
     requested("Invincibility queued.");
 }
 
+void requestDeveloperNoclip(bool enabled) {
+    std::lock_guard lock(stateMutex);
+    state.noclip = enabled;
+    playerToolsEnabled = true;
+    requested("Noclip queued.");
+}
+
+void requestDeveloperUnlockDarkness() {
+    std::lock_guard lock(stateMutex);
+    pendingDarknessUnlock = true;
+    requested("Darkness ability unlock queued.");
+}
+
+void requestDeveloperMaxDarkness() {
+    std::lock_guard lock(stateMutex);
+    pendingDarknessLevel = true;
+    requested("Maximum Darkness level queued.");
+}
+
 void resetDeveloperTools() {
     std::lock_guard lock(stateMutex);
     state = {};
     pendingMission.reset();
     playerToolsEnabled = false;
+    pendingDarknessUnlock = pendingDarknessLevel = false;
     ++requestRevision;
     resetDeveloperPlayer();
 }
@@ -80,7 +106,7 @@ void resetDeveloperTools() {
 bool processDeveloperTools(PPCContext& ctx, uint8_t* base, uint32_t client, bool missionReady) {
     std::optional<std::string> mission;
     float speed;
-    bool invincible, enabled;
+    bool invincible, noclip, enabled, unlockDarkness, maxDarkness;
     uint64_t request;
     {
         std::lock_guard lock(stateMutex);
@@ -88,7 +114,10 @@ bool processDeveloperTools(PPCContext& ctx, uint8_t* base, uint32_t client, bool
         pendingMission.reset();
         speed = state.playerSpeed;
         invincible = state.invincible;
+        noclip = state.noclip;
         enabled = playerToolsEnabled;
+        unlockDarkness = std::exchange(pendingDarknessUnlock, false);
+        maxDarkness = std::exchange(pendingDarknessLevel, false);
         request = requestRevision;
     }
     const bool canLoad = missionReady && canLoadDeveloperMission(base, client);
@@ -110,8 +139,12 @@ bool processDeveloperTools(PPCContext& ctx, uint8_t* base, uint32_t client, bool
         // Even a failed engine command may have changed transition state.
         return canLoad;
     }
-    const auto player = updateDeveloperPlayer(call, base, client, speed, invincible, enabled);
-    publish(request, canLoad, player.hasActivePlayer, player.status, player.applied);
+    const auto player = updateDeveloperPlayer(call, base, client, speed, invincible, enabled, noclip);
+    if (unlockDarkness || maxDarkness) {
+        const auto handles = resolveDeveloperPlayer(call, base, client);
+        const auto darkness = applyDeveloperDarkness(call, base, handles, unlockDarkness, maxDarkness);
+        publish(request, canLoad, player.hasActivePlayer, darkness.status);
+    } else publish(request, canLoad, player.hasActivePlayer, player.status, player.applied);
     return false;
 }
 }

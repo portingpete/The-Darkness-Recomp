@@ -7,7 +7,7 @@ static void testDeveloperToolsRequests() {
     using namespace DarkRecomp::Native;
     resetDeveloperTools();
     const auto initial = developerSnapshot();
-    check(initial.playerSpeed == 1 && !initial.invincible && !initial.hasActivePlayer && !initial.canLoadMission,
+    check(initial.playerSpeed == 1 && !initial.invincible && !initial.noclip && !initial.hasActivePlayer && !initial.canLoadMission,
           "Developer tools must start neutral and unavailable before engine readiness");
     check(!requestDeveloperSpeed(0) && !requestDeveloperSpeed(4.01f) &&
           !requestDeveloperSpeed(std::numeric_limits<float>::quiet_NaN()) &&
@@ -24,6 +24,14 @@ static void testDeveloperToolsRequests() {
     check(developerSnapshot().invincible, "Invincibility request must be visible to UI");
     requestDeveloperInvincibility(false);
     check(!developerSnapshot().invincible, "Invincibility must have a reversible requested state");
+    requestDeveloperNoclip(true);
+    check(developerSnapshot().noclip, "Noclip request must be visible to UI");
+    requestDeveloperNoclip(false);
+    check(!developerSnapshot().noclip, "Noclip must have a reversible requested state");
+    requestDeveloperUnlockDarkness();
+    check(developerSnapshot().status == "Darkness ability unlock queued.", "Ability grant must enter the engine queue");
+    requestDeveloperMaxDarkness();
+    check(developerSnapshot().status == "Maximum Darkness level queued.", "Level grant must enter the engine queue");
     const auto missions = developerMissions();
     check(!missions.empty(), "Developer mission catalog must contain shipped campaign destinations");
     std::set<std::string_view> unique;
@@ -33,5 +41,7 @@ static void testDeveloperToolsRequests() {
         check(requestDeveloperMission(mission.id), "Every displayed mission must be accepted by request validation");
     }
     resetDeveloperTools();
-    puts("Developer requests: neutral startup, bounded speed, reversible invincibility and mission validation passed.");
+    check(!developerSnapshot().noclip && !developerSnapshot().invincible && developerSnapshot().playerSpeed == 1,
+          "Reset must clear requested session cheats");
+    puts("Developer requests: neutral startup, bounded speed, reversible invincibility/noclip, Darkness grant queue and mission validation passed.");
 }

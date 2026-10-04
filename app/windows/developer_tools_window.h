@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <string>
 #include <string_view>
+#include <functional>
 
 class NativeMouseWindow;
 
@@ -9,7 +10,8 @@ class NativeMouseWindow;
 // the value-only developer-tools bridge; this class never accesses guest data.
 class DeveloperToolsWindow {
 public:
-    DeveloperToolsWindow(HWND owner, NativeMouseWindow& mouse);
+    DeveloperToolsWindow(HWND owner, NativeMouseWindow& mouse,
+                         std::function<void(bool)> resolutionShortcut = {});
     ~DeveloperToolsWindow();
     DeveloperToolsWindow(const DeveloperToolsWindow&) = delete;
     DeveloperToolsWindow& operator=(const DeveloperToolsWindow&) = delete;
@@ -31,6 +33,10 @@ private:
     void loadMission();
     void selectSpeed();
     void selectInvincibility();
+    void selectNoclip();
+    void selectResolutionShortcut();
+    void unlockDarkness();
+    void maxDarkness();
     void restoreDefaults();
     void releaseInputGate();
     void printStatus(std::string_view action) const;
@@ -38,7 +44,10 @@ private:
 
     HWND owner_{};
     NativeMouseWindow& mouse_;
-    HWND window_{}, mission_{}, load_{}, speed_{}, invincible_{}, defaults_{}, status_{};
+    HWND window_{}, mission_{}, load_{}, speed_{}, invincible_{}, noclip_{}, unlock_{}, maxDarkness_{},
+         resolutionShortcut_{}, defaults_{}, status_{};
+    std::function<void(bool)> setResolutionShortcut_;
+    bool resolutionShortcutEnabled_ = false;
     bool inputGate_ = false;
     std::wstring displayedStatus_;
 };

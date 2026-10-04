@@ -12,6 +12,7 @@
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+#include <utility>
 
 using namespace DarkRecomp::Native;
 
@@ -19,9 +20,10 @@ namespace {
 constexpr wchar_t kWindowClass[] = L"DarkRecompDeveloperToolsWindow";
 constexpr UINT_PTR kRefreshTimer = 1;
 constexpr int kMission = 1001, kLoad = 1002, kSpeed = 1003, kInvincible = 1004, kDefaults = 1005;
+constexpr int kNoclip = 1006, kUnlock = 1007, kMaxDarkness = 1008, kResolutionShortcut = 1009;
 constexpr std::array<float, 9> kSpeeds{.25f, .5f, .75f, 1.f, 1.25f, 1.5f, 2.f, 3.f, 4.f};
 constexpr std::array<const wchar_t*, 9> kSpeedNames{
-    L"0.25x", L"0.5x", L"0.75x", L"1x (normal)", L"1.25x", L"1.5x", L"2x", L"3x", L"4x"};
+    L"0.25X", L"0.5X", L"0.75X", L"1X (NORMAL)", L"1.25X", L"1.5X", L"2X", L"3X", L"4X"};
 
 std::wstring wide(std::string_view text) {
     if (text.empty()) return {};
@@ -29,6 +31,12 @@ std::wstring wide(std::string_view text) {
     if (!size) return L"Status text unavailable.";
     std::wstring converted(size, L'\0');
     MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), int(text.size()), converted.data(), size);
+    return converted;
+}
+
+std::wstring upperWide(std::string_view text) {
+    auto converted = wide(text);
+    if (!converted.empty()) CharUpperBuffW(converted.data(), DWORD(converted.size()));
     return converted;
 }
 
@@ -42,7 +50,9 @@ HWND control(HWND parent, const wchar_t* type, const wchar_t* text, DWORD style,
 }
 }
 
-DeveloperToolsWindow::DeveloperToolsWindow(HWND owner, NativeMouseWindow& mouse) : owner_(owner), mouse_(mouse) {}
+DeveloperToolsWindow::DeveloperToolsWindow(HWND owner, NativeMouseWindow& mouse,
+    std::function<void(bool)> resolutionShortcut)
+    : owner_(owner), mouse_(mouse), setResolutionShortcut_(std::move(resolutionShortcut)) {}
 DeveloperToolsWindow::~DeveloperToolsWindow() { close(); releaseInputGate(); }
 
 bool DeveloperToolsWindow::handleMessage(MSG& message) {
@@ -89,7 +99,7 @@ bool DeveloperToolsWindow::open() {
     }
     constexpr DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
     constexpr DWORD extended = WS_EX_CONTROLPARENT | WS_EX_TOOLWINDOW;
-    RECT size{0, 0, 450, 350};
+    RECT size{0, 0, 450, 452};
     AdjustWindowRectEx(&size, style, FALSE, extended);
     RECT ownerRect{};
     GetWindowRect(owner_, &ownerRect);
@@ -101,7 +111,7 @@ bool DeveloperToolsWindow::open() {
         x = (std::max)(monitor.rcWork.left, (std::min)(LONG(x), monitor.rcWork.right - width));
         y = (std::max)(monitor.rcWork.top, (std::min)(LONG(y), monitor.rcWork.bottom - height));
     }
-    const HWND created = CreateWindowExW(extended, kWindowClass, L"The Darkness - Developer tools",
+    const HWND created = CreateWindowExW(extended, kWindowClass, L"THE DARKNESS - DEVELOPER TOOLS",
         style, x, y, width, height, owner_, nullptr, windowClass.hInstance, this);
     if (!created) {
         releaseInputGate();
@@ -128,25 +138,30 @@ void DeveloperToolsWindow::releaseInputGate() {
 }
 
 void DeveloperToolsWindow::createControls() {
-    control(window_, L"STATIC", L"Mission", 0, 16, 17, 330, 18);
+    control(window_, L"STATIC", L"MISSION", 0, 16, 17, 330, 18);
     const DWORD comboStyle = CBS_DROPDOWNLIST | CBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP;
     mission_ = control(window_, L"COMBOBOX", L"", comboStyle, 16, 39, 327, 320, kMission);
     for (const auto& item : developerMissions()) {
-        const auto title = wide(item.title);
+        const auto title = upperWide(item.title);
         SendMessageW(mission_, CB_ADDSTRING, 0, LPARAM(title.c_str()));
     }
     SendMessageW(mission_, CB_SETCURSEL, 0, 0);
-    load_ = control(window_, L"BUTTON", L"Load", BS_PUSHBUTTON | WS_TABSTOP, 355, 39, 78, 26, kLoad);
-    control(window_, L"STATIC", L"Player speed", 0, 16, 84, 180, 18);
+    load_ = control(window_, L"BUTTON", L"LOAD", BS_PUSHBUTTON | WS_TABSTOP, 355, 39, 78, 26, kLoad);
+    control(window_, L"STATIC", L"PLAYER SPEED", 0, 16, 84, 180, 18);
     speed_ = control(window_, L"COMBOBOX", L"", comboStyle, 16, 106, 180, 240, kSpeed);
     for (const auto* text : kSpeedNames) SendMessageW(speed_, CB_ADDSTRING, 0, LPARAM(text));
-    invincible_ = control(window_, L"BUTTON", L"Invincible", BS_AUTOCHECKBOX | WS_TABSTOP, 220, 106, 210, 26, kInvincible);
-    control(window_, L"STATIC", L"Status", 0, 16, 149, 400, 18);
-    status_ = control(window_, L"STATIC", L"", SS_LEFT, 16, 171, 416, 61);
-    control(window_, L"STATIC", L"Loading a mission may autosave. Back up saves before using mission selection.", 0, 16, 238, 416, 35);
-    control(window_, L"STATIC", L"Session only. F5 or Escape closes this panel.", 0, 16, 285, 416, 18);
-    defaults_ = control(window_, L"BUTTON", L"Restore defaults", BS_PUSHBUTTON | WS_TABSTOP, 16, 312, 150, 27, kDefaults);
-    control(window_, L"BUTTON", L"Close", BS_PUSHBUTTON | WS_TABSTOP, 355, 312, 78, 27, IDCANCEL);
+    invincible_ = control(window_, L"BUTTON", L"INVINCIBLE", BS_AUTOCHECKBOX | WS_TABSTOP, 220, 106, 210, 26, kInvincible);
+    noclip_ = control(window_, L"BUTTON", L"NOCLIP", BS_AUTOCHECKBOX | WS_TABSTOP, 16, 140, 416, 26, kNoclip);
+    unlock_ = control(window_, L"BUTTON", L"UNLOCK ALL DARKNESS", BS_PUSHBUTTON | WS_TABSTOP, 16, 181, 203, 27, kUnlock);
+    maxDarkness_ = control(window_, L"BUTTON", L"MAX DARKNESS LEVEL", BS_PUSHBUTTON | WS_TABSTOP, 229, 181, 203, 27, kMaxDarkness);
+    resolutionShortcut_ = control(window_, L"BUTTON", L"ENABLE F6 RESOLUTION SHORTCUT", BS_AUTOCHECKBOX | WS_TABSTOP,
+                                  16, 223, 416, 26, kResolutionShortcut);
+    control(window_, L"STATIC", L"STATUS", 0, 16, 265, 400, 18);
+    status_ = control(window_, L"STATIC", L"", SS_LEFT, 16, 287, 416, 61);
+    control(window_, L"STATIC", L"SPEED, INVINCIBILITY, NOCLIP AND THE F6 SHORTCUT ARE SESSION ONLY. MISSION LOADS AND DARKNESS GRANTS MAY AUTOSAVE.",
+            0, 16, 357, 416, 42);
+    defaults_ = control(window_, L"BUTTON", L"RESTORE DEFAULTS", BS_PUSHBUTTON | WS_TABSTOP, 16, 412, 150, 27, kDefaults);
+    control(window_, L"BUTTON", L"CLOSE", BS_PUSHBUTTON | WS_TABSTOP, 355, 412, 78, 27, IDCANCEL);
 }
 
 void DeveloperToolsWindow::refresh() {
@@ -156,12 +171,17 @@ void DeveloperToolsWindow::refresh() {
     EnableWindow(load_, snapshot.canLoadMission);
     EnableWindow(speed_, snapshot.hasActivePlayer);
     EnableWindow(invincible_, snapshot.hasActivePlayer);
-    EnableWindow(defaults_, snapshot.hasActivePlayer);
+    EnableWindow(noclip_, snapshot.hasActivePlayer);
+    EnableWindow(unlock_, snapshot.hasActivePlayer);
+    EnableWindow(maxDarkness_, snapshot.hasActivePlayer);
+    EnableWindow(resolutionShortcut_, bool(setResolutionShortcut_));
     const auto speed = std::find(kSpeeds.begin(), kSpeeds.end(), snapshot.playerSpeed);
     SendMessageW(speed_, CB_SETCURSEL, speed == kSpeeds.end() ? -1 : speed - kSpeeds.begin(), 0);
     SendMessageW(invincible_, BM_SETCHECK, snapshot.invincible ? BST_CHECKED : BST_UNCHECKED, 0);
-    std::wstring status = wide(snapshot.status);
-    if (!snapshot.hasActivePlayer) status += L"\nPlayer controls become available when a player is active.";
+    SendMessageW(noclip_, BM_SETCHECK, snapshot.noclip ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(resolutionShortcut_, BM_SETCHECK, resolutionShortcutEnabled_ ? BST_CHECKED : BST_UNCHECKED, 0);
+    std::wstring status = upperWide(snapshot.status);
+    if (!snapshot.hasActivePlayer) status += L"\nPLAYER CONTROLS BECOME AVAILABLE WHEN A PLAYER IS ACTIVE.";
     if (status != displayedStatus_) {
         displayedStatus_ = std::move(status);
         SetWindowTextW(status_, displayedStatus_.c_str());
@@ -193,10 +213,35 @@ void DeveloperToolsWindow::selectInvincibility() {
     refresh();
 }
 
-void DeveloperToolsWindow::restoreDefaults() {
+void DeveloperToolsWindow::selectNoclip() {
     if (!developerSnapshot().hasActivePlayer) { refresh(); return; }
+    requestDeveloperNoclip(SendMessageW(noclip_, BM_GETCHECK, 0, 0) == BST_CHECKED);
+    refresh();
+}
+
+void DeveloperToolsWindow::selectResolutionShortcut() {
+    if (!setResolutionShortcut_) return;
+    resolutionShortcutEnabled_ = SendMessageW(resolutionShortcut_, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    setResolutionShortcut_(resolutionShortcutEnabled_);
+    refresh();
+}
+
+void DeveloperToolsWindow::unlockDarkness() {
+    if (developerSnapshot().hasActivePlayer) requestDeveloperUnlockDarkness();
+    refresh();
+}
+
+void DeveloperToolsWindow::maxDarkness() {
+    if (developerSnapshot().hasActivePlayer) requestDeveloperMaxDarkness();
+    refresh();
+}
+
+void DeveloperToolsWindow::restoreDefaults() {
     requestDeveloperSpeed(1.f);
     requestDeveloperInvincibility(false);
+    requestDeveloperNoclip(false);
+    resolutionShortcutEnabled_ = false;
+    if (setResolutionShortcut_) setResolutionShortcut_(false);
     refresh();
 }
 
@@ -226,6 +271,10 @@ LRESULT DeveloperToolsWindow::message(UINT message, WPARAM key, LPARAM detail) {
         else if (id == kLoad && notification == BN_CLICKED) loadMission();
         else if (id == kSpeed && notification == CBN_SELCHANGE) selectSpeed();
         else if (id == kInvincible && notification == BN_CLICKED) selectInvincibility();
+        else if (id == kNoclip && notification == BN_CLICKED) selectNoclip();
+        else if (id == kUnlock && notification == BN_CLICKED) unlockDarkness();
+        else if (id == kMaxDarkness && notification == BN_CLICKED) maxDarkness();
+        else if (id == kResolutionShortcut && notification == BN_CLICKED) selectResolutionShortcut();
         else if (id == kDefaults && notification == BN_CLICKED) restoreDefaults();
         return 0;
     }
@@ -236,7 +285,8 @@ LRESULT DeveloperToolsWindow::message(UINT message, WPARAM key, LPARAM detail) {
         const bool restoreFocus = foreground == closed || foreground == owner_;
         KillTimer(closed, kRefreshTimer);
         SetWindowLongPtrW(closed, GWLP_USERDATA, 0);
-        window_ = mission_ = load_ = speed_ = invincible_ = defaults_ = status_ = nullptr;
+        window_ = mission_ = load_ = speed_ = invincible_ = noclip_ = unlock_ = maxDarkness_ =
+                  resolutionShortcut_ = defaults_ = status_ = nullptr;
         displayedStatus_.clear();
         releaseInputGate();
         if (restoreFocus && IsWindow(owner_)) SetFocus(owner_);
@@ -248,9 +298,10 @@ LRESULT DeveloperToolsWindow::message(UINT message, WPARAM key, LPARAM detail) {
 
 void DeveloperToolsWindow::printStatus(std::string_view action) const {
     const auto snapshot = developerSnapshot();
-    std::printf("[DeveloperTest] action=%.*s open=%u canLoadMission=%u hasActivePlayer=%u speed=%.2f invincible=%u revision=%llu status=%s\n",
+    std::printf("[DeveloperTest] action=%.*s open=%u canLoadMission=%u hasActivePlayer=%u speed=%.2f invincible=%u noclip=%u resolutionShortcut=%u revision=%llu status=%s\n",
         int(action.size()), action.data(), unsigned(isOpen()), unsigned(snapshot.canLoadMission),
-        unsigned(snapshot.hasActivePlayer), snapshot.playerSpeed, unsigned(snapshot.invincible),
+        unsigned(snapshot.hasActivePlayer), snapshot.playerSpeed, unsigned(snapshot.invincible), unsigned(snapshot.noclip),
+        unsigned(resolutionShortcutEnabled_),
         static_cast<unsigned long long>(snapshot.revision), snapshot.status.c_str());
 }
 
@@ -305,10 +356,14 @@ bool DeveloperToolsWindow::handleTestCommand(std::string_view command) {
     std::istringstream fields{std::string(command)};
     std::string prefix, action, value, extra;
     if (!(fields >> prefix >> action) || prefix != "dev") return false;
-    if (action == "open" || action == "close" || action == "status") {
+    if (action == "open" || action == "close" || action == "status" || action == "defaults") {
         if (fields >> extra) return false;
         if (action == "open") open();
         else if (action == "close") close();
+        else if (action == "defaults") {
+            if (window_) SendMessageW(window_, WM_COMMAND, MAKEWPARAM(kDefaults, BN_CLICKED), LPARAM(defaults_));
+            else std::puts("[DeveloperTest] Action unavailable while the panel is closed; use 'dev open' first.");
+        }
         printStatus(action);
         return true;
     }
@@ -332,8 +387,10 @@ bool DeveloperToolsWindow::handleTestCommand(std::string_view command) {
         const auto found = std::find(kSpeeds.begin(), kSpeeds.end(), multiplier);
         if (end == value.c_str() || *end || !std::isfinite(multiplier) || found == kSpeeds.end()) return false;
         selected = size_t(found - kSpeeds.begin());
-    } else if (action == "invincible") {
+    } else if (action == "invincible" || action == "noclip" || action == "resolution") {
         if (value != "on" && value != "off") return false;
+    } else if (action == "darkness") {
+        if (value != "unlock" && value != "max") return false;
     } else return false;
     // Opening is explicit so diagnostics also exercise focus/capture lifecycle.
     if (!window_) {
@@ -349,6 +406,16 @@ bool DeveloperToolsWindow::handleTestCommand(std::string_view command) {
         } else if (action == "invincible" && IsWindowEnabled(invincible_)) {
             SendMessageW(invincible_, BM_SETCHECK, value == "on" ? BST_CHECKED : BST_UNCHECKED, 0);
             SendMessageW(window_, WM_COMMAND, MAKEWPARAM(kInvincible, BN_CLICKED), LPARAM(invincible_));
+        } else if (action == "noclip" && IsWindowEnabled(noclip_)) {
+            SendMessageW(noclip_, BM_SETCHECK, value == "on" ? BST_CHECKED : BST_UNCHECKED, 0);
+            SendMessageW(window_, WM_COMMAND, MAKEWPARAM(kNoclip, BN_CLICKED), LPARAM(noclip_));
+        } else if (action == "resolution" && IsWindowEnabled(resolutionShortcut_)) {
+            SendMessageW(resolutionShortcut_, BM_SETCHECK, value == "on" ? BST_CHECKED : BST_UNCHECKED, 0);
+            SendMessageW(window_, WM_COMMAND, MAKEWPARAM(kResolutionShortcut, BN_CLICKED), LPARAM(resolutionShortcut_));
+        } else if (action == "darkness" && IsWindowEnabled(value == "unlock" ? unlock_ : maxDarkness_)) {
+            const auto button = value == "unlock" ? unlock_ : maxDarkness_;
+            const auto id = value == "unlock" ? kUnlock : kMaxDarkness;
+            SendMessageW(window_, WM_COMMAND, MAKEWPARAM(id, BN_CLICKED), LPARAM(button));
         } else std::puts("[DeveloperTest] Action unavailable; the engine has not reported readiness.");
     }
     printStatus(action);
