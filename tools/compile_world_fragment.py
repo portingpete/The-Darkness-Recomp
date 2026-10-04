@@ -11,6 +11,7 @@ import re
 from compile_vertex_template import parse
 
 ASSETS = {
+    'System/Gl/ARB_fragment_program/XREngine_TransparentMesh.fp': '2cb8271a41069b6ffdbb19cf69e926aa34573fa2dd33b73f678f3eeec9dbbb29',
     'System/Gl/ARB_fragment_program/VBOp_FP20_Water.fp': '46d9f43f364c8c7358904e5670d139ed2e9471b84ae9358732fbe713796e7e4d',
     'System/Gl/ARB_fragment_program/VBOp_FP20_Water2.fp': '20ec6a364fb6857116ffb752ba84c41fbfd48fedc7ef808352b1fde65f8bd1b3',
     'System/Gl/ARB_fragment_program/VBOp_FP20_CubeWater.fp': '9ccfc467dbee54c8d0f44b9337c1640f85475bbc4219c21e65a18a8f548493db',
@@ -77,7 +78,7 @@ VARIANTS = {'CMWnd_ModTexture_PaintVideo_YUV2RGB': [0],
                  for material in (0, 64, 65, 67, 71, 128)}),
             'XRShader_FP20_LFM': [0],
             'XREngine_DepthFog': list(range(4)), 'XREngine_GaussClampedHurt': [0],
-            'XREngine_MulFilter': [0]}
+            'XREngine_MulFilter': [0], 'XREngine_TransparentMesh': [0]}
 
 # Shipped decal light/projector combinations, with and without trimesh.
 DECAL_VARIANTS = sorted({flags | trimesh for flags in

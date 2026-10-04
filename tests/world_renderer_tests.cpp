@@ -955,6 +955,7 @@ static void immediateCanonicalContract(WorldRendererD3D11& renderer) {
 }
 #include "darkness_effect_tests.h"
 #include "world_alpha_coverage_tests.h"
+#include "world_transparent_mesh_tests.h"
 #include "world_projected_texture_tests.h"
 #include "world_material_tests.h"
 #include "world_video_tests.h"
@@ -1518,6 +1519,7 @@ static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
     partialClears(renderer,context,histogramDraw);
     deeperResources(renderer,device,context,histogramDraw);
     alphaCoveragePass(renderer,histogramDraw,1);
+    transparentMeshPass(renderer,1);
     projectedTexturePass(renderer,1);
     waterMaterialPass(renderer,1);
     worldVideoPass(renderer,1);
@@ -1568,6 +1570,7 @@ static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
         require(matched,"Resolve/present lost native subpixel edge coverage");
         std::printf("PhysicalRaster%u: %u covered pixels, %u mixed logical edge blocks retained through resolve/present.\n",scale,physicalCoverage,mixedBlocks);
         alphaCoveragePass(scaled,histogramDraw,scale);
+        if(scale==2)transparentMeshPass(scaled,scale);
         projectedTexturePass(scaled,scale);
         waterMaterialPass(scaled,scale);
         worldVideoPass(scaled,scale);

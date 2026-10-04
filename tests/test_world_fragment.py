@@ -13,6 +13,20 @@ from compile_world_fragment import ASSETS, VARIANTS, compile_source, compile_fix
 
 
 class WorldFragmentTests(unittest.TestCase):
+    def test_transparent_mesh_restores_saved_rgb_with_opacity_alpha(self):
+        name = 'XREngine_TransparentMesh'
+        source = (ROOT / 'Darkness/System/Gl/ARB_fragment_program' / (name + '.fp')).read_text(encoding='latin-1')
+        self.assertEqual(VARIANTS[name], [0])
+        code, metadata = compile_source(select_template(source, 0))
+        self.assertEqual(metadata['textures'], {0: '2D'})
+        self.assertEqual(metadata['instruction_count'], 3)
+        self.assertIn('t0 = ((texture0.Sample(sampler0, (tc0).xy) * sampleScale[0]));', code)
+        self.assertIn('t0.w = ((p0.xxxx)).w;', code)
+        self.assertIn('oCol = ((t0));', code)
+        self.assertNotIn('texture1', code)
+        with self.assertRaises(ValueError):
+            select_template(source, 1)
+
     def test_water_variants_keep_reflection_refraction_and_fog(self):
         directory = ROOT / 'Darkness/System/Gl/ARB_fragment_program'
         includes = {'Include_XREngine_Fog.fph': (directory / 'Include_XREngine_Fog.fph').read_text(encoding='latin-1')}

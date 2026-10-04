@@ -138,6 +138,7 @@ add_custom_command(OUTPUT "${DARK_SHADER_DIR}/engine_world_fragments.generated.h
         Darkness/System/Gl/ARB_fragment_program/XREngine_CCFuser.fp
         Darkness/System/Gl/ARB_fragment_program/XREngine_Final5.fp
         Darkness/System/Gl/ARB_fragment_program/XREngine_MulFilter.fp
+        Darkness/System/Gl/ARB_fragment_program/XREngine_TransparentMesh.fp
         Darkness/System/Xenon/FragmentProgram/MRenderXenon_Attrib_TexEnvMode00.fp
         Darkness/System/Xenon/FragmentProgram/MRenderXenon_Attrib_TexEnvMode01.fp
         Darkness/System/Xenon/FragmentProgram/MRenderXenon_Attrib_TexEnvMode02.fp
