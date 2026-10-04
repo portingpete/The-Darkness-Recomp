@@ -88,17 +88,17 @@ inline constexpr TextureRef kTextureRefs[] = {
 
 // CONTROLS.md / runtime/native/input.cpp true bindings: A->E, X->F, Y->Space,
 // LB->Q, RB->G, LS->Ctrl/C, Start->Enter, Back->Tab, sticks->WASD/mouse,
-// LT->RMB, RT->LMB. B, dpad and RS are surface-ambiguous (mouse capture does
-// NOT prove menu/gameplay), so combined truthful labels are used in every
-// context: B shows R over Esc, dpad shows gameplay digit over menu arrow,
-// RS shows Shift over MMB. DRL/DUD are paired directions, never a single side.
+// LT->RMB, RT->LMB. The owned draw context selects action-only gameplay
+// labels or combined menu labels: B is Reload in gameplay, Reload/Esc in
+// menus; dpad uses digits in gameplay and includes arrows in menus. Both
+// Shift and MMB bind RS during gameplay. DRL/DUD remain paired directions.
 // 360_S/SLR/SUD serve both move (WASD) and look (mouse) and 360_C serves both
 // crouch (Ctrl) and aim (Shift) per CubeWnd rows, so they also combine.
-inline const char* keyboardLabel(Button button, Context) {
+inline const char* keyboardLabel(Button button, Context context) {
     if (size_t(button) >= BindingLabels{}.size()) return nullptr;
     // Retain the returned C string until the caller's next label lookup.
     thread_local std::shared_ptr<const BindingLabels> snapshot;
-    snapshot = bindingLabels();
+    snapshot = bindingLabels(context == Context::Gameplay);
     return (*snapshot)[size_t(button)].c_str();
 }
 inline Context contextFromMouseLook(bool) { return Context::Menu; }
@@ -111,9 +111,9 @@ inline ColorImage makeKeycap(const char* label) {
     for (const auto& sprite : XeluLight::kSprites) {
         if (sprite.label != label) continue;
         ColorImage image;
-        image.width = image.height = 32;
-        image.pixels.resize(32 * 32 * 4);
-        for (size_t i = 0; i < 32 * 32; ++i) {
+        image.width = image.height = XeluLight::kSize;
+        image.pixels.resize(XeluLight::kPixelCount * 4);
+        for (size_t i = 0; i < XeluLight::kPixelCount; ++i) {
             const uint32_t rgba = sprite.rgba[i];
             for (unsigned channel = 0; channel < 4; ++channel)
                 image.pixels[i * 4 + channel] = uint8_t(rgba >> (channel * 8));
@@ -144,10 +144,12 @@ inline ColorImage makeKeycap(const char* label) {
         }
     };
     const auto put = [&](unsigned x, unsigned y, uint8_t value) {
-        auto* pixel = image.pixels.data() + (size_t(y) * 32 + x) * 4;
+        auto* pixel = image.pixels.data() + (size_t(y) * image.width + x) * 4;
         pixel[0] = pixel[1] = pixel[2] = value; pixel[3] = 255;
     };
-    for (unsigned y = 4; y < 28; ++y) for (unsigned x = 4; x < 28; ++x) put(x, y, 235);
+    constexpr unsigned artScale = XeluLight::kSize / 32;
+    for (unsigned y = 4 * artScale; y < 28 * artScale; ++y)
+        for (unsigned x = 4 * artScale; x < 28 * artScale; ++x) put(x, y, 235);
     std::string text(label);
     std::vector<std::string> lines;
     size_t start = 0;
@@ -159,12 +161,12 @@ inline ColorImage makeKeycap(const char* label) {
     if (lines.empty()) lines.push_back(text);
     if (lines.size() > 4 || std::any_of(lines.begin(), lines.end(), [](const auto& line) { return line.size() > 6; })) return {};
     const unsigned scale = lines.size() <= 2 &&
-        std::all_of(lines.begin(), lines.end(), [](const auto& line) { return line.size() <= 3; }) ? 2 : 1;
-    const unsigned height = unsigned(lines.size()) * (5 * scale + 1) - 1;
-    unsigned y = (32 - height) / 2;
+        std::all_of(lines.begin(), lines.end(), [](const auto& line) { return line.size() <= 3; }) ? 2 * artScale : artScale;
+    const unsigned height = unsigned(lines.size()) * (5 * scale + artScale) - artScale;
+    unsigned y = (image.height - height) / 2;
     for (const auto& line : lines) {
         const auto count = (std::min)(line.size(), size_t(6));
-        unsigned x = (32 - unsigned(count) * 4 * scale + scale) / 2;
+        unsigned x = (image.width - unsigned(count) * 4 * scale + scale) / 2;
         for (size_t i = 0; i < count; ++i) {
             const uint16_t bits = glyph(line[i]);
             for (unsigned row = 0; row < 5; ++row) for (unsigned col = 0; col < 3; ++col)
@@ -173,7 +175,7 @@ inline ColorImage makeKeycap(const char* label) {
                         put(x + col * scale + dx, y + row * scale + dy, 36);
             x += 4 * scale;
         }
-        y += 5 * scale + 1;
+        y += 5 * scale + artScale;
     }
     return image;
 }
@@ -196,11 +198,10 @@ inline std::shared_ptr<const ColorImage> iconFor(Button button, Context context,
 }
 
 // Tile-aware composition. Prompt textures are not always square full-bleed
-// art: the live look tutorial uploads 64x32 single-level textures, and meshes
-// may sample atlas tiles (subrect UVs). Replacements therefore keep the
-// original canvas size and sample behavior: the 32x32 native icon is fitted
-// (contain, aspect-preserved, centered, nearest) into the sampled tile rect on
-// a transparent canvas. Full-bleed art keeps prior behavior exactly.
+// art: the live look tutorial uploads 64x32 textures, and meshes may sample
+// atlas tiles. Double the canvas resolution while retaining normalized tile
+// bounds, fit the 64px authored icon into that tile, and generate a complete
+// mip chain. Large canvases retain their size within the image limit.
 struct TileRect { uint32_t x = 0, y = 0, w = 0, h = 0; bool valid = false; };
 inline bool promptFiniteUv(float u) { return u == u && u < 4e18f && u > -4e18f; }
 inline bool promptFullBleed(float u0, float v0, float u1, float v1) {
@@ -234,21 +235,48 @@ inline TileRect promptTileRect(float u0, float v0, float u1, float v1, uint32_t 
     tile.valid = true;
     return tile;
 }
+// Alpha-weighted mip filtering retains keycap edges without introducing dark
+// fringes from transparent texels. Both render paths receive the same chain.
+inline void makePromptMips(ColorImage& image) {
+    image.authoredMips = true;
+    uint32_t width = image.width, height = image.height;
+    while (width > 1 || height > 1) {
+        const auto& source = image.mips.empty() ? image.pixels : image.mips.back();
+        const uint32_t nextWidth = (std::max)(1u, width / 2), nextHeight = (std::max)(1u, height / 2);
+        std::vector<uint8_t> pixels(size_t(nextWidth) * nextHeight * 4);
+        for (uint32_t y = 0; y < nextHeight; ++y) for (uint32_t x = 0; x < nextWidth; ++x) {
+            uint32_t alpha = 0, count = 0, rgb[3]{};
+            for (uint32_t dy = 0; dy < 2 && y * 2 + dy < height; ++dy)
+                for (uint32_t dx = 0; dx < 2 && x * 2 + dx < width; ++dx) {
+                    const auto* input = source.data() + (size_t(y * 2 + dy) * width + x * 2 + dx) * 4;
+                    alpha += input[3]; ++count;
+                    for (unsigned channel = 0; channel < 3; ++channel) rgb[channel] += input[channel] * input[3];
+                }
+            auto* output = pixels.data() + (size_t(y) * nextWidth + x) * 4;
+            output[3] = uint8_t((alpha + count / 2) / count);
+            for (unsigned channel = 0; channel < 3; ++channel)
+                output[channel] = alpha ? uint8_t((rgb[channel] + alpha / 2) / alpha) : 0;
+        }
+        image.mips.push_back(std::move(pixels)); width = nextWidth; height = nextHeight;
+    }
+}
 inline ColorImage composePromptIcon(const ColorImage& base, Button button, Context context, TileRect tile,
                                    const char* configuredLabel = nullptr) {
     ColorImage canvas;
-    canvas.width = base.width; canvas.height = base.height;
+    const uint32_t resolution = base.width <= 1024 && base.height <= 1024 ? XeluLight::kSize / 32 : 1;
+    canvas.width = base.width * resolution; canvas.height = base.height * resolution;
     canvas.promptOrigin = base.promptOrigin;
     // Independently reject any tile outside the canvas with overflow-safe
     // bounds before indexing: callers must pass promptTileRect output, but a
     // hand-built tile must never write out of bounds. Invalid canvas (empty
     // pixels) fails ColorImage::valid so resolvers keep the original.
     const uint64_t xEnd = uint64_t(tile.x) + tile.w, yEnd = uint64_t(tile.y) + tile.h;
-    if (!tile.valid || !tile.w || !tile.h || !canvas.width || !canvas.height ||
-        canvas.width > 2048 || canvas.height > 2048 ||
-        tile.x >= canvas.width || tile.y >= canvas.height ||
-        xEnd > canvas.width || yEnd > canvas.height)
+    if (!tile.valid || !tile.w || !tile.h || !base.width || !base.height ||
+        base.width > 2048 || base.height > 2048 ||
+        tile.x >= base.width || tile.y >= base.height ||
+        xEnd > base.width || yEnd > base.height)
         return canvas;
+    tile.x *= resolution; tile.y *= resolution; tile.w *= resolution; tile.h *= resolution;
     canvas.pixels.assign(size_t(canvas.width) * canvas.height * 4, 0);
     const auto icon = iconFor(button, context, configuredLabel);
     if (!icon || !icon->valid()) return canvas;
@@ -265,6 +293,7 @@ inline ColorImage composePromptIcon(const ColorImage& base, Button button, Conte
             uint8_t* out = canvas.pixels.data() + (size_t(tile.y + y) * canvas.width + tile.x + x) * 4;
             out[0] = in[0]; out[1] = in[1]; out[2] = in[2]; out[3] = in[3];
         }
+    makePromptMips(canvas);
     return canvas;
 }
 

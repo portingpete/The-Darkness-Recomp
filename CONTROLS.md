@@ -189,5 +189,8 @@ In-game button prompts use the light keyboard and mouse artwork from
 controller becomes the primary active input, prompts switch to the original
 controller artwork; keyboard/mouse activity, focus loss, or controller
 disconnect restores the keyboard/mouse set. Shared action icons combine their
-bindings, such as R/Esc or Shift/middle mouse. The artwork is embedded in the
+bindings, such as R/Esc in menus or Shift/middle mouse during gameplay.
+Gameplay prompts use their action bindings, so portal choices show R without
+Esc. Keyboard and mouse keycaps use 64px artwork and appear 25% larger when
+the screen layout has room. The artwork is embedded in the
 game; no separate icon download is needed.

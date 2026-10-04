@@ -2,6 +2,7 @@
 #include "renderer/engine/engine_performance.h"
 #include "runtime/native/graphics_settings.h"
 #include "renderer/engine/prompt_icons.h"
+#include "renderer/engine/prompt_layout.h"
 #include "renderer/engine/display_layout.h"
 #include "renderer/engine/video_layout.h"
 #include "runtime/native/input.h"
@@ -310,8 +311,8 @@ void EnginePreviewD3D11::render(const std::vector<SimpleMesh>& meshes,Native::Pr
     worldPresented_=false;
     calibrationDirty_=true;
     // Prompt source is read once per frame: no per-mesh input locks, and all
-    // prompt meshes in the frame agree. Labels are combined truthful icons, so
-    // no mouse-capture context is claimed; the same source feeds the world.
+    // prompt meshes in the frame agree. Each owned draw carries its original
+    // HUD/menu context; the same input source feeds the world renderer.
     framePromptSource_ = Native::nativeInput().promptSource() == Native::PromptInputSource::Controller ?
         Native::PromptRenderSource::Controller : Native::PromptRenderSource::KeyboardMouse;
     world_->setPromptSource(framePromptSource_ == Native::PromptRenderSource::KeyboardMouse);
@@ -328,7 +329,6 @@ void EnginePreviewD3D11::render(const std::vector<SimpleMesh>& meshes,Native::Pr
     }
     frameOpen_=!part.last;
     const auto promptSource=framePromptSource_;
-    const auto promptContext=Native::PromptRenderContext::Menu;
     auto restoreSimpleState=[&] {
     world_->invalidateBindings();
     ID3D11RenderTargetView* target = rtv_.Get(); context_->OMSetRenderTargets(1, &target, nullptr);
@@ -343,6 +343,8 @@ void EnginePreviewD3D11::render(const std::vector<SimpleMesh>& meshes,Native::Pr
     };
     bool simpleStateDirty = true;
     for (const auto& mesh : meshes) {
+        const auto promptContext = mesh.promptContext;
+        auto projection = mesh.projection;
         Native::setRenderSamplePhase(Native::RenderSamplePhase::other);
         if(mesh.displayGamma) {
             if(!displayGamma_ || *displayGamma_!=*mesh.displayGamma)
@@ -412,6 +414,20 @@ void EnginePreviewD3D11::render(const std::vector<SimpleMesh>& meshes,Native::Pr
                 promptIcon = Native::promptReplacementFor(mesh.textureId, mesh.colorTexture, promptSource, promptContext);
             }
             const auto& effective = promptIcon ? promptIcon : mesh.colorTexture;
+            if (promptIcon && mesh.vertices.size() == 4 && mesh.indices.size() == 6) {
+                std::array<std::array<float,4>,4> clip{};
+                for (unsigned vertex = 0; vertex < 4; ++vertex)
+                    for (unsigned column = 0; column < 4; ++column) {
+                        clip[vertex][column] = projection[12 + column];
+                        for (unsigned row = 0; row < 3; ++row)
+                            clip[vertex][column] += mesh.vertices[vertex].position[row] * projection[row * 4 + column];
+                    }
+                const auto transform = Prompts::promptQuadTransform(clip, mesh.indices);
+                if (transform[3]) for (unsigned row = 0; row < 4; ++row) {
+                    projection[row * 4] = transform[0] * projection[row * 4] + transform[1] * projection[row * 4 + 3];
+                    projection[row * 4 + 1] = transform[0] * projection[row * 4 + 1] + transform[2] * projection[row * 4 + 3];
+                }
+            }
             const auto& image = *effective;
             if (!image.valid() || image.faces!=1)throw std::invalid_argument("Invalid preview color image");
             if (!colorTextures_.contains(effective.get())) {
@@ -472,7 +488,7 @@ void EnginePreviewD3D11::render(const std::vector<SimpleMesh>& meshes,Native::Pr
         context_->Unmap(dynamicIB_.Get(),0);
         ID3D11Buffer* vertexBuffer = dynamicVB_.Get(); UINT stride = sizeof(SimpleVertex), offset = 0;
         context_->IASetVertexBuffers(0,1,&vertexBuffer,&stride,&offset); context_->IASetIndexBuffer(dynamicIB_.Get(),DXGI_FORMAT_R16_UINT,0);
-        updateConstants(context_.Get(),constants_.Get(),mesh.projection.data(),sizeof(mesh.projection));
+        updateConstants(context_.Get(),constants_.Get(),projection.data(),sizeof(projection));
         context_->DrawIndexed(UINT(mesh.indices.size()),0,0);
     }
     if(part.last)world_->endFrame();

@@ -148,7 +148,7 @@ class WorldRendererD3D11 {
         bool after,bool bypassed=false) noexcept;
     void smokeEvidence(const Native::WorldDraw&,uint32_t,unsigned);
     Ptr<ID3D11Buffer> fragmentConstants_,textureScales_,colorLookupConstants_,transferConstants_,viewportConstants_;
-    Native::EngineVector uploadedViewport_{};
+    std::array<Native::EngineVector,2> uploadedViewport_{};
     std::array<Native::EngineVector,256> uploadedFragment_{};
     std::array<Native::EngineVector,16> uploadedScales_{};
     std::array<uint8_t,16> uploadedAlpha_{};

@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <limits>
 #include <string>
+#include "prompt_layout_tests.h"
 
 namespace {
 DarkRecomp::ColorImage promptTestImage(uint8_t r, uint8_t g, uint8_t b, uint32_t width = 32, uint32_t height = 32,
@@ -23,6 +24,18 @@ DarkRecomp::ColorImage promptTestImage(uint8_t r, uint8_t g, uint8_t b, uint32_t
 }
 uint8_t promptChannel(const DarkRecomp::ColorImage& image, uint32_t x, uint32_t y, unsigned channel) {
     return image.pixels[(size_t(y) * image.width + x) * 4 + channel];
+}
+void requirePromptMipChain(const DarkRecomp::ColorImage& image) {
+    require(image.valid() && image.authoredMips && image.firstMip == 0,
+            "Prompt replacement does not own a complete valid mip chain");
+    require(image.mips.size() + 1 == std::bit_width((std::max)(image.width, image.height)),
+            "Prompt replacement mip chain stops before 1x1");
+    for (size_t level = 1; level <= image.mips.size(); ++level)
+        require(image.mips[level - 1].size() == size_t((std::max)(1u, image.width >> level)) *
+                (std::max)(1u, image.height >> level) * 4,
+                "Prompt replacement mip dimensions differ from normalized UV sampling");
+    const auto& finalLevel = image.mips.empty() ? image.pixels : image.mips.back();
+    require(finalLevel.size() == 4, "Prompt replacement final mip is not 1x1 RGBA");
 }
 void promptPut32(uint8_t* base, uint32_t address, uint32_t v) {
     base[address] = uint8_t(v >> 24); base[address + 1] = uint8_t(v >> 16);
@@ -66,8 +79,183 @@ XtcFixture buildXtc(uint8_t* base, uint32_t container, uint32_t collection, uint
 }
 
 static void testPromptTileLayout();
+static void testPromptRenderContext() {
+    using DarkRecomp::Native::currentPromptRenderContext;
+    using DarkRecomp::Native::PromptRenderContext;
+    using DarkRecomp::Native::ScopedPromptRenderContext;
+    require(currentPromptRenderContext() == PromptRenderContext::Menu,
+            "Unscoped prompt owner did not default to Menu");
+    {
+        ScopedPromptRenderContext gameplay(PromptRenderContext::Gameplay);
+        require(currentPromptRenderContext() == PromptRenderContext::Gameplay,
+                "Verified HUD scope did not select Gameplay");
+        {
+            ScopedPromptRenderContext nestedGameplay(PromptRenderContext::Gameplay);
+            require(currentPromptRenderContext() == PromptRenderContext::Gameplay,
+                    "Nested HUD scope lost Gameplay ownership");
+        }
+        require(currentPromptRenderContext() == PromptRenderContext::Gameplay,
+                "Nested HUD scope did not restore its outer owner");
+        try {
+            ScopedPromptRenderContext nestedMenu(PromptRenderContext::Menu);
+            require(currentPromptRenderContext() == PromptRenderContext::Menu,
+                    "Nested menu scope inherited gameplay bindings");
+            throw 17;
+        } catch (int value) {
+            require(value == 17 && currentPromptRenderContext() == PromptRenderContext::Gameplay,
+                    "Exception in a nested menu did not restore the HUD owner");
+        }
+    }
+    require(currentPromptRenderContext() == PromptRenderContext::Menu,
+            "HUD scope leaked gameplay ownership into later menus");
+    try {
+        ScopedPromptRenderContext gameplay(PromptRenderContext::Gameplay);
+        throw 23;
+    } catch (int value) {
+        require(value == 23 && currentPromptRenderContext() == PromptRenderContext::Menu,
+                "Exception in HUD rendering leaked gameplay prompt context");
+    }
+}
+static void testQueuedPromptContexts() {
+    using namespace DarkRecomp::Native;
+    constexpr auto menu = PromptRenderContext::Menu;
+    constexpr auto gameplay = PromptRenderContext::Gameplay;
+    constexpr uint32_t managerA = 0x1000, managerB = 0x2000, drawA = 0x3000, drawB = 0x4000;
+    uint8_t ownerA{}, ownerB{};
+    auto* baseA = &ownerA;
+    auto* baseB = &ownerB;
+    retireQueuedPromptContexts();
+    struct Cleanup { ~Cleanup() { retireQueuedPromptContexts(); } } cleanup;
+
+    // Address keys do not establish ownership until the original manager's
+    // frame reset registers a generation. No guest memory is read here.
+    recordQueuedPromptContext(baseA, managerA, drawA, gameplay);
+    require(!queuedPromptGeneration(baseA, managerA) && queuedPromptContext(baseA, managerA, drawA) == menu,
+            "Unknown VB manager inherited gameplay prompt ownership");
+    resetQueuedPromptContexts(nullptr, managerA);
+    resetQueuedPromptContexts(baseA, 0);
+    resetQueuedPromptContexts(baseA, managerA + 1);
+    require(!queuedPromptGeneration(nullptr, managerA) && !queuedPromptGeneration(baseA, 0) &&
+            !queuedPromptGeneration(baseA, managerA + 1), "Invalid VB manager registered a prompt frame");
+
+    resetQueuedPromptContexts(baseA, managerA);
+    const uint64_t oldGeneration = queuedPromptGeneration(baseA, managerA);
+    require(oldGeneration != 0, "Original manager frame did not receive a prompt generation");
+    recordQueuedPromptContext(baseA, managerA, drawA, gameplay, oldGeneration);
+    for (unsigned repeat = 0; repeat < 3; ++repeat)
+        require(queuedPromptContext(baseA, managerA, drawA) == gameplay &&
+                queuedPromptContext(baseA, managerA, drawA, oldGeneration) == gameplay,
+                "Repeated execution consumed a still-current queued HUD context");
+    require(queuedPromptContext(baseA, managerA, drawA, 0) == menu,
+            "Unknown prompt generation resolved to Gameplay");
+
+    resetQueuedPromptContexts(baseA, managerA);
+    const uint64_t currentGeneration = queuedPromptGeneration(baseA, managerA);
+    require(currentGeneration > oldGeneration && queuedPromptContext(baseA, managerA, drawA) == menu,
+            "New original frame retained the previous queued VB ownership");
+    recordQueuedPromptContext(baseA, managerA, drawA, gameplay, currentGeneration);
+    require(queuedPromptContext(baseA, managerA, drawA, oldGeneration) == menu &&
+            queuedPromptContext(baseA, managerA, drawA, currentGeneration) == gameplay,
+            "Reused VB accepted an old frame token");
+    // A completed allocation/enqueue from an earlier frame must not clear or
+    // replace ownership that the next frame has already published.
+    forgetQueuedPromptContext(baseA, managerA, drawA, oldGeneration);
+    recordQueuedPromptContext(baseA, managerA, drawA, menu, oldGeneration);
+    require(queuedPromptContext(baseA, managerA, drawA) == gameplay,
+            "Stale allocation or menu enqueue changed the current frame");
+    recordQueuedPromptContext(baseA, managerA, drawB, gameplay, oldGeneration);
+    recordQueuedPromptContext(baseA, managerA, drawB, gameplay, 0);
+    require(queuedPromptContext(baseA, managerA, drawB) == menu,
+            "Stale or zero enqueue token added a current-frame gameplay VB");
+
+    forgetQueuedPromptContext(baseA, managerA, drawA, currentGeneration);
+    require(queuedPromptContext(baseA, managerA, drawA) == menu,
+            "Reallocation retained a previous use of the same VB");
+    recordQueuedPromptContext(baseA, managerA, drawA, gameplay);
+    recordQueuedPromptContext(baseA, managerA, drawB, gameplay);
+    recordQueuedPromptContext(baseA, managerA, drawA, menu);
+    require(queuedPromptContext(baseA, managerA, drawA) == menu &&
+            queuedPromptContext(baseA, managerA, drawB) == gameplay,
+            "Menu re-enqueue did not replace only the reused VB context");
+    recordQueuedPromptContext(baseA, managerA, drawA, gameplay);
+    recordQueuedPromptContext(baseA, managerA, drawA, static_cast<PromptRenderContext>(255));
+    require(queuedPromptContext(baseA, managerA, drawA) == menu,
+            "Invalid prompt context retained gameplay ownership");
+    recordQueuedPromptContext(baseA, managerA, 0, gameplay);
+    recordQueuedPromptContext(baseA, managerA, drawA + 1, gameplay);
+    require(queuedPromptContext(baseA, managerA, 0) == menu &&
+            queuedPromptContext(baseA, managerA, drawA + 1) == menu,
+            "Invalid VB address inherited gameplay ownership");
+
+    resetQueuedPromptContexts(baseB, managerA);
+    resetQueuedPromptContexts(baseA, managerB);
+    const uint64_t otherBaseGeneration = queuedPromptGeneration(baseB, managerA);
+    const uint64_t otherManagerGeneration = queuedPromptGeneration(baseA, managerB);
+    recordQueuedPromptContext(baseB, managerA, drawA, gameplay);
+    recordQueuedPromptContext(baseA, managerB, drawA, gameplay);
+    require(queuedPromptContext(baseA, managerA, drawA) == menu &&
+            queuedPromptContext(baseB, managerA, drawA) == gameplay &&
+            queuedPromptContext(baseA, managerB, drawA) == gameplay,
+            "Identical VB addresses shared context across bases or managers");
+    require(queuedPromptContext(baseB, managerA, drawA, currentGeneration) == menu &&
+            queuedPromptContext(baseA, managerB, drawA, otherBaseGeneration) == menu,
+            "Prompt generation was accepted by a different owner");
+    retireQueuedPromptContexts(baseA, managerA);
+    require(!queuedPromptGeneration(baseA, managerA) && queuedPromptContext(baseA, managerA, drawB) == menu &&
+            queuedPromptContext(baseB, managerA, drawA, otherBaseGeneration) == gameplay &&
+            queuedPromptContext(baseA, managerB, drawA, otherManagerGeneration) == gameplay,
+            "Manager retirement erased another owner or retained its own VB");
+    retireQueuedPromptContexts();
+    require(!queuedPromptGeneration(baseB, managerA) && !queuedPromptGeneration(baseA, managerB) &&
+            queuedPromptContext(baseB, managerA, drawA, otherBaseGeneration) == menu &&
+            queuedPromptContext(baseA, managerB, drawA, otherManagerGeneration) == menu,
+            "Global retirement retained a deferred prompt generation");
+
+    // The bounded side table must fail closed without evicting live owners.
+    for (uint32_t manager = 0x5000; manager < 0x5000 + 16 * 4; manager += 4) {
+        resetQueuedPromptContexts(baseA, manager);
+        require(queuedPromptGeneration(baseA, manager) > otherManagerGeneration,
+                "Retired manager slot did not receive a fresh generation");
+        recordQueuedPromptContext(baseA, manager, drawA, gameplay);
+    }
+    constexpr uint32_t overflowManager = 0x6000;
+    resetQueuedPromptContexts(baseA, overflowManager);
+    recordQueuedPromptContext(baseA, overflowManager, drawA, gameplay);
+    require(!queuedPromptGeneration(baseA, overflowManager) &&
+            queuedPromptContext(baseA, overflowManager, drawA) == menu &&
+            queuedPromptContext(baseA, 0x5000, drawA) == gameplay,
+            "Manager budget overflow evicted a live owner or claimed Gameplay");
+    retireQueuedPromptContexts(baseA, 0x5000);
+    resetQueuedPromptContexts(baseA, overflowManager);
+    recordQueuedPromptContext(baseA, overflowManager, drawA, gameplay);
+    require(queuedPromptContext(baseA, overflowManager, drawA) == gameplay,
+            "Retired manager slot could not be safely reused");
+
+    retireQueuedPromptContexts();
+    resetQueuedPromptContexts(baseA, managerA);
+    constexpr uint32_t firstDraw = 0x10000, overflowDraw = firstDraw + 4096 * 4;
+    for (uint32_t draw = firstDraw; draw < overflowDraw; draw += 4)
+        recordQueuedPromptContext(baseA, managerA, draw, gameplay);
+    recordQueuedPromptContext(baseA, managerA, overflowDraw, gameplay);
+    require(queuedPromptContext(baseA, managerA, firstDraw) == gameplay &&
+            queuedPromptContext(baseA, managerA, overflowDraw - 4) == gameplay &&
+            queuedPromptContext(baseA, managerA, overflowDraw) == menu,
+            "VB budget overflow erased a live context or claimed Gameplay");
+    recordQueuedPromptContext(baseA, managerA, firstDraw, menu);
+    recordQueuedPromptContext(baseA, managerA, overflowDraw, gameplay);
+    require(queuedPromptContext(baseA, managerA, firstDraw) == menu &&
+            queuedPromptContext(baseA, managerA, overflowDraw) == gameplay,
+            "Menu replacement did not release its bounded gameplay context");
+    forgetQueuedPromptContext(baseA, managerA, overflowDraw);
+    require(queuedPromptContext(baseA, managerA, overflowDraw) == menu,
+            "Allocation invalidation retained the final queued context");
+}
 static void testPromptIcons() {
     using namespace DarkRecomp::Prompts;
+    testPromptRenderContext();
+    testQueuedPromptContexts();
+    testPromptLayout();
+    setBindingLabels(defaultBindingLabels(), defaultGameplayBindingLabels());
     require(originFromName("GUI_Button_A") == Origin::A, "XTC A did not classify");
     require(originFromName("GUI_Button_DRL") == Origin::DRL, "Paired DRL lost");
     require(originFromName("GUI_Button_DUD") == Origin::DUD, "Paired DUD lost");
@@ -93,11 +281,12 @@ static void testPromptIcons() {
     require(buttonFromOrigin(Origin::CrouchAim) != Button::RS, "Crouch tutorial would show Shift-only");
     require(originFromName("GUI_Button_L_LR") == Origin::LeftStick, "Side-specific L_LR moved");
     require(originFromName("GUI_Button_R_UD") == Origin::RightStick, "Side-specific R_UD moved");
-    // Truthful combined labels: mouse capture proves nothing, so ambiguous
-    // buttons show both bindings in every context.
+    // Menus/Controls retain truthful alternatives. The original HUD scope
+    // selects gameplay actions independently of mouse capture.
     require(std::string(keyboardLabel(Button::B, Context::Menu)) == "R/Esc", "B label is not combined R/Esc");
-    require(std::string(keyboardLabel(Button::B, Context::Gameplay)) == "R/Esc", "Gameplay B label is not combined");
+    require(std::string(keyboardLabel(Button::B, Context::Gameplay)) == "R", "Gameplay B prompt retained menu Escape");
     require(std::string(keyboardLabel(Button::DLeft, Context::Menu)) == "1/<", "DLeft label is not combined");
+    require(std::string(keyboardLabel(Button::DLeft, Context::Gameplay)) == "1", "Gameplay DLeft prompt retained menu arrow");
     require(std::string(keyboardLabel(Button::DRL, Context::Menu)) == "1/2", "Paired DRL label lost");
     require(std::string(keyboardLabel(Button::DUD, Context::Gameplay)) == "3/4", "Paired DUD label lost");
     require(std::string(keyboardLabel(Button::A, Context::Gameplay)) == "E", "Prompt A label is not E");
@@ -116,21 +305,31 @@ static void testPromptIcons() {
     require(std::string(keyboardLabel(Button::CrouchAim, Context::Menu)) == "Ct/Sh", "CrouchAim label is not combined");
 
     const DarkRecomp::ColorImage key = makeKeycap("E");
-    require(key.valid() && key.width == 32 && key.height == 32, "Keycap must stay 32x32 for square quads");
+    require(key.valid() && key.width == 64 && key.height == 64, "Keycap was not baked at 64x64");
     require(promptChannel(key, 0, 0, 3) == 0, "Keycap corner is not transparent");
-    require(promptChannel(key, 16, 16, 3) == 255, "Keycap face is not opaque");
+    require(promptChannel(key, 32, 32, 3) == 255, "Keycap face is not opaque");
     bool glyphPixel = false;
-    for (uint32_t y = 4; y < 28 && !glyphPixel; ++y)
-        for (uint32_t x = 4; x < 28; ++x)
+    for (uint32_t y = 8; y < 56 && !glyphPixel; ++y)
+        for (uint32_t x = 8; x < 56; ++x)
             if (promptChannel(key, x, y, 0) < 80 && promptChannel(key, x, y, 3) == 255) { glyphPixel = true; break; }
     require(glyphPixel, "Keycap label pixels are missing");
     // Golden bytes of the reviewed, resampled Xelu E PNG: prevent silently
     // falling back to the old procedural artwork or swapping RGBA channels.
     uint32_t keyHash = 2166136261u;
     for (uint8_t byte : key.pixels) keyHash = (keyHash ^ byte) * 16777619u;
-    require(keyHash == 0xAB42DF67u, "Keyboard prompt is not the reviewed Xelu Light E artwork");
+    require(keyHash == 0x4CE61457u, "Keyboard prompt is not the reviewed 64px Xelu Light E artwork");
+    require(std::any_of(std::begin(XeluLight::kSprites), std::end(XeluLight::kSprites),
+                [](const auto& sprite) { return sprite.label == "R"; }),
+            "Gameplay Reload has no standalone authored Xelu sprite");
+    require(iconFor(Button::B, Context::Gameplay)->pixels == makeKeycap("R").pixels &&
+            iconFor(Button::B, Context::Menu)->pixels == makeKeycap("R/Esc").pixels,
+            "Menu and gameplay B prompts selected the same artwork");
     require(!makeKeycap(nullptr).valid() && !makeKeycap("unmapped").valid(),
             "Unknown prompt must fail closed");
+    const auto remappedKey = makeKeycap("F12");
+    require(remappedKey.valid() && remappedKey.width == 64 && remappedKey.height == 64 &&
+            promptChannel(remappedKey, 0, 0, 3) == 0,
+            "Arbitrary configured key lost the high-resolution fallback face");
     for (const auto& ref : kTextureRefs) {
         for (Context context : {Context::Menu, Context::Gameplay}) {
             const auto mapped = iconFor(ref.button, context);
@@ -144,19 +343,20 @@ static void testPromptIcons() {
     require(iconFor(Button::RS, Context::Menu)->pixels == makeKeycap("Sh/MMB").pixels,
             "Aim prompt lost its Shift alternative");
     const DarkRecomp::ColorImage combined = makeKeycap("R/Esc");
-    require(combined.valid() && combined.width == 32, "Combined keycap must stay 32x32 stacked");
+    require(combined.valid() && combined.width == 64 && combined.height == 64,
+            "Combined keycap was not baked at 64x64");
     bool topPixel = false, bottomPixel = false;
-    for (uint32_t x = 4; x < 28; ++x)
-        for (uint32_t y = 5; y < 12; ++y)
+    for (uint32_t x = 8; x < 56; ++x)
+        for (uint32_t y = 10; y < 24; ++y)
             if (promptChannel(combined, x, y, 0) < 80 && promptChannel(combined, x, y, 3) == 255) topPixel = true;
-    for (uint32_t x = 4; x < 28; ++x)
-        for (uint32_t y = 18; y < 27; ++y)
+    for (uint32_t x = 8; x < 56; ++x)
+        for (uint32_t y = 36; y < 54; ++y)
             if (promptChannel(combined, x, y, 0) < 120 && promptChannel(combined, x, y, 3) == 255) bottomPixel = true;
     require(topPixel && bottomPixel, "Stacked combined label lost a row");
     const DarkRecomp::ColorImage down = makeKeycap("4/v");
     bool downPixel = false;
-    for (uint32_t x = 4; x < 28; ++x)
-        for (uint32_t y = 18; y < 27; ++y)
+    for (uint32_t x = 8; x < 56; ++x)
+        for (uint32_t y = 36; y < 54; ++y)
             if (promptChannel(down, x, y, 0) < 80 && promptChannel(down, x, y, 3) == 255) downPixel = true;
     require(downPixel, "Down-arrow row is missing; 'v' must not map to letter V");
 
@@ -165,13 +365,13 @@ static void testPromptIcons() {
     const DarkRecomp::ColorImage wheel = makeMouseIcon(MouseIcon::Wheel);
     require(left.valid() && right.valid() && wheel.valid(), "Mouse icon extent is wrong");
     require(promptChannel(left, 0, 0, 3) == 0, "Mouse surround is not transparent");
-    require(promptChannel(left, 12, 10, 0) > 180 && promptChannel(left, 12, 10, 1) < 80 &&
-            promptChannel(left, 20, 10, 1) > 200,
+    require(promptChannel(left, 24, 20, 0) > 180 && promptChannel(left, 24, 20, 1) < 80 &&
+            promptChannel(left, 40, 20, 1) > 200,
             "Left mouse highlight is on the wrong button");
-    require(promptChannel(right, 20, 10, 0) > 180 && promptChannel(right, 20, 10, 1) < 80 &&
-            promptChannel(right, 12, 10, 1) > 200,
+    require(promptChannel(right, 40, 20, 0) > 180 && promptChannel(right, 40, 20, 1) < 80 &&
+            promptChannel(right, 24, 20, 1) > 200,
             "Right mouse highlight is on the wrong button");
-    require(promptChannel(wheel, 24, 7, 3) > 200 && promptChannel(wheel, 24, 23, 3) > 200,
+    require(promptChannel(wheel, 48, 14, 3) > 200 && promptChannel(wheel, 48, 46, 3) > 200,
             "Wheel arrow keycaps are missing");
 
     clearPromptRegistry();
@@ -180,7 +380,9 @@ static void testPromptIcons() {
     require(classifyPromptTexture(7, *original) == Button::A, "Owned origin did not classify");
     const auto icon = replacementFor(7, original, Source::KeyboardMouse, Context::Menu);
     require(icon && icon->valid() && icon != original, "Verified origin was not replaced");
-    require(icon->width == 32 && icon->height == 32, "Replacement icon must be 32x32");
+    require(icon->width == 64 && icon->height == 64 && original->width == 32 && original->height == 32,
+            "Replacement lost high resolution or changed its owned original canvas");
+    requirePromptMipChain(*icon);
     require(replacementFor(7, original, Source::KeyboardMouse, Context::Menu) == icon,
             "Replacement icon was recreated instead of reused");
     require(replacementFor(7, original, Source::Controller, Context::Menu) == nullptr,
@@ -189,15 +391,21 @@ static void testPromptIcons() {
             "Source switching is not reversible");
     // Rebinding is a value-only renderer snapshot. Cached artwork must change
     // immediately, while original controller textures remain untouched.
-    auto labels = defaultBindingLabels(); labels[size_t(Button::A)] = "P/E";
-    setBindingLabels(labels);
+    auto labels = defaultBindingLabels(); labels[size_t(Button::A)] = "P/E"; labels[size_t(Button::B)] = "T/Esc";
+    auto gameplayLabels = defaultGameplayBindingLabels(); gameplayLabels[size_t(Button::A)] = "P";
+    gameplayLabels[size_t(Button::B)] = "T";
+    setBindingLabels(labels, gameplayLabels);
     require(std::string(keyboardLabel(Button::A, Context::Menu)) == "P/E", "Remapped action prompt kept former key");
     const auto remapped = replacementFor(7, original, Source::KeyboardMouse, Context::Menu);
     require(remapped && remapped->valid() && remapped != icon && remapped->pixels != icon->pixels,
             "Binding change reused stale prompt artwork");
+    require(std::string(keyboardLabel(Button::A, Context::Gameplay)) == "P" &&
+            std::string(keyboardLabel(Button::B, Context::Gameplay)) == "T" &&
+            std::string(keyboardLabel(Button::B, Context::Menu)) == "T/Esc",
+            "Paired remapping mixed menu and gameplay labels");
     require(replacementFor(7, original, Source::Controller, Context::Menu) == nullptr,
             "Rebinding changed original controller artwork");
-    setBindingLabels(defaultBindingLabels());
+    setBindingLabels(defaultBindingLabels(), defaultGameplayBindingLabels());
     require(replacementFor(7, original, Source::KeyboardMouse, Context::Menu) == icon,
             "Restoring defaults did not restore original keycap cache");
     auto unrelated = std::make_shared<DarkRecomp::ColorImage>(promptTestImage(40, 40, 200));
@@ -213,9 +421,21 @@ static void testPromptIcons() {
     auto reused = std::make_shared<DarkRecomp::ColorImage>(promptTestImage(40, 200, 40, 32, 32, uint8_t(Origin::B)));
     const auto iconB = replacementFor(7, reused, Source::KeyboardMouse, Context::Menu);
     require(iconB && iconB != icon, "Texture-id reuse returned a stale classification");
+    const auto gameplayB = replacementFor(7, reused, Source::KeyboardMouse, Context::Gameplay);
+    require(gameplayB && gameplayB != iconB && gameplayB->pixels != iconB->pixels,
+            "B context change reused combined menu artwork in gameplay");
+    requirePromptMipChain(*gameplayB);
+    require(reused->pixels[0] == 40 && reused->width == 32 && reused->mips.empty(),
+            "Context-specific replacement mutated the original controller image");
+    auto alphaEdge = promptTestImage(0, 0, 0, 2, 2);
+    alphaEdge.pixels = {255,0,0,255, 0,0,255,0, 0,255,0,0, 254,250,251,0};
+    makePromptMips(alphaEdge);
+    requirePromptMipChain(alphaEdge);
+    require(alphaEdge.mips[0] == std::vector<uint8_t>({255,0,0,64}),
+            "Transparent pixels darkened or tinted a prompt edge mip");
     testPromptTileLayout();
     clearPromptRegistry();
-    std::puts("PromptIcons passed: Xelu Light art, complete mappings, combined labels, alpha, mouse, owned switching and id reuse.");
+    std::puts("PromptIcons passed: 64px Xelu art, HUD/menu labels and scopes, alpha-weighted mips, mouse, owned switching and id reuse.");
 }
 
 static void testPromptTileLayout() {
@@ -245,8 +465,8 @@ static void testPromptTileLayout() {
     TileRect reversed = promptTileRect(1, 1, 0, 0, 64, 32);
     require(reversed.valid && reversed.x == full.x && reversed.y == full.y &&
             reversed.w == full.w && reversed.h == full.h, "Reversed valid bounds differ");
-    // Demonstrated look-tutorial canvas: 64x32 origin art must keep size and
-    // aspect (no stretch, no crop of the replacement).
+    // The look-tutorial's original 64x32 canvas becomes 128x64 while normalized
+    // UVs and aspect stay identical; its owned original remains unchanged.
     auto wide = std::make_shared<DarkRecomp::ColorImage>(
         promptTestImage(20, 20, 20, 64, 32, uint8_t(Origin::MoveLook)));
     // Hand-built invalid tiles never index out of bounds.
@@ -260,25 +480,30 @@ static void testPromptTileLayout() {
             "Empty tile composed");
     const auto wideIcon = replacementForUv(11, wide, Source::KeyboardMouse, Context::Menu, 0, 0, 1, 1);
     require(wideIcon && wideIcon->valid(), "Wide prompt was not replaced");
-    require(wideIcon->width == 64 && wideIcon->height == 32, "Wide canvas size changed");
-    require(wideIcon->pixels[(size_t(4) * 64 + 4) * 4 + 3] == 0, "Transparent pillar lost");
+    require(wideIcon->width == 128 && wideIcon->height == 64 && wide->width == 64 && wide->height == 32,
+            "Wide replacement lost high resolution or changed the original canvas");
+    requirePromptMipChain(*wideIcon);
+    require(promptChannel(*wideIcon, 8, 8, 3) == 0, "Transparent pillar lost");
     // Compare the full artwork, including the gap between the authored WASD
     // keycaps and mouse. A single center texel can legitimately be transparent.
     const auto baseIcon = iconFor(Button::MoveLook, Context::Menu);
     require(baseIcon && baseIcon->valid(), "Base MoveLook icon missing");
-    for (uint32_t y = 0; y < 32; ++y)
-        for (uint32_t x = 0; x < 32; ++x)
+    for (uint32_t y = 0; y < 64; ++y)
+        for (uint32_t x = 0; x < 64; ++x)
             for (unsigned c = 0; c < 4; ++c)
-                require(promptChannel(*wideIcon, 16 + x, y, c) == promptChannel(*baseIcon, x, y, c),
+                require(promptChannel(*wideIcon, 32 + x, y, c) == promptChannel(*baseIcon, x, y, c),
                         "Wide Xelu artwork was stretched, shifted or lost alpha");
     // Atlas tile: right-half UVs of the same canvas keep the icon in-tile.
     const auto tiled = replacementForUv(11, wide, Source::KeyboardMouse, Context::Menu, 0.5f, 0, 1, 1);
-    require(tiled && tiled->valid() && tiled->width == 64 && tiled->height == 32, "Tiled replacement lost canvas");
-    require(tiled->pixels[(size_t(16) * 64 + 8) * 4 + 3] == 0, "Tile leaked outside its rect");
-    for (uint32_t y = 0; y < 32; ++y)
-        for (uint32_t x = 0; x < 32; ++x)
+    require(tiled && tiled->valid() && tiled->width == 128 && tiled->height == 64, "Tiled replacement lost high-resolution canvas");
+    requirePromptMipChain(*tiled);
+    for (uint32_t y = 0; y < 64; ++y)
+        for (uint32_t x = 0; x < 64; ++x)
+            require(promptChannel(*tiled, x, y, 3) == 0, "Tile leaked outside its doubled rect");
+    for (uint32_t y = 0; y < 64; ++y)
+        for (uint32_t x = 0; x < 64; ++x)
             for (unsigned c = 0; c < 4; ++c)
-                require(promptChannel(*tiled, 32 + x, y, c) == promptChannel(*baseIcon, x, y, c),
+                require(promptChannel(*tiled, 64 + x, y, c) == promptChannel(*baseIcon, x, y, c),
                         "Tiled Xelu artwork did not preserve its placement and alpha");
     require(tiled != wideIcon, "Full and tile substitutions shared one image");
     require(replacementForUv(11, wide, Source::KeyboardMouse, Context::Menu, 0.5f, 0, 1, 1) == tiled,
@@ -499,25 +724,27 @@ static void testPromptIconPreview(DarkRecomp::EnginePreviewD3D11& renderer, cons
     renderer.render(meshes);
     renderer.saveBmp(path);
     std::printf("[PromptPreview] Saved keyboard/mouse prompt icons to %s.\n", path.string().c_str());
-    // Keyboard/controller/keyboard switching on owned origins, with actual
-    // 32x32 draws and an unrelated image that must stay untouched.
+    // Keyboard/controller/keyboard switching on owned 32x32 origins selects
+    // higher-resolution artwork without changing the unrelated image.
     auto originImage = std::make_shared<DarkRecomp::ColorImage>(promptTestImage(200, 40, 40, 32, 32, uint8_t(Origin::A)));
     auto unrelated = std::make_shared<DarkRecomp::ColorImage>(promptTestImage(40, 40, 200));
     const auto keyboardIcon = replacementFor(11, originImage, Source::KeyboardMouse, Context::Menu);
-    require(keyboardIcon && keyboardIcon->width == 32, "Keyboard switch did not select a 32px icon");
+    require(keyboardIcon && keyboardIcon->width == 64 && keyboardIcon->height == 64,
+            "Keyboard switch did not select the 64px replacement canvas");
+    requirePromptMipChain(*keyboardIcon);
     require(replacementFor(11, originImage, Source::Controller, Context::Menu) == nullptr,
             "Controller switch did not restore original artwork");
     require(replacementFor(11, originImage, Source::KeyboardMouse, Context::Menu) == keyboardIcon,
             "Keyboard switch is not reversible");
     require(replacementFor(11, unrelated, Source::KeyboardMouse, Context::Menu) == nullptr,
             "Unrelated image changed across source switches");
-    // Actual GPU draw of the selected 32px icon: analytically known blank
+    // Actual GPU draw of the selected 64px icon: analytically known blank
     // keycap-face texel (away from the E glyph and outline) plus glyph proof,
     // not the original red controller pixels; unrelated blue stays blue.
-    // CPU anchors: (6,26) is blank light face, (16,16) is the dark E stroke.
-    require(promptChannel(*keyboardIcon, 6, 26, 0) > 200 && promptChannel(*keyboardIcon, 6, 26, 3) == 255,
+    // CPU anchors: (12,52) is blank light face, (32,32) is the dark E stroke.
+    require(promptChannel(*keyboardIcon, 12, 52, 0) > 200 && promptChannel(*keyboardIcon, 12, 52, 3) == 255,
             "CPU icon face anchor is not the light keycap face");
-    require(promptChannel(*keyboardIcon, 16, 16, 0) < 120 && promptChannel(*keyboardIcon, 16, 16, 3) == 255,
+    require(promptChannel(*keyboardIcon, 32, 32, 0) < 120 && promptChannel(*keyboardIcon, 32, 32, 3) == 255,
             "CPU icon glyph anchor is not the dark letter stroke");
     DarkRecomp::SimpleMesh draw;
     draw.projection = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
@@ -533,14 +760,14 @@ static void testPromptIconPreview(DarkRecomp::EnginePreviewD3D11& renderer, cons
     // either vertical orientation, since x=6 sits left of the glyph column.
     const uint32_t facePixel = renderer.readPixel(22, 22);
     require(int((facePixel >> 16) & 255) > 150 && int(facePixel & 255) > 150,
-            "Actual 32px icon draw face texel is not the light keycap face");
+            "Actual high-resolution icon draw face texel is not the light keycap face");
     bool gpuGlyph = false;
     for (uint32_t y = 20; y < 44 && !gpuGlyph; ++y)
         for (uint32_t x = 20; x < 44; ++x) {
             const uint32_t pixel = renderer.readPixel(x, y);
             if (int((pixel >> 16) & 255) < 120) { gpuGlyph = true; break; }
         }
-    require(gpuGlyph, "Actual 32px icon draw shows no dark glyph stroke");
+    require(gpuGlyph, "Actual high-resolution icon draw shows no dark glyph stroke");
     draw.colorTexture = unrelated;
     renderer.render({draw});
     // readPixel packs raw RGBA bytes LE: channel 0 (low byte) is red,

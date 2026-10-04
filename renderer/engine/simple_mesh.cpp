@@ -29,6 +29,22 @@
 
 namespace DarkRecomp::Native {
 namespace {
+thread_local PromptRenderContext promptRenderContext = PromptRenderContext::Menu;
+struct PromptContextFrame {
+    uint8_t* base = nullptr;
+    uint32_t manager = 0;
+    uint64_t generation = 0;
+    std::unordered_set<uint32_t> gameplayDraws;
+};
+constexpr size_t promptManagerLimit = 16, promptDrawLimit = 4096;
+std::array<PromptContextFrame, promptManagerLimit> promptContextFrames;
+std::mutex promptContextMutex;
+uint64_t promptContextGeneration = 0;
+PromptContextFrame* findPromptContextFrame(uint8_t* base, uint32_t manager) noexcept {
+    for (auto& frame : promptContextFrames)
+        if (frame.base == base && frame.manager == manager) return &frame;
+    return nullptr;
+}
 bool TextureUploadTraceEnabled() {
     // Per-new-texture success logs cost unbuffered writes during area loads.
     // Failures stay on their bounded paths; gate success spam behind opt-in.
@@ -165,6 +181,98 @@ __declspec(noinline) bool equalEngineBytes(const void* expected,const void* inpu
 }
 }
 
+PromptRenderContext currentPromptRenderContext() noexcept { return promptRenderContext; }
+PromptRenderContext setPromptRenderContext(PromptRenderContext context) noexcept {
+    const auto previous = promptRenderContext;
+    promptRenderContext = context == PromptRenderContext::Gameplay ? context : PromptRenderContext::Menu;
+    return previous;
+}
+void resetQueuedPromptContexts(uint8_t* base, uint32_t manager) noexcept {
+    if (!base || !manager || (manager & 3)) return;
+    try {
+        std::lock_guard lock(promptContextMutex);
+        auto* frame = findPromptContextFrame(base, manager);
+        if (!frame) {
+            for (auto& candidate : promptContextFrames)
+                if (!candidate.base) { frame = &candidate; break; }
+        }
+        if (!frame) return;
+        frame->gameplayDraws.clear();
+        frame->base = base;
+        frame->manager = manager;
+        frame->generation = promptContextGeneration < UINT64_MAX ? ++promptContextGeneration : 0;
+    } catch (...) {}
+}
+void retireQueuedPromptContexts() noexcept {
+    try {
+        std::lock_guard lock(promptContextMutex);
+        for (auto& frame : promptContextFrames) {
+            frame.gameplayDraws.clear();
+            frame.base = nullptr;
+            frame.manager = 0;
+            frame.generation = 0;
+        }
+    } catch (...) {}
+}
+void retireQueuedPromptContexts(uint8_t* base, uint32_t manager) noexcept {
+    if (!base || !manager) return;
+    try {
+        std::lock_guard lock(promptContextMutex);
+        if (auto* frame = findPromptContextFrame(base, manager)) {
+            frame->gameplayDraws.clear();
+            frame->base = nullptr;
+            frame->manager = 0;
+            frame->generation = 0;
+        }
+    } catch (...) {}
+}
+uint64_t queuedPromptGeneration(uint8_t* base, uint32_t manager) noexcept {
+    if (!base || !manager) return 0;
+    try {
+        std::lock_guard lock(promptContextMutex);
+        if (const auto* frame = findPromptContextFrame(base, manager)) return frame->generation;
+    } catch (...) {}
+    return 0;
+}
+void forgetQueuedPromptContext(uint8_t* base, uint32_t manager, uint32_t draw) noexcept {
+    forgetQueuedPromptContext(base, manager, draw, queuedPromptGeneration(base, manager));
+}
+void forgetQueuedPromptContext(uint8_t* base, uint32_t manager, uint32_t draw, uint64_t generation) noexcept {
+    if (!base || !manager || !draw || !generation) return;
+    try {
+        std::lock_guard lock(promptContextMutex);
+        if (auto* frame = findPromptContextFrame(base, manager); frame && frame->generation == generation)
+            frame->gameplayDraws.erase(draw);
+    } catch (...) {}
+}
+void recordQueuedPromptContext(uint8_t* base, uint32_t manager, uint32_t draw, PromptRenderContext context) noexcept {
+    recordQueuedPromptContext(base, manager, draw, context, queuedPromptGeneration(base, manager));
+}
+void recordQueuedPromptContext(uint8_t* base, uint32_t manager, uint32_t draw, PromptRenderContext context, uint64_t generation) noexcept {
+    if (!base || !manager || !draw || (draw & 3) || !generation) return;
+    try {
+        std::lock_guard lock(promptContextMutex);
+        if (auto* frame = findPromptContextFrame(base, manager); frame && frame->generation == generation) {
+            // Clear first, including Menu and failed/overflowed replacements.
+            frame->gameplayDraws.erase(draw);
+            if (frame->generation && context == PromptRenderContext::Gameplay && frame->gameplayDraws.size() < promptDrawLimit)
+                frame->gameplayDraws.insert(draw);
+        }
+    } catch (...) {}
+}
+PromptRenderContext queuedPromptContext(uint8_t* base, uint32_t manager, uint32_t draw) noexcept {
+    return queuedPromptContext(base, manager, draw, queuedPromptGeneration(base, manager));
+}
+PromptRenderContext queuedPromptContext(uint8_t* base, uint32_t manager, uint32_t draw, uint64_t generation) noexcept {
+    if (!base || !manager || !draw || (draw & 3) || !generation) return PromptRenderContext::Menu;
+    try {
+        std::lock_guard lock(promptContextMutex);
+        if (const auto* frame = findPromptContextFrame(base, manager); frame && frame->generation == generation && frame->gameplayDraws.contains(draw))
+            return PromptRenderContext::Gameplay;
+    } catch (...) {}
+    return PromptRenderContext::Menu;
+}
+
 bool copyRenderMemory(uint8_t* base, uint64_t address, void* output, size_t size) {
     if (!base || !output || !address || address >= 0x100000000ull || size > 0x100000000ull-address) return false;
     // The AOT engine shares this process. Avoid a kernel transition for each
@@ -226,6 +334,7 @@ const char* decodeSimpleMesh(uint8_t* base, uint32_t descriptor, uint32_t indexA
         (colored && !copyRenderMemory(base, u32(header + 52), colors.data(), colors.size())) ||
         !copyRenderMemory(base, indexAddress, indices.data(), indices.size())) return "unreadable geometry stream";
     SimpleMesh decoded;
+    decoded.promptContext = currentPromptRenderContext();
     decoded.vertices.resize(count);
     decoded.indices.resize(triangles * 3);
     for (size_t i = 0; i < decoded.indices.size(); ++i) {
@@ -1023,7 +1132,8 @@ void previewObserveWorld(uint8_t* base,const StoredDraw& geometry) {
         pendingWorldVertices+=additionalVertices;
         for(size_t i=0;i<imageCount;++i)pendingWorldImages.insert(images[i]);
         pendingWorldImageBytes+=additionalImageBytes;
-        SimpleMesh command;command.world=std::move(draw);pending.push_back(std::move(command));
+        SimpleMesh command;command.promptContext=draw->promptContext;
+        command.world=std::move(draw);pending.push_back(std::move(command));
         ++worldQueued;
     } catch (...) {}
 }

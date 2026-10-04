@@ -118,6 +118,7 @@ static void nearByte(uint32_t pixel, unsigned channel, int expected) {
 #include "world_source_recovery_tests.h"
 #include "world_decal_capture_tests.h"
 #include "prompt_icon_tests.h"
+#include "prompt_render_tests.h"
 #include "preview_output_tests.h"
 #include "preview_shadow_capture_tests.h"
 // Synthetic source provider called by the actual original 82256008 refresh.
@@ -1623,6 +1624,7 @@ int main(int argc, char** argv) {
             testPreviewShadowCaptureFailure(renderer);
             testPreviewBridge(owner,ctx,renderer);
             testPromptIconPreview(renderer,"framerate-stability-20260909/prompts-preview.bmp");
+            testPromptRenderIntegration(display.GetDevice(),display.GetContext(),display.GetSwapChain());
             testPreviewOutputResize(renderer,display);
             renderer.render({videoMesh}); nearByte(renderer.readPixel(32,32),3,0);
             renderer.render({mesh}); pixel=renderer.readPixel(32,32);

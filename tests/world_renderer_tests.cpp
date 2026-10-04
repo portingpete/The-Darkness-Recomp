@@ -956,6 +956,7 @@ static void immediateCanonicalContract(WorldRendererD3D11& renderer) {
 #include "darkness_effect_tests.h"
 #include "world_alpha_coverage_tests.h"
 #include "world_transparent_mesh_tests.h"
+#include "world_prompt_render_tests.h"
 #include "world_projected_texture_tests.h"
 #include "world_material_tests.h"
 #include "world_video_tests.h"
@@ -1531,6 +1532,7 @@ static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
     shadowExtrusionRasterPass(renderer,histogramDraw,1);
     colorLookupUpscalePass(renderer,1);
     resolvePartialTilePass(renderer,device,context,1);
+    worldPromptRenderPass(renderer,1);
     // A diagonal must resolve to different coverage values inside individual
     // logical pixels. Enlarging a 64x64 raster would repeat each pixel instead.
     for(unsigned scale:{2u,3u}) {
@@ -1583,6 +1585,7 @@ static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
         shadowExtrusionRasterPass(scaled,histogramDraw,scale);
         colorLookupUpscalePass(scaled,scale);
         resolvePartialTilePass(scaled,device,context,scale);
+        worldPromptRenderPass(scaled,scale);
     }
     shadowCapturePass(device,context,histogramDraw);
 }
@@ -1662,7 +1665,7 @@ static void promptWorldContract() {
     auto prompt = owned(200, 40, 40, uint8_t(Origin::A));
     const auto snapshot = prompt;
     const auto icon = replacementFor(9, prompt, Source::KeyboardMouse, Context::Menu);
-    require(icon && icon->valid() && icon->width == 32 && prompt == snapshot &&
+    require(icon && icon->valid() && icon->width == 64 && prompt == snapshot &&
             prompt->pixels[0] == 200, "World prompt substitution mutated its draw snapshot");
     require(replacementFor(9, prompt, Source::Controller, Context::Menu) == nullptr,
             "World controller source did not preserve original artwork");

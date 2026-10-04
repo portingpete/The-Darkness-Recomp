@@ -12,7 +12,9 @@ from PIL import Image, ImageDraw, ImageOps
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "assets/input-prompts/xelu-light"
 OUTPUT = ROOT / "renderer/engine/xelu_light.generated.h"
-SIZE = 32
+SIZE = 64
+PLACEMENT_SIZE = 32
+PLACEMENT_SCALE = SIZE // PLACEMENT_SIZE
 
 
 def stamp(canvas, key, box):
@@ -20,7 +22,9 @@ def stamp(canvas, key, box):
         rgba = source.convert("RGBA")
     # Remove the pack's export padding, retaining the authored shadow/alpha.
     rgba = rgba.crop(rgba.getbbox())
-    x, y, w, h = box
+    # Layout boxes remain in authored 32-unit coordinates. Bake directly
+    # from the original PNG at the higher resolution, without a 32px pass.
+    x, y, w, h = (value * PLACEMENT_SCALE for value in box)
     fitted = ImageOps.contain(rgba, (w, h), Image.Resampling.LANCZOS)
     canvas.alpha_composite(fitted, (x + (w - fitted.width) // 2,
                                     y + (h - fitted.height) // 2))
@@ -47,7 +51,9 @@ def wasd(canvas, box):
 def sprites():
     art = {}
     for label, key in {
-        "E": "E", "F": "F", "Q": "Q", "G": "G", "Spc": "Space",
+        "E": "E", "F": "F", "Q": "Q", "G": "G", "R": "R",
+        "Esc": "Esc", "Sh": "Shift", "1": "1", "2": "2", "3": "3", "4": "4",
+        "Spc": "Space",
         "Ent": "Enter", "Tab": "Tab", "Ct": "Ctrl", "?": "Question",
         "LMB": "Mouse_Left", "RMB": "Mouse_Right", "MMB": "Mouse_Middle",
         "Mse": "Mouse_Simple",
@@ -77,13 +83,15 @@ def generate(art):
              "// Xelu Light by Nicolae (Xelu) Berbece, CC0.",
              "// https://thoseawesomeguys.com/prompts/",
              "#pragma once", "#include <cstdint>", "#include <string_view>",
-             "namespace DarkRecomp::Prompts::XeluLight {"]
+             "namespace DarkRecomp::Prompts::XeluLight {",
+             f"inline constexpr uint32_t kSize = {SIZE};",
+             "inline constexpr uint32_t kPixelCount = kSize * kSize;"]
     for path in sorted(SOURCE.glob("*.png")):
         lines.append(f"// {path.name}: {hashlib.sha256(path.read_bytes()).hexdigest()}")
     for i, (label, picture) in enumerate(art.items()):
         data = picture.tobytes()
         values = [int.from_bytes(data[j:j + 4], "little") for j in range(0, len(data), 4)]
-        lines.append(f"inline constexpr uint32_t kPixels{i}[1024] = {{ // {label}")
+        lines.append(f"inline constexpr uint32_t kPixels{i}[kPixelCount] = {{ // {label}")
         for j in range(0, len(values), 8):
             lines.append("    " + ",".join(f"0x{v:08X}" for v in values[j:j + 8]) + ",")
         lines.append("};")
@@ -96,15 +104,16 @@ def generate(art):
 
 
 def preview(art, path):
-    # Show exact 32px sprites beside a nearest-neighbor enlargement for review.
-    sheet = Image.new("RGB", (600, ((len(art) + 5) // 6) * 150), (35, 38, 40))
+    # Show exact native sprites above a nearest-neighbor enlargement.
+    cell_w, cell_h = 120, 200
+    sheet = Image.new("RGB", (6 * cell_w, ((len(art) + 5) // 6) * cell_h), (35, 38, 40))
     draw = ImageDraw.Draw(sheet)
     for i, (label, picture) in enumerate(art.items()):
-        x, y = (i % 6) * 100, (i // 6) * 150
-        sheet.paste(picture, (x + 34, y + 4), picture)
+        x, y = (i % 6) * cell_w, (i // 6) * cell_h
+        sheet.paste(picture, (x + (cell_w - SIZE) // 2, y + 4), picture)
         zoom = picture.resize((80, 80), Image.Resampling.NEAREST)
-        sheet.paste(zoom, (x + 10, y + 43), zoom)
-        draw.text((x + 7, y + 130), label, fill="white")
+        sheet.paste(zoom, (x + (cell_w - 80) // 2, y + 80), zoom)
+        draw.text((x + 7, y + 176), label, fill="white")
     path.parent.mkdir(parents=True, exist_ok=True)
     sheet.save(path)
 

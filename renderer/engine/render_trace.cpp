@@ -50,6 +50,8 @@ using StoredRequest = DarkRecomp::Native::StoredDrawRequest;
 thread_local const StoredRequest* drawingGeometry = nullptr;
 thread_local DarkRecomp::Native::DecodedDrawRequest* drawingDecodedGeometry = nullptr;
 thread_local uint8_t* clearingBase = nullptr;
+struct PromptManagerExecution { uint8_t* base; uint32_t manager; uint64_t generation; };
+thread_local PromptManagerExecution* executingPromptManager = nullptr;
 
 template<class T> struct ScopedPointer {
     T*& slot; T* previous;
@@ -264,7 +266,8 @@ void capture(uint32_t function, uint64_t call, PPCContext& ctx, uint8_t* base) n
         line << "{\"sequence\":" << sequence << ",\"function\":" << function << ",\"call\":" << call
              << ",\"ms\":" << (GetTickCount64() - epoch) << ",\"thread\":" << GetCurrentThreadId()
              << ",\"lr\":" << uint32_t(ctx.lr) << ",\"r3\":" << ctx.r3.u32 << ",\"r4\":" << ctx.r4.u32
-             << ",\"r5\":" << ctx.r5.u32 << ",\"r6\":" << ctx.r6.u32;
+             << ",\"r5\":" << ctx.r5.u32 << ",\"r6\":" << ctx.r6.u32
+             << ",\"promptContext\":" << unsigned(DarkRecomp::Native::currentPromptRenderContext());
         chunk(line, base, "context", renderContext, 18000);
         const uint32_t program = word(base, renderContext + 16896);
         chunk(line, base, "program", program, 20);
@@ -605,7 +608,8 @@ void captureStoredDraw(uint64_t call, uint8_t* base, const StoredRequest& reques
              << ",\"ms\":" << (GetTickCount64() - epoch) << ",\"lr\":" << request.caller
              << ",\"stored_vb_id\":" << request.vertices << ",\"stored_ib_id\":" << request.indices
              << ",\"first_index\":" << request.firstIndex << ",\"triangles\":" << request.triangles
-             << ",\"owned_geometry_matched\":" << (owned ? "true" : "false");
+             << ",\"owned_geometry_matched\":" << (owned ? "true" : "false")
+             << ",\"promptContext\":" << unsigned(DarkRecomp::Native::currentPromptRenderContext());
         chunk(line, base, "context", renderContext, 18000, true);
         const uint32_t program = word(base, renderContext + 16896);
         chunk(line, base, "program", program, 20, true);
@@ -736,7 +740,8 @@ void DarkRecomp::Native::traceOwnedWorldDraw(const WorldDraw& draw,unsigned insp
         };
         out<<"{\"version\":1,\"scope\":"<<std::quoted(effect?"effect-series":"host-frame")<<",\"inspection\":"<<inspection<<",\"draw\":"<<ordinal
            <<",\"material\":"<<unsigned(draw.material)<<",\"program\":"<<std::quoted(draw.fragmentName)
-           <<",\"fragmentFlags\":"<<draw.fragmentFlags<<",\"attributesBE\":";
+           <<",\"fragmentFlags\":"<<draw.fragmentFlags<<",\"promptContext\":"<<unsigned(draw.promptContext)
+           <<",\"attributesBE\":";
         hex(draw.attributes.data(),draw.attributes.size());
         out<<",\"viewport\":";numbers(draw.viewport);out<<",\"targets\":";numbers(draw.targets);
         out<<",\"surfaceBindings\":[";
@@ -1110,6 +1115,84 @@ void DarkRecomp::Native::traceEngineVertexProgram(uint8_t* base, const EngineVer
             capture(0x##address, ++calls, ctx, base); \
         __imp__sub_##address(ctx, base); \
     }
+
+// Original 82168B98 is the actor gameplay HUD owner: health/ammo, ordinary
+// use prompts and darkling portal choices (8216A958). Frontend window/menu
+// rendering occurs outside this call. Restore the producer scope on every
+// exit; render consumers use the context captured with their owned draws.
+extern "C" PPC_FUNC(__imp__sub_82168B98);
+PPC_FUNC(sub_82168B98) {
+    const DarkRecomp::Native::ScopedPromptRenderContext scope(DarkRecomp::Native::PromptRenderContext::Gameplay);
+    __imp__sub_82168B98(ctx, base);
+}
+
+// 8259DE30 begins the original manager frame; 8259CA10 initializes a new
+// 48-byte VB. Neither reused manager nor reused VB addresses inherit context.
+extern "C" PPC_FUNC(__imp__sub_8259DE30);
+PPC_FUNC(sub_8259DE30) {
+    DarkRecomp::Native::resetQueuedPromptContexts(base, ctx.r3.u32);
+    __imp__sub_8259DE30(ctx, base);
+}
+extern "C" PPC_FUNC(__imp__sub_8259C490);
+PPC_FUNC(sub_8259C490) {
+    DarkRecomp::Native::retireQueuedPromptContexts(base, ctx.r3.u32);
+    __imp__sub_8259C490(ctx, base);
+}
+extern "C" PPC_FUNC(__imp__sub_8259CA10);
+PPC_FUNC(sub_8259CA10) {
+    const auto manager = ctx.r3.u32;
+    const auto generation = DarkRecomp::Native::queuedPromptGeneration(base, manager);
+    __imp__sub_8259CA10(ctx, base);
+    DarkRecomp::Native::forgetQueuedPromptContext(base, manager, ctx.r3.u32, generation);
+}
+// Observe every original enqueue, including Menu, so a recycled/re-enqueued
+// VB cannot retain a prior HUD owner. The original list may execute repeatedly
+// in one frame, so contexts expire at its frame/allocation boundary.
+extern "C" PPC_FUNC(__imp__sub_8259D098);
+PPC_FUNC(sub_8259D098) {
+    const auto manager = ctx.r3.u32, draw = ctx.r4.u32;
+    const auto context = DarkRecomp::Native::currentPromptRenderContext();
+    const auto generation = DarkRecomp::Native::queuedPromptGeneration(base, manager);
+    // Publish metadata before the original publishes its list node.
+    DarkRecomp::Native::recordQueuedPromptContext(base, manager, draw, context, generation);
+    __imp__sub_8259D098(ctx, base);
+}
+extern "C" PPC_FUNC(__imp__sub_8259D3B8);
+PPC_FUNC(sub_8259D3B8) {
+    const auto manager = ctx.r3.u32, pointers = ctx.r4.u32, count = ctx.r5.u32;
+    const auto context = DarkRecomp::Native::currentPromptRenderContext();
+    const auto generation = DarkRecomp::Native::queuedPromptGeneration(base, manager);
+    std::vector<uint8_t> draws;
+    auto drawAt = [&](uint32_t i) {
+        const auto* bytes = draws.data() + size_t(i) * 4;
+        return uint32_t(bytes[0]) << 24 | uint32_t(bytes[1]) << 16 | uint32_t(bytes[2]) << 8 | bytes[3];
+    };
+    bool captured = count <= 4096;
+    try {
+        if (captured) {
+            draws.resize(size_t(count) * 4);
+            captured = !count || copyGuest(base, pointers, draws.data(), draws.size());
+        }
+    } catch (...) { captured = false; }
+    if (!captured) DarkRecomp::Native::resetQueuedPromptContexts(base, manager);
+    else for (uint32_t i = 0; i < count; ++i)
+        DarkRecomp::Native::recordQueuedPromptContext(base, manager, drawAt(i), context, generation);
+    __imp__sub_8259D3B8(ctx, base);
+}
+extern "C" PPC_FUNC(__imp__sub_825A24D0);
+PPC_FUNC(sub_825A24D0) {
+    PromptManagerExecution execution{base, ctx.r3.u32, DarkRecomp::Native::queuedPromptGeneration(base, ctx.r3.u32)};
+    ScopedPointer<PromptManagerExecution> scope(executingPromptManager, &execution);
+    __imp__sub_825A24D0(ctx, base);
+}
+extern "C" PPC_FUNC(__imp__sub_82299EA0);
+PPC_FUNC(sub_82299EA0) {
+    const auto context = executingPromptManager && executingPromptManager->base == base &&
+        uint32_t(ctx.lr) == 0x825A2E18 ? DarkRecomp::Native::queuedPromptContext(base,
+        executingPromptManager->manager, ctx.r3.u32, executingPromptManager->generation) : DarkRecomp::Native::PromptRenderContext::Menu;
+    const DarkRecomp::Native::ScopedPromptRenderContext scope(context);
+    __imp__sub_82299EA0(ctx, base);
+}
 
 extern "C" PPC_FUNC(__imp__sub_8225DBC8);
 PPC_FUNC(sub_8225DBC8) {

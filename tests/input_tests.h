@@ -2,6 +2,7 @@
 // messages below are test input, not a claim of interactive gameplay.
 #include "runtime/native/input.h"
 #include "runtime/native/keyboard_menu.h"
+#include "renderer/engine/prompt_bindings.h"
 
 namespace {
 std::array<DWORD, 4> inputStatus{};
@@ -205,11 +206,23 @@ static void testInputContract(PPCContext& ctx) {
 
     // A saved selection feeds the production guest ABI, removes former keys,
     // and leaves fixed menu navigation usable after gameplay keys are unbound.
+    const auto defaultMenuLabels = DarkRecomp::Prompts::bindingLabels();
+    const auto defaultGameplayLabels = DarkRecomp::Prompts::bindingLabels(true);
     auto customKeys = defaultKeyboardBindings();
     check(assignKeyboardKey(customKeys, KeyboardAction::MoveForward, 0, VK_UP) &&
           assignKeyboardKey(customKeys, KeyboardAction::Jump, 0, 'P') &&
-          assignKeyboardKey(customKeys, KeyboardAction::Use, 0, 'U') && input.setKeyboardBindings(customKeys),
+          assignKeyboardKey(customKeys, KeyboardAction::Use, 0, 'U') &&
+          assignKeyboardKey(customKeys, KeyboardAction::Reload, 0, 'T') && input.setKeyboardBindings(customKeys),
           "Cannot apply custom keyboard selection");
+    const auto remappedMenuLabels = DarkRecomp::Prompts::bindingLabels();
+    const auto remappedGameplayLabels = DarkRecomp::Prompts::bindingLabels(true);
+    check((*remappedMenuLabels)[0] == "U/E" && (*remappedGameplayLabels)[0] == "U" &&
+          (*remappedMenuLabels)[1] == "T/Esc" && (*remappedGameplayLabels)[1] == "T" &&
+          (*remappedMenuLabels)[3] == "P/Spc" && (*remappedGameplayLabels)[3] == "P" &&
+          (*remappedGameplayLabels)[9] == "Sh/MMB",
+          "Gameplay prompts lost configured actions or inherited fixed menu alternatives");
+    check((*defaultMenuLabels)[1] == "R/Esc" && (*defaultGameplayLabels)[1] == "R",
+          "Rebinding changed an owned prior prompt snapshot");
     input.setMouseLookEnabled(true);
     SendMessageW(window,WM_KEYDOWN,'W',0);SendMessageW(window,WM_KEYDOWN,'E',0);state();
     check(zero(output+4,12), "Former movement or use key remained bound in gameplay");
@@ -222,15 +235,39 @@ static void testInputContract(PPCContext& ctx) {
     check(PPC_LOAD_U16(output+4)==XINPUT_GAMEPAD_Y,"Remapped jump did not reach the original action");
     SendMessageW(window,WM_KEYUP,'P',0);SendMessageW(window,WM_KEYDOWN,'U',0);state();
     check(PPC_LOAD_U16(output+4)==XINPUT_GAMEPAD_A,"Remapped use did not reach the original action");
+    SendMessageW(window,WM_KEYUP,'U',0);SendMessageW(window,WM_KEYDOWN,'T',0);state();
+    check(PPC_LOAD_U16(output+4)==XINPUT_GAMEPAD_B,
+          "Reload prompt key did not reach the original gameplay B action");
     auto invalidKeys = customKeys; invalidKeys.keys[size_t(KeyboardAction::Use)][0]=VK_ESCAPE;
     check(!input.setKeyboardBindings(invalidKeys) && input.keyboardBindings()==customKeys,
           "Invalid runtime mapping replaced valid controls");
+    check(DarkRecomp::Prompts::bindingLabels() == remappedMenuLabels &&
+          DarkRecomp::Prompts::bindingLabels(true) == remappedGameplayLabels,
+          "Invalid binding changed a published prompt snapshot");
+    auto secondaryReload = customKeys;
+    check(assignKeyboardKey(secondaryReload, KeyboardAction::Reload, 0, 0) &&
+          assignKeyboardKey(secondaryReload, KeyboardAction::Reload, 1, 'T') &&
+          input.setKeyboardBindings(secondaryReload), "Cannot select secondary-only reload binding");
+    check((*DarkRecomp::Prompts::bindingLabels())[1] == "T/Esc" &&
+          (*DarkRecomp::Prompts::bindingLabels(true))[1] == "T",
+          "Secondary-only reload prompt showed the former primary key");
+    input.setMouseLookEnabled(true);
+    SendMessageW(window,WM_KEYUP,'T',0);SendMessageW(window,WM_KEYDOWN,'T',0);state();
+    check(PPC_LOAD_U16(output+4)==XINPUT_GAMEPAD_B,
+          "Secondary reload prompt key did not reach gameplay B");
     check(input.setKeyboardBindings(KeyboardBindings{}),"Cannot unbind gameplay keys");state();
     check(zero(output+4,12),"Changing controls retained the formerly held action");
+    check((*DarkRecomp::Prompts::bindingLabels())[1] == "-/Esc" &&
+          (*DarkRecomp::Prompts::bindingLabels(true))[1] == "-" &&
+          (*remappedGameplayLabels)[1] == "T",
+          "Unbound reload prompt retained Escape or changed an owned remapped snapshot");
     SendMessageW(window,WM_KEYDOWN,'E',0);SendMessageW(window,WM_KEYDOWN,VK_UP,0);state();
     check(PPC_LOAD_U16(output+4)==(XINPUT_GAMEPAD_A|XINPUT_GAMEPAD_DPAD_UP),
           "Unbound gameplay settings removed fixed menu navigation");
     check(input.setKeyboardBindings(defaultKeyboardBindings()),"Cannot restore keyboard defaults");
+    check(*DarkRecomp::Prompts::bindingLabels() == DarkRecomp::Prompts::defaultBindingLabels() &&
+          *DarkRecomp::Prompts::bindingLabels(true) == DarkRecomp::Prompts::defaultGameplayBindingLabels(),
+          "Restored controls did not restore both prompt contexts");
 
     auto menuConflict = defaultKeyboardBindings();
     check(assignKeyboardKey(menuConflict, KeyboardAction::Reload, 0, 'E') &&

@@ -315,9 +315,22 @@ bool NativeInput::setKeyboardBindings(const KeyboardBindings& bindings) {
     for (size_t i = 1; i < movement.size(); ++i) labels[18] += (compactMovement ? "" : "/") + movement[i];
     labels[20] = compactMovement ? labels[18] + "/Mse" : labels[18];
     labels[21] = key(KeyboardAction::Crouch) + "/" + key(KeyboardAction::Zoom);
+    auto gameplayLabels = labels;
+    // The original HUD owns gameplay prompts. Its B icon describes the
+    // configured Reload action. Keep the fixed Back/Pause alternatives in
+    // the menu/Controls label snapshot.
+    gameplayLabels[0] = key(KeyboardAction::Use);
+    gameplayLabels[1] = key(KeyboardAction::Reload);
+    gameplayLabels[3] = key(KeyboardAction::Jump);
+    gameplayLabels[10] = key(KeyboardAction::Pause);
+    gameplayLabels[11] = key(KeyboardAction::Journal);
+    gameplayLabels[12] = key(KeyboardAction::PreviousPower);
+    gameplayLabels[13] = key(KeyboardAction::NextPower);
+    gameplayLabels[14] = key(KeyboardAction::PreviousWeapon);
+    gameplayLabels[15] = key(KeyboardAction::NextWeapon);
     std::lock_guard lock(mutex_);
     bindings_ = bindings;
-    Prompts::setBindingLabels(std::move(labels));
+    Prompts::setBindingLabels(std::move(labels), std::move(gameplayLabels));
     // The old held key must never keep an action active after its reassignment.
     clearKeysLocked();
     return true;

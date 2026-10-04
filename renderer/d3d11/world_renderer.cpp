@@ -3,6 +3,7 @@
 #include "shader_bytecode_cache.h"
 #include "runtime/native/graphics_settings.h"
 #include "renderer/engine/prompt_icons.h"
+#include "renderer/engine/prompt_layout.h"
 #include "renderer/engine/engine_performance.h"
 #include "renderer/engine/render_trace.h"
 #include <d3d11shader.h>
@@ -87,9 +88,11 @@ WorldVertexShaderD3D11::WorldVertexShaderD3D11(ID3D11Device* device,const Native
     // Hash the complete compiled source, including the viewport wrapper.
     std::string source=engineWorldTemplateSource;
     if(rasterize)source+=R"(
-cbuffer NativeViewport : register(b2) {float4 nativeDepthRange;};
+cbuffer NativeViewport : register(b2) {float4 nativeDepthRange;float4 nativePromptTransform;};
 VertexOutput rasterMain(VertexInput input) {
     VertexOutput result=vertexMain(input);
+    if(nativePromptTransform.w != 0)
+        result.position.xy=result.position.xy*nativePromptTransform.x+result.position.w*nativePromptTransform.yz;
     result.position.z=nativeDepthRange.x*result.position.w+(nativeDepthRange.y-nativeDepthRange.x)*result.position.z;
     return result;
 })";
@@ -280,7 +283,8 @@ float4 pixelMain(float4 p:SV_Position):SV_Target {
     buffer.Usage=D3D11_USAGE_DYNAMIC;buffer.CPUAccessFlags=D3D11_CPU_ACCESS_WRITE;
     check(d->CreateBuffer(&buffer,nullptr,&fragmentConstants_),"fragment constants");
     buffer.ByteWidth=256;check(d->CreateBuffer(&buffer,nullptr,&textureScales_),"texture scales");
-    buffer.ByteWidth=16;check(d->CreateBuffer(&buffer,nullptr,&viewportConstants_),"viewport constants");
+    buffer.ByteWidth=32;check(d->CreateBuffer(&buffer,nullptr,&viewportConstants_),"viewport constants");
+    buffer.ByteWidth=16;
     check(d->CreateBuffer(&buffer,nullptr,&alphaTestConstants_),"alpha test constants");
     check(d->CreateBuffer(&buffer,nullptr,&colorLookupConstants_),"color lookup constants");
     buffer.ByteWidth=32;check(d->CreateBuffer(&buffer,nullptr,&transferConstants_),"resolve constants");
@@ -1205,6 +1209,7 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
     if(draw.material!=Native::WorldMaterial::depth && !fragFound) return rejected(1);
     if(fragFound)captureTextureMask=frag->textures;
     std::array<ID3D11ShaderResourceView*,16> views{};std::array<ID3D11SamplerState*,16> samplers{};
+    uint16_t promptSlots = 0;
     // Selecting a later slot can evict an earlier slot from either cache.
     // Retain each selection until the context has acquired its own reference.
     std::array<Ptr<ID3D11ShaderResourceView>,16> retainedViews;
@@ -1250,15 +1255,17 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
             // Owned prompt origin selects a cached icon without mutating the
             // draw snapshot. Controller source, unknown origins, cubemaps and
             // resolved render-targets keep the original image. Replacement
-            // icons are single-level, so the sampler is reset to a base-only
-            // default instead of reusing an original partial-mip LOD range.
+            // icons have their own complete mip chain, so the sampler uses
+            // that chain rather than the original texture's resident LODs.
             std::shared_ptr<const ColorImage> effective = draw.textures[slot];
             bool promptSubstituted = false;
             if (promptKeyboardMouse_ && effective && effective->faces == 1 && !cube && effective->promptOrigin) {
                 if (auto icon = Prompts::replacementFor(draw.textureIds[slot], effective,
-                        Prompts::Source::KeyboardMouse, Prompts::Context::Menu)) {
+                        Prompts::Source::KeyboardMouse, draw.promptContext == Native::PromptRenderContext::Gameplay ?
+                            Prompts::Context::Gameplay : Prompts::Context::Menu)) {
                     effective = std::move(icon);
                     promptSubstituted = true;
+                    promptSlots |= uint16_t(1u << slot);
                     static std::atomic<unsigned> promptLogs{0};
                     if (promptLogs++ < 8)
                         std::fprintf(stderr, "[PromptSubstitute] program=%s slot=%u id=%u origin=%u\n",
@@ -1430,9 +1437,37 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
     boundVertex_=shaderPtr;
     timing(profileBinding_);
     Native::setRenderSamplePhase(Native::RenderSamplePhase::states);
-    if(!viewportUploaded_ || std::memcmp(uploadedViewport_.data(),draw.depthRange.data(),sizeof(uploadedViewport_))) {
-        updateConstants(context_.Get(),viewportConstants_.Get(),draw.depthRange.data(),sizeof(uploadedViewport_));
-        uploadedViewport_=draw.depthRange;viewportUploaded_=true;
+    std::array<Native::EngineVector,2> viewportValues{draw.depthRange,Native::EngineVector{1,0,0,0}};
+    // Enlarge only owned, flat UI rectangles. The original constants and
+    // immutable geometry remain shared with any subsequent draw unchanged.
+    if(promptSlots && draw.material==Native::WorldMaterial::fixed && !(flags&6) &&
+       !options.weights && !options.positionConversion && options.modes[0]!=7 &&
+       g.vertices->vertexCount==4 && count==6) {
+        std::vector<Native::WorldVertex> vertices;
+        if(Native::decodeWorldVertices(*g.vertices,vertices) && vertices.size()==4) {
+            std::array<Native::EngineVector,4> clip{};
+            for(size_t vertex=0;vertex<4;++vertex) for(unsigned row=0;row<4;++row)
+                for(unsigned column=0;column<4;++column)
+                    clip[vertex][row] += draw.constants.vectors[row][column] *
+                        (vertices[vertex].position[column]+draw.constants.vectors[7][column]);
+            std::array<float,4> bounds{-1,-1,1,1};
+            if(flags&0x20) {
+                const auto leftTop=word(a+112),rightBottom=word(a+116);
+                const float width=float(draw.viewport[2]),height=float(draw.viewport[3]);
+                if(width>0 && height>0) {
+                    bounds={2*(float(leftTop&65535)-draw.viewport[0])/width-1,
+                        1-2*(float(rightBottom>>16)-draw.viewport[1])/height,
+                        2*(float(rightBottom&65535)-draw.viewport[0])/width-1,
+                        1-2*(float(leftTop>>16)-draw.viewport[1])/height};
+                } else bounds={0,0,0,0};
+            }
+            viewportValues[1]=Prompts::promptQuadTransform(clip,
+                std::span<const uint16_t>(indices).subspan(g.firstIndex,count),bounds);
+        }
+    }
+    if(!viewportUploaded_ || std::memcmp(uploadedViewport_.data(),viewportValues.data(),sizeof(uploadedViewport_))) {
+        updateConstants(context_.Get(),viewportConstants_.Get(),viewportValues.data(),sizeof(uploadedViewport_));
+        uploadedViewport_=viewportValues;viewportUploaded_=true;
     }
     if(!bindingsValid_) {
         ID3D11Buffer* viewportBuffer=viewportConstants_.Get();context_->VSSetConstantBuffers(2,1,&viewportBuffer);

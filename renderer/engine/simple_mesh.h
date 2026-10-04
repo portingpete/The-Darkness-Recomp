@@ -8,7 +8,38 @@
 #include <vector>
 
 namespace DarkRecomp {
-namespace Native {struct WorldDraw;struct WorldClear;struct WorldResolve;struct WorldTexture;struct StoredDraw;struct WorldQuery;struct DisplayGamma;}
+namespace Native {
+struct WorldDraw;struct WorldClear;struct WorldResolve;struct WorldTexture;struct StoredDraw;struct WorldQuery;struct DisplayGamma;
+enum class PromptRenderContext : uint8_t { Menu = 0, Gameplay = 1 };
+// Original UI owners scope the producer; queued draws retain their own copy.
+// Outside a verified gameplay HUD owner, menu alternatives remain available.
+PromptRenderContext currentPromptRenderContext() noexcept;
+PromptRenderContext setPromptRenderContext(PromptRenderContext context) noexcept;
+class ScopedPromptRenderContext {
+    PromptRenderContext previous_;
+public:
+    explicit ScopedPromptRenderContext(PromptRenderContext context) noexcept
+        : previous_(setPromptRenderContext(context)) {}
+    ~ScopedPromptRenderContext() noexcept { setPromptRenderContext(previous_); }
+    ScopedPromptRenderContext(const ScopedPromptRenderContext&) = delete;
+    ScopedPromptRenderContext& operator=(const ScopedPromptRenderContext&) = delete;
+    ScopedPromptRenderContext(ScopedPromptRenderContext&&) = delete;
+    ScopedPromptRenderContext& operator=(ScopedPromptRenderContext&&) = delete;
+};
+// Original VBManager queues HUD geometry before executing it. Contexts live
+// only in a known manager frame and are invalidated by allocation/re-enqueue.
+// Unknown managers, addresses and exhausted budgets resolve to Menu.
+void resetQueuedPromptContexts(uint8_t* base, uint32_t manager) noexcept;
+void retireQueuedPromptContexts() noexcept;
+void retireQueuedPromptContexts(uint8_t* base, uint32_t manager) noexcept;
+uint64_t queuedPromptGeneration(uint8_t* base, uint32_t manager) noexcept;
+void forgetQueuedPromptContext(uint8_t* base, uint32_t manager, uint32_t draw) noexcept;
+void forgetQueuedPromptContext(uint8_t* base, uint32_t manager, uint32_t draw, uint64_t generation) noexcept;
+void recordQueuedPromptContext(uint8_t* base, uint32_t manager, uint32_t draw, PromptRenderContext context) noexcept;
+void recordQueuedPromptContext(uint8_t* base, uint32_t manager, uint32_t draw, PromptRenderContext context, uint64_t generation) noexcept;
+PromptRenderContext queuedPromptContext(uint8_t* base, uint32_t manager, uint32_t draw) noexcept;
+PromptRenderContext queuedPromptContext(uint8_t* base, uint32_t manager, uint32_t draw, uint64_t generation) noexcept;
+}
 struct SimpleVertex { float position[3]; float uv[2]; float color[4]; };
 struct AlphaImage {
     uint32_t width = 0, height = 0;
@@ -71,6 +102,7 @@ struct SimpleMesh {
     std::shared_ptr<const ColorImage> colorTexture;
     uint32_t textureId = 0;
     bool opaque = false;
+    Native::PromptRenderContext promptContext = Native::PromptRenderContext::Menu;
 };
 
 namespace Native {
@@ -102,7 +134,6 @@ void previewObserveVideo(uint8_t* base, uint32_t container, uint32_t localId);
 // Adaptive prompt icon substitution, resolved at the render boundary.
 // Returns nullptr to keep the original controller artwork.
 enum class PromptRenderSource : uint8_t { KeyboardMouse = 0, Controller = 1 };
-enum class PromptRenderContext : uint8_t { Menu = 0, Gameplay = 1 };
 std::shared_ptr<const ColorImage> promptReplacementFor(uint32_t textureId,
     const std::shared_ptr<const ColorImage>& image, PromptRenderSource source, PromptRenderContext context);
 // Immediate-path variant with the draw's sampled UV bounds so atlas tiles and
