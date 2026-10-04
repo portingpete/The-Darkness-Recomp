@@ -44,7 +44,7 @@ if(DARK_NATIVE_SSSE3)
     target_compile_definitions(DarkRecompPPC PUBLIC DARK_NATIVE_SSSE3=1)
 endif()
 add_library(DarkRuntime STATIC runtime/native/runtime.cpp runtime/native/kernel.cpp runtime/native/dispatcher.cpp runtime/native/filesystem.cpp runtime/native/storage.cpp runtime/native/guest_runner.cpp runtime/native/audio_driver.cpp runtime/native/input.cpp runtime/native/xma_bridge.cpp renderer/d3d11/display_context_d3d11.cpp)
-target_sources(DarkRuntime PRIVATE runtime/native/xex_image.cpp)
+target_sources(DarkRuntime PRIVATE runtime/native/xex_image.cpp runtime/native/native_menu_assets.cpp)
 target_sources(DarkRuntime PRIVATE runtime/native/language_settings.cpp)
 
 target_sources(DarkRuntime PRIVATE runtime/native/fov_settings.cpp runtime/native/fov_camera.cpp)
@@ -149,14 +149,16 @@ add_executable(DarkRecomp app/windows/native_main.cpp app/windows/display_settin
     app/windows/developer_tools_window.cpp app/windows/keyboard_settings.cpp)
 set(DARK_VIDEO_MENU "${CMAKE_BINARY_DIR}/native_assets/CubeWnd.pc.xcr")
 set(DARK_VIDEO_ARCHIVE "${CMAKE_BINARY_DIR}/native_assets/GameContext_Create.pc.xdf")
-add_custom_command(OUTPUT "${DARK_VIDEO_MENU}" "${DARK_VIDEO_ARCHIVE}"
+set(DARK_VIDEO_MENU_SOURCE "${DARK_VIDEO_MENU}.source.sha256")
+add_custom_command(OUTPUT "${DARK_VIDEO_MENU}" "${DARK_VIDEO_ARCHIVE}" "${DARK_VIDEO_MENU_SOURCE}"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/compile_video_menu.py"
         --source "${CMAKE_SOURCE_DIR}/Darkness/Content/Gui/CubeWnd.xcr" --output "${DARK_VIDEO_MENU}"
         --archive-source "${CMAKE_SOURCE_DIR}/Darkness/Content/Xdf/GameContext_Create.XDF" --archive-output "${DARK_VIDEO_ARCHIVE}"
     DEPENDS tools/compile_video_menu.py Darkness/Content/Gui/CubeWnd.xcr Darkness/Content/Xdf/GameContext_Create.XDF VERBATIM)
-add_custom_target(NativeVideoMenu ALL DEPENDS "${DARK_VIDEO_MENU}" "${DARK_VIDEO_ARCHIVE}"
+add_custom_target(NativeVideoMenu ALL DEPENDS "${DARK_VIDEO_MENU}" "${DARK_VIDEO_ARCHIVE}" "${DARK_VIDEO_MENU_SOURCE}"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${DARK_VIDEO_MENU}" "$<TARGET_FILE_DIR:DarkRecomp>/CubeWnd.pc.xcr"
-    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${DARK_VIDEO_ARCHIVE}" "$<TARGET_FILE_DIR:DarkRecomp>/GameContext_Create.pc.xdf")
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${DARK_VIDEO_ARCHIVE}" "$<TARGET_FILE_DIR:DarkRecomp>/GameContext_Create.pc.xdf"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${DARK_VIDEO_MENU_SOURCE}" "$<TARGET_FILE_DIR:DarkRecomp>/CubeWnd.pc.xcr.source.sha256")
 add_dependencies(DarkRecomp NativeVideoMenu)
 target_link_libraries(DarkRecomp PRIVATE DarkRuntime winmm comctl32)
 target_link_options(DarkRecomp PRIVATE /DEBUG /STACK:67108864,1048576)
@@ -219,6 +221,16 @@ if(BUILD_TESTING)
     target_compile_definitions(XexImageTests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
     target_link_libraries(XexImageTests PRIVATE bcrypt)
     add_test(NAME OriginalXexImageContract COMMAND XexImageTests "${CMAKE_SOURCE_DIR}/Darkness/default.xex")
+    add_test(NAME GameRevisionContract COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/test_game_revisions.py")
+    add_executable(NativeMenuAssetsTests tests/native_menu_assets_tests.cpp runtime/native/native_menu_assets.cpp)
+    target_include_directories(NativeMenuAssetsTests PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_compile_definitions(NativeMenuAssetsTests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_link_libraries(NativeMenuAssetsTests PRIVATE bcrypt)
+    add_test(NAME NativeMenuLocalizationContract COMMAND NativeMenuAssetsTests)
+    add_test(NAME NativeLocalizedMenuFileContract COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/tests/check_localized_menu.py"
+        "$<TARGET_FILE:NativeTests>" "${CMAKE_SOURCE_DIR}/Darkness")
+    set_tests_properties(NativeLocalizedMenuFileContract PROPERTIES TIMEOUT 40)
     add_executable(DisplaySettingsTests tests/display_settings_tests.cpp app/windows/display_settings.cpp)
     target_link_libraries(DisplaySettingsTests PRIVATE DarkRuntime comctl32)
     stage_dark_xma(DisplaySettingsTests)
@@ -431,6 +443,7 @@ if(BUILD_TESTING)
     target_compile_definitions(LanguageSettingsTests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
     add_test(NAME LanguageSettingsContract COMMAND LanguageSettingsTests)
     add_test(NAME NativeLanguageContract COMMAND NativeTests "${CMAKE_SOURCE_DIR}/Darkness" --language)
+    add_test(NAME NativeRevisionGlyphContract COMMAND NativeTests "${CMAKE_SOURCE_DIR}/Darkness" --revision-glyphs)
     add_test(NAME DeveloperToolsContract COMMAND NativeTests "${CMAKE_SOURCE_DIR}/Darkness" --developer-tools)
     set_tests_properties(DeveloperToolsContract PROPERTIES TIMEOUT 30)
     set_tests_properties(LanguageSettingsContract NativeLanguageContract PROPERTIES TIMEOUT 30)

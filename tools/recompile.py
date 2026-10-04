@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 import tomllib
+from game_revisions import validate_source
 from native_imports import generate as generate_imports
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,9 +23,10 @@ def sha256(path: Path) -> str:
 
 
 def sources() -> list[Path]:
-    return [ROOT / "config/darkness.toml", ROOT / "runtime/guest/ppc_context.template.h",
+    return [ROOT / "config/darkness.toml", ROOT / "config/game_revisions.toml",
+            ROOT / "runtime/guest/ppc_context.template.h",
             ROOT / "Darkness/default.xex", ROOT / "Darkness/darkness_switch_tables.toml",
-            ROOT / "tools/xex_image.py", ROOT / "tools/native_imports.py",
+            ROOT / "tools/xex_image.py", ROOT / "tools/native_imports.py", ROOT / "tools/game_revisions.py",
             *sorted((ROOT / "runtime/native").glob("*.cpp")), Path(__file__).resolve(), *sorted((XENON / "XenonRecomp").glob("*.cpp")),
             *sorted((XENON / "XenonRecomp").glob("*.h")),
             *sorted((XENON / "XenonAnalyse").glob("*.cpp")),
@@ -62,6 +64,9 @@ def main() -> int:
         return verify(out, args.allow_incomplete)
     if not args.generator:
         parser.error("--generator is required for regeneration")
+    # Reject unapproved binaries before handing them to the native generator.
+    # Regeneration must not automatically bless whichever dump is in Darkness.
+    validate_source(ROOT)
     out.mkdir(parents=True, exist_ok=True)
     # The generator rewrites every file. Preserve timestamps of byte-identical
     # outputs so a native observer edit need not recompile unchanged AOT chunks.

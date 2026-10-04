@@ -287,6 +287,9 @@ class LinuxSetupTests(SetupFixture):
         self.assertEqual(runners[0].read_text(), FAKE_UMU)
         self.assertEqual(runners[0].stat().st_mode & 0o111, 0o111)
         self.assertTrue(any(path.is_file() for path in self.install.rglob("DarkRecompPreview.exe")))
+        binaries = next(path.parent for path in self.install.rglob("DarkRecompPreview.exe"))
+        menu_sources = "CubeWnd.pc.xcr.source.sha256"
+        self.assertEqual((binaries / menu_sources).read_bytes(), (self.binary / menu_sources).read_bytes())
 
     def test_missing_release_file_fails_before_installation(self):
         (self.binary / "avcodec-darkxma-62.dll").unlink()

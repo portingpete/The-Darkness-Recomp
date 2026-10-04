@@ -1,12 +1,17 @@
 """Extract import identities from this XEX; generate strong fail-fast defaults."""
 import hashlib
+import json
 from pathlib import Path
 import re
 import struct
+from game_revisions import validate_image
 from xex_image import decode_xex
 
 
 def generate(root: Path, out: Path) -> None:
+    xex = (root / "Darkness/default.xex").read_bytes()
+    xex_header, image = decode_xex(xex)
+    revisions = validate_image(root, xex, xex_header, image)
     header = (out / "ppc_recomp_shared.h").read_text()
     names = set(re.findall(r"PPC_EXTERN_FUNC\((__imp__\w+)\)", header))
     native_sources = "\n".join(p.read_text() for p in sorted((root / "runtime/native").glob("*.cpp")))
@@ -15,8 +20,6 @@ def generate(root: Path, out: Path) -> None:
     (out / "ppc_imports.cpp").write_text('#include "ppc_context.h"\n' + "".join(
         f'PPC_FUNC({name}) {{ PPC_RECOMP_FAILURE(ctx, uint32_t(ctx.lr), "unimplemented import {name}"); }}\n'
         for name in missing))
-    xex = (root / "Darkness/default.xex").read_bytes()
-    _, image = decode_xex(xex)
     count = struct.unpack_from(">I", xex, 20)[0]
     optional = dict(struct.iter_unpack(">II", xex[24:24 + count * 8]))
     start = optional[0x103FF]
@@ -48,9 +51,15 @@ def generate(root: Path, out: Path) -> None:
                     raise RuntimeError(f"Unknown data import {library}:{ordinal}")
                 data_imports.append((address, name))
         pos += size
-    text = '#pragma once\n#include <cstdint>\n'
+    text = '#pragma once\n#include <cstdint>\n#include "runtime/native/xex_image.h"\n'
     text += f'inline constexpr char kGameImageSha256[] = "{hashlib.sha256(image).hexdigest()}";\n'
     text += f'inline constexpr char kGameXexSha256[] = "{hashlib.sha256(xex).hexdigest()}";\n'
+    text += 'inline constexpr DarkRecomp::Native::GameRevision kGameRevisions[] = {\n'
+    for revision in revisions:
+        # JSON string escaping also produces valid ASCII C++ string literals.
+        fields = (revision['xex_sha256'], revision['image_sha256'], revision['name'])
+        text += '  {' + ', '.join(json.dumps(value, ensure_ascii=True) for value in fields) + '},\n'
+    text += '};\n'
     text += 'struct GuestDataImport { uint32_t address; const char* name; };\n'
     text += 'inline constexpr GuestDataImport kDataImports[] = {\n'
     text += ''.join(f'  {{0x{a:08X}, "{n}"}},\n' for a, n in data_imports) + '};\n'

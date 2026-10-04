@@ -8,13 +8,14 @@
 // Read through the guest's real file imports, including the startup archive.
 // A correct loose registry alone cannot affect the prefetched pause menu.
 static void testVideoMenuFiles(PPCContext& ctx) {
-    wchar_t executable[32768]{};
-    check(GetModuleFileNameW(nullptr, executable, DWORD(std::size(executable))) != 0, "test executable path missing");
-    const auto directory = std::filesystem::path(executable).parent_path();
     auto* base = memory->base();
-    for (const auto& pair : {std::pair{"game:\\Content\\Gui\\CubeWnd.xcr", L"CubeWnd.pc.xcr"},
-                             std::pair{"D:\\Content\\Xdf\\GameContext_Create.XDF", L"GameContext_Create.pc.xdf"}}) {
-        std::ifstream input(directory / pair.second, std::ios::binary);
+    const auto& assets = memory->nativeMenuAssets();
+    const auto menu = assets.menu.empty() ? memory->gameDirectory() / "Content/Gui/CubeWnd.xcr" : assets.menu;
+    const auto archive = assets.archive.empty()
+        ? memory->gameDirectory() / "Content/Xdf/GameContext_Create.XDF" : assets.archive;
+    for (const auto& pair : {std::pair{"game:\\Content\\Gui\\CubeWnd.xcr", menu},
+                             std::pair{"D:\\Content\\Xdf\\GameContext_Create.XDF", archive}}) {
+        std::ifstream input(pair.second, std::ios::binary);
         const std::vector<char> expected{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
         check(!expected.empty(), "packaged menu dependency missing");
         const auto scratch = memory->allocate(uint32_t(expected.size()) + 4096);
@@ -43,7 +44,7 @@ static void testVideoMenuFiles(PPCContext& ctx) {
         __imp__NtReadFile(call, base);
         check(call.r3.u32 == 0 && memory->read32(ios + 4) == expected.size() &&
               std::memcmp(base + data, expected.data(), expected.size()) == 0,
-              "guest read original menu bytes instead of the packaged replacement");
+              "guest read menu bytes from the wrong dump or replacement");
     }
 }
 

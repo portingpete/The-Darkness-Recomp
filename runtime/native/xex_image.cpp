@@ -5,6 +5,7 @@
 #include <array>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 
 namespace DarkRecomp::Native {
 namespace {
@@ -18,6 +19,23 @@ void require(bool ok, const char* message) {
 uint32_t be32(std::span<const uint8_t> b, size_t p) {
     require(p <= b.size() && b.size() - p >= 4, "Truncated XEX field");
     return uint32_t(b[p]) << 24 | uint32_t(b[p+1]) << 16 | uint32_t(b[p+2]) << 8 | b[p+3];
+}
+std::string digest(std::span<const uint8_t> bytes) {
+    BCRYPT_ALG_HANDLE provider = nullptr;
+    require(BCryptOpenAlgorithmProvider(&provider, BCRYPT_SHA256_ALGORITHM, nullptr, 0) >= 0,
+            "SHA256 provider unavailable");
+    std::array<uint8_t, 32> hash{};
+    const auto status = BCryptHash(provider, nullptr, 0, const_cast<PUCHAR>(bytes.data()),
+                                  ULONG(bytes.size()), hash.data(), ULONG(hash.size()));
+    BCryptCloseAlgorithmProvider(provider, 0);
+    require(status >= 0, "Cannot verify game image hash");
+    constexpr char hex[] = "0123456789abcdef";
+    std::string result(64, '0');
+    for (size_t i = 0; i < hash.size(); ++i) {
+        result[i * 2] = hex[hash[i] >> 4];
+        result[i * 2 + 1] = hex[hash[i] & 15];
+    }
+    return result;
 }
 void decrypt(std::vector<uint8_t>& bytes, std::span<const uint8_t, 16> key) {
     require(!bytes.empty() && bytes.size() % 16 == 0, "Invalid encrypted XEX length");
@@ -101,5 +119,18 @@ XexImage decodeXex(std::span<const uint8_t> bytes) {
     require(result.image.size() >= 2 && result.image[0] == 'M' && result.image[1] == 'Z',
             "Decoded XEX image is invalid");
     return result;
+}
+XexImage decodeVerifiedXex(std::span<const uint8_t> bytes, std::span<const GameRevision> revisions) {
+    require(bytes.size() >= 24 && bytes.size() <= maxImage, "Invalid default.xex size");
+    const auto fileHash = digest(bytes);
+    const auto revision = std::find_if(revisions.begin(), revisions.end(), [&](const GameRevision& item) {
+        return fileHash == item.xexSha256;
+    });
+    require(revision != revisions.end(), "default.xex differs from the supported AOT revision");
+    auto decoded = decodeXex(bytes);
+    require(digest(decoded.image) == revision->imageSha256,
+            "Game image differs from the verified AOT revision");
+    decoded.revisionName = revision->name;
+    return decoded;
 }
 }

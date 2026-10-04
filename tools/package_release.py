@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BINARIES = (
     'DarkRecomp.exe', 'DarkRecompPreview.exe', 'DarkRecompSettings.exe',
     'avcodec-darkxma-62.dll', 'avutil-darkxma-60.dll', 'libwinpthread-1.dll',
-    'CubeWnd.pc.xcr', 'GameContext_Create.pc.xdf',
+    'CubeWnd.pc.xcr', 'CubeWnd.pc.xcr.source.sha256', 'GameContext_Create.pc.xdf',
 )
 DOCUMENTS = ('Launch.cmd', 'LaunchWithSettings.cmd', 'Launch.sh', 'SetupLinux.cmd', 'PlayLinux.cmd', 'START_HERE.txt', 'README.md', 'CONTROLS.md', 'RENDERING.md', 'STEAM_DECK.md', 'COPYING')
 LINUX_SETUP_TOOLS = ('setup_linux.ps1', 'setup_linux.py', 'wsl_graphics.py')

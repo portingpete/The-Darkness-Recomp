@@ -70,6 +70,7 @@ xenia/
 
 # --- Generated native menu assets staged beside the exe ---
 CubeWnd.pc.xcr
+CubeWnd.pc.xcr.source.sha256
 GameContext_Create.pc.xdf
 
 # --- Local research / scratch dirs ---

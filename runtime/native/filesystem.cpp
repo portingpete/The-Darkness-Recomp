@@ -139,22 +139,21 @@ PathResult resolve(uint32_t attributes) {
     auto pathString = result.path.wstring();
     if (pathString.size() < rootString.size() || _wcsnicmp(pathString.c_str(), rootString.c_str(), rootString.size()) ||
         (pathString.size() > rootString.size() && pathString[rootString.size()] != L'\\')) result.status = nameInvalid;
-    // Startup serves CubeWnd from the XDF read cache before opening loose
-    // files. Both paths must carry the same generated menu. Shipped (often
-    // hardlinked) assets remain untouched.
-    const wchar_t* replacement = nullptr;
+    // The prepared archive preserves the user's localized strings and fonts.
+    // Its menu cache either matches the generated menu or defers to the loose
+    // override. Shipped (often hardlinked) assets remain untouched.
+    const std::filesystem::path* replacement = nullptr;
     if (!result.status && !result.writable) {
         const auto relativePath = result.path.lexically_relative(memory->gameDirectory()).make_preferred();
         if (_wcsicmp(relativePath.c_str(), L"Content\\Gui\\CubeWnd.xcr") == 0)
-            replacement = L"CubeWnd.pc.xcr";
+            replacement = &memory->nativeMenuAssets().menu;
         else if (_wcsicmp(relativePath.c_str(), L"Content\\Xdf\\GameContext_Create.XDF") == 0)
-            replacement = L"GameContext_Create.pc.xdf";
+            replacement = &memory->nativeMenuAssets().archive;
     }
-    if (replacement) {
-        wchar_t executable[32768]{};
-        const auto length = GetModuleFileNameW(nullptr, executable, DWORD(std::size(executable)));
-        if (length && length < std::size(executable))
-            result.path = std::filesystem::path(executable).parent_path() / replacement;
+    if (replacement && !replacement->empty()) {
+        result.path = *replacement;
+        // NtCreateFile consumes NT paths and does not accept Win32's '/' alias.
+        result.path.make_preferred();
     }
     return result;
 }

@@ -22,6 +22,7 @@ static void check(bool success, const char* message) { if (!success) throw std::
 #include "menu_keyboard_guest_tests.h"
 #include "menu_keyboard_status_tests.h"
 #include "language_tests.h"
+#include "revision_glyph_tests.h"
 #include "mouse_look_tests.h"
 #include "native_delay_tests.h"
 #include "native_timed_wait_tests.h"
@@ -1500,14 +1501,12 @@ static void testFiles(PPCContext& ctx, uint32_t scratch) {
     __imp__NtCreateFile(ctx, base);
     check(ctx.r3.u32 == 0, "Archive could not be opened with game access/options");
     uint32_t archive = memory->read32(scratch + 80);
-    // The native menu replaces this archive beside the executable. Compare
-    // against that host fixture, not the unmodified console asset's size.
-    wchar_t testExecutable[32768]{};
-    const DWORD testExecutableLength = GetModuleFileNameW(nullptr, testExecutable, DWORD(std::size(testExecutable)));
-    check(testExecutableLength && testExecutableLength < std::size(testExecutable),
-          "Could not locate the native archive fixture");
-    uint64_t archiveExpected = uint64_t(std::filesystem::file_size(
-        std::filesystem::path(testExecutable).parent_path() / "GameContext_Create.pc.xdf"));
+    // Localized dumps may use their own cache with just the menu filename
+    // hidden, or retain the original cache when their menu is incompatible.
+    const auto& replacementArchive = memory->nativeMenuAssets().archive;
+    const auto expectedArchive = replacementArchive.empty()
+        ? memory->gameDirectory() / "Content/Xdf/GameContext_Create.XDF" : replacementArchive;
+    uint64_t archiveExpected = uint64_t(std::filesystem::file_size(expectedArchive));
     check(archiveExpected != 0, "Archive fixture is empty");
     uint32_t archiveWrapper = memory->allocate(8);
     check(archiveWrapper != 0, "Archive wrapper allocation failed");
@@ -1530,6 +1529,14 @@ int main(int argc, char** argv) {
         addressSpace.load(argv[1]);
         PPCContext ctx{};
         addressSpace.initThread(ctx);
+        if (argc == 3 && strcmp(argv[2], "--revision-glyphs") == 0) {
+            testRevisionGlyphs(ctx);
+            return 0;
+        }
+        if (argc == 3 && strcmp(argv[2], "--russian-revision") == 0) {
+            testRussianRevisionGlyphs(ctx);
+            return 0;
+        }
         if (argc == 3 && strcmp(argv[2], "--screen-fade") == 0) {
             testScreenFade(ctx);
             return 0;

@@ -33,6 +33,13 @@ An ISO alone is not enough; use an extracted dump of the supported game revision
 The port decodes `default.xex` in memory at startup; `_uncrypted.xex` and
 `basefile.exe` are no longer required.
 
+The original supported disc executable and the Russian localization identified
+in [issue #37](https://github.com/portingpete/The-Darkness-Recomp/issues/37) are
+recognized automatically. Copy all files from the matching dump, including its
+own `default.xex`. The Russian localization uses the game's English content
+slot: choose **English**, or **System default** on Russian Windows. Its translated
+text, fonts, and audio come from that dump.
+
 Click the game window to capture the mouse. **F1** shows controls, **F2** toggles
 capture, and **Esc** releases it. Graphics options are in **Options > Video Settings**
 and in the video settings launcher. Both use the same saved settings.
@@ -80,8 +87,12 @@ updated executable needs a separate verified translation before it can be used.
 Copy the original extracted files into **Darkness**, then launch the game.
 The runtime uses Windows' built-in AES provider to decode `default.xex` and
 expand its zero-filled blocks in memory. It checks both the original file and
-decoded image against the AOT build's SHA-256 hashes before executing game code.
+decoded image against an approved pair of SHA-256 hashes before executing game code.
+The Russian executable shares the same translated code, imports and TLS layout;
+its localization data remains intact. Startup menu overrides also preserve the
+dump's cached strings and fonts.
 The source generator also reads the original `default.xex` directly.
+Any approved executable can be used to build the shared translation.
 Existing prepared files may be left in the folder; they are not read.
 
 The game checks the supported revision automatically at launch; no manual hash

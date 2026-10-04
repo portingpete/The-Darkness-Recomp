@@ -43,7 +43,7 @@ PROTON = ToolSpec('proton', 'GE-Proton11-7',
     'GE-Proton11-7-x86_64', ('proton', 'files/bin/wine', 'files/bin/wineserver'))
 REQUIRED = ('DarkRecomp.exe', 'DarkRecompPreview.exe', 'DarkRecompSettings.exe',
     'avcodec-darkxma-62.dll', 'avutil-darkxma-60.dll', 'libwinpthread-1.dll',
-    'CubeWnd.pc.xcr', 'GameContext_Create.pc.xdf')
+    'CubeWnd.pc.xcr', 'CubeWnd.pc.xcr.source.sha256', 'GameContext_Create.pc.xdf')
 CRT = ('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')
 MANIFEST = 'LINUX_SETUP.json'
 VERSION = 1

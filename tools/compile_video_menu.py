@@ -6,6 +6,7 @@ Keep the shipped pools and shared lists intact; append only the PC page.
 """
 import argparse
 from dataclasses import dataclass
+import hashlib
 from pathlib import Path
 import struct
 import zlib
@@ -368,6 +369,11 @@ def compile_menu_archive(source, original_menu, replacement):
     return header + zlib.compress(rewritten, level=9)
 
 
+def menu_source_hashes(menu_source, archive_source):
+    """Pin the two original assets used for the bundled menu overrides."""
+    return hashlib.sha256(menu_source).hexdigest() + "\n" + hashlib.sha256(archive_source).hexdigest() + "\n"
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, required=True)
@@ -384,7 +390,12 @@ if __name__ == "__main__":
     if args.archive_source or args.archive_output:
         assert args.archive_source and args.archive_output
         assert args.archive_source.resolve() != args.archive_output.resolve()
-        archive = compile_menu_archive(args.archive_source.read_bytes(), source, result)
+        archive_source = args.archive_source.read_bytes()
+        archive = compile_menu_archive(archive_source, source, result)
         args.archive_output.parent.mkdir(parents=True, exist_ok=True)
         if not args.archive_output.exists() or args.archive_output.read_bytes() != archive:
             args.archive_output.write_bytes(archive)
+        metadata_path = args.output.with_name(args.output.name + ".source.sha256")
+        metadata = menu_source_hashes(source, archive_source).encode("ascii")
+        if not metadata_path.exists() or metadata_path.read_bytes() != metadata:
+            metadata_path.write_bytes(metadata)

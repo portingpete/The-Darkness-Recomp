@@ -12,6 +12,7 @@
 #include <thread>
 #include <vector>
 #include "ppc_context.h"
+#include "native_menu_assets.h"
 
 namespace DarkRecomp { class CDisplayContextD3D11; }
 
@@ -26,6 +27,7 @@ public:
     Memory& operator=(const Memory&) = delete;
     uint8_t* base() const { return base_; }
     const std::filesystem::path& gameDirectory() const { return gameDir_; }
+    const NativeMenuAssets& nativeMenuAssets() const { return nativeMenuAssets_; }
     bool commit(uint32_t address, uint32_t size);
     uint32_t allocate(uint32_t size, uint32_t alignment = 4096,
                       uint32_t regionBase = 0x10000000, uint64_t regionEnd = 0x60000000);
@@ -79,6 +81,7 @@ private:
     uint8_t* base_ = nullptr;
     std::vector<std::pair<uint32_t, bool>> memoryViews_;
     std::filesystem::path gameDir_;
+    NativeMenuAssets nativeMenuAssets_;
     uint32_t headerSize_ = 0;
     std::vector<uint8_t> tlsInitial_;
     std::map<uint32_t, uint32_t> allocations_;

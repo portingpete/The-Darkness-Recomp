@@ -24,7 +24,10 @@ THE DARKNESS RECOMP - START HERE
    Put the game files directly inside Darkness, not Darkness\Darkness.
    Game files are not included. An ISO alone will not work: use the extracted
    dump, including its original default.xex. The game decodes it in memory.
-   This build supports the same game revision used to build it.
+   This build recognizes the original supported disc executable and the Russian
+   localization from issue #37. Keep each executable with its matching game files.
+   For the Russian dump, choose English (or System default on Russian Windows);
+   its translated assets use the game's English content slot.
 
 3. Double-click Launch.cmd. That's it - no build or developer tools needed.
    To choose settings and language before playing, use LaunchWithSettings.cmd.

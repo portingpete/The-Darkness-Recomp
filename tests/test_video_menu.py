@@ -1,5 +1,6 @@
 """Non-rendering checks for the original menu registry override."""
 from pathlib import Path
+import hashlib
 import struct
 import sys
 import unittest
@@ -8,7 +9,7 @@ import zlib
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 from compile_video_menu import (Registry, SETTINGS, KEYBOARD_ACTIONS, KEYBOARD_PRIMARY,
-                               KEYBOARD_SECONDARY, compile_menu, compile_menu_archive)
+                               KEYBOARD_SECONDARY, compile_menu, compile_menu_archive, menu_source_hashes)
 
 
 def registries(data):
@@ -59,6 +60,17 @@ class VideoMenu(unittest.TestCase):
         cls.source = (ROOT / "Darkness/Content/Gui/CubeWnd.xcr").read_bytes()
         cls.output = compile_menu(cls.source)
         cls.archive = (ROOT / "Darkness/Content/Xdf/GameContext_Create.XDF").read_bytes()
+
+    def test_source_hashes_pin_menu_and_localized_archive(self):
+        self.assertEqual(menu_source_hashes(self.source, self.archive),
+                         hashlib.sha256(self.source).hexdigest() + "\n" +
+                         hashlib.sha256(self.archive).hexdigest() + "\n")
+        changed = bytearray(self.archive)
+        changed[-1] ^= 1
+        self.assertEqual(menu_source_hashes(self.source, changed).splitlines()[0],
+                         menu_source_hashes(self.source, self.archive).splitlines()[0])
+        self.assertNotEqual(menu_source_hashes(self.source, changed).splitlines()[1],
+                            menu_source_hashes(self.source, self.archive).splitlines()[1])
 
     def test_original_round_trip_and_untouched_pages(self):
         for (before, raw), (after, _) in zip(registries(self.source), registries(self.output)):

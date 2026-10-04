@@ -88,9 +88,9 @@ class RecompileTests(unittest.TestCase):
         self.xenon = self.root / 'refs/UnleashedRecomp/tools/XenonRecomp'
         self.generator = self.root / 'generator.exe'
         for name in (
-            'config/darkness.toml', 'runtime/guest/ppc_context.template.h',
+            'config/darkness.toml', 'config/game_revisions.toml', 'runtime/guest/ppc_context.template.h',
             'Darkness/default.xex', 'Darkness/darkness_switch_tables.toml',
-            'tools/xex_image.py', 'tools/native_imports.py', 'tools/recompile.py',
+            'tools/xex_image.py', 'tools/native_imports.py', 'tools/game_revisions.py', 'tools/recompile.py',
             'runtime/native/kernel.cpp', 'generator.exe',
         ):
             path = self.root / name
@@ -117,6 +117,7 @@ class RecompileTests(unittest.TestCase):
             patch.object(recompile, 'ROOT', self.root),
             patch.object(recompile, 'XENON', self.xenon),
             patch.object(recompile, '__file__', str(self.root / 'tools/recompile.py')),
+            patch.object(recompile, 'validate_source', return_value=[]),
             patch.object(recompile.subprocess, 'run', side_effect=self.generate),
             patch.object(recompile, 'generate_imports', side_effect=self.generate_imports),
         ):
@@ -236,6 +237,26 @@ class RecompileTests(unittest.TestCase):
         (self.xenon / 'XenonUtils/xbox/xam_table.inc').unlink()
         with self.assertRaisesRegex(RuntimeError, r'Changed inputs: .*xam_table\.inc'):
             self.verify()
+
+    def test_revision_catalog_changes_invalidate_manifest(self):
+        self.regenerate()
+        (self.root / 'config/game_revisions.toml').write_text('changed approved revisions\n')
+        with self.assertRaisesRegex(RuntimeError, r'Changed inputs: .*game_revisions\.toml'):
+            self.verify()
+
+    def test_revision_validation_changes_invalidate_manifest(self):
+        self.regenerate()
+        (self.root / 'tools/game_revisions.py').write_text('changed compatibility validation\n')
+        with self.assertRaisesRegex(RuntimeError, r'Changed inputs: .*game_revisions\.py'):
+            self.verify()
+
+    def test_unapproved_revision_is_rejected_before_generator_runs(self):
+        with patch.object(recompile, 'validate_source', side_effect=RuntimeError('Unsupported default.xex revision')):
+            with patch.object(recompile.subprocess, 'run') as run:
+                with self.assertRaisesRegex(RuntimeError, 'Unsupported default.xex revision'):
+                    self.regenerate()
+                run.assert_not_called()
+        self.assertFalse((self.out / 'manifest.json').exists())
 
     def test_identical_outputs_keep_timestamps_and_unrelated_files(self):
         self.regenerate()

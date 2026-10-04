@@ -4,7 +4,6 @@
 #include "ppc_image_metadata.h"
 #include "xex_image.h"
 #include "timebase_scale.h"
-#include <bcrypt.h>
 #include <array>
 #include <dbghelp.h>
 #include <cstdio>
@@ -329,18 +328,6 @@ void Memory::xmaReset(uint32_t context) {
         xmaBridge_->reset((context-xmaPool_)/kXmaContextBytes);
 }
 
-static std::string digest(const std::vector<uint8_t>& bytes) {
-    BCRYPT_ALG_HANDLE provider = nullptr;
-    if (BCryptOpenAlgorithmProvider(&provider, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0)
-        throw std::runtime_error("SHA256 provider unavailable");
-    uint8_t result[32];
-    auto status = BCryptHash(provider, nullptr, 0, const_cast<PUCHAR>(bytes.data()), ULONG(bytes.size()), result, sizeof(result));
-    BCryptCloseAlgorithmProvider(provider, 0);
-    if (status < 0) throw std::runtime_error("Cannot verify game image hash");
-    char hex[65] = {};
-    for (int i = 0; i < 32; ++i) sprintf_s(hex + i * 2, 3, "%02x", result[i]);
-    return hex;
-}
 void Memory::load(const std::filesystem::path& gameDir) {
     gameDir_ = std::filesystem::weakly_canonical(gameDir);
     std::ifstream file(gameDir / "default.xex", std::ios::binary | std::ios::ate);
@@ -352,11 +339,8 @@ void Memory::load(const std::filesystem::path& gameDir) {
     file.seekg(0);
     if (!file.read(reinterpret_cast<char*>(original.data()), original.size()))
         throw std::runtime_error("Cannot read default.xex");
-    if (digest(original) != kGameXexSha256)
-        throw std::runtime_error("default.xex differs from the supported AOT revision");
-    auto decoded = decodeXex(original);
+    auto decoded = decodeVerifiedXex(original, kGameRevisions);
     const auto& bytes = decoded.image;
-    if (digest(bytes) != kGameImageSha256) throw std::runtime_error("Game image differs from the image used for AOT generation");
     if (bytes.size() > PPC_IMAGE_SIZE || !commit(PPC_IMAGE_BASE, PPC_IMAGE_SIZE))
         throw std::runtime_error("Cannot map the game image");
     memcpy(base_ + PPC_IMAGE_BASE, bytes.data(), bytes.size());
@@ -382,7 +366,11 @@ void Memory::load(const std::filesystem::path& gameDir) {
         PPC_LOOKUP_FUNC(base_, entry->guest) = entry->host;
         ++count;
     }
-    printf("[AOT] Verified game image; mapped %zu native functions.\n", count);
+    wchar_t executable[32768]{};
+    const DWORD executableLength = GetModuleFileNameW(nullptr, executable, DWORD(std::size(executable)));
+    if (executableLength && executableLength < std::size(executable))
+        nativeMenuAssets_ = prepareNativeMenuAssets(gameDir_, std::filesystem::path(executable).parent_path());
+    printf("[AOT] Verified game image (%s); mapped %zu native functions.\n", decoded.revisionName, count);
 }
 uint32_t Memory::headerField(uint32_t key) const {
     uint32_t count = read32(xexHeader + 20);

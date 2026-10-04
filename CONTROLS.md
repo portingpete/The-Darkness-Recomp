@@ -97,6 +97,10 @@ The matching language content must be present in your own dump. Run
 language names are also accepted. This override applies only to that run and
 does not replace your saved language choice when you adjust graphics settings.
 
+The supported Russian localization uses the English content slot. With that
+dump, choose **English**, or **System** on Russian Windows, to load its translated
+text and audio. Keep its own executable and all matching content files together.
+
 In menus, move the cursor over a choice and click to select it. The game releases
 mouse capture while a menu is open. Click inside gameplay to capture the mouse;
 that first gameplay click only captures it.

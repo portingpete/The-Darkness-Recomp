@@ -1,0 +1,21 @@
+# Whole-file identities are required at runtime; matching code alone does not
+# authorize another executable. All revisions share all translated sections,
+# .pdata, PE layout, entry point, TLS and imports. The Russian revision changes
+# localization data in .rdata and the embedded XDBF resource (issue #37).
+format = 1
+compatibility_sha256 = "95ea054ec59597a6522a4dc55836c79507bab918c950aa96ccdbab1914e84d7b"
+
+[[revision]]
+name = "Original disc revision"
+xex_sha256 = "aace35a8f9bcdc7f28aeab9ff8cf3bdf200353f5c83705f6284487347acb3c5f"
+image_sha256 = "180b7fc8f57462f6bac3404ecab061a8d79914c7a3e9a12c238bd3449e72d049"
+
+[[revision]]
+name = "Russian localization"
+xex_sha256 = "dfb778ccc05292c95b964f4f68b5d5a4892981a3d07b0bed7eafae366f6d1311"
+image_sha256 = "5fde9853ecff93fa4a732d72dd0d6d18f25e50755ffa4e2f63f08310b9e4f4ee"
+
+[[revision]]
+name = "Russian localization (full dump)"
+xex_sha256 = "e63285f45fc0f7fae1a3b41ea584cab60e8013e481a171ff936f86c9c2c2ffdd"
+image_sha256 = "d6751b17ccd8a1b2d93c3d36104adf304726e6fe2b2a3d8eb85ac0f220cb3443"
