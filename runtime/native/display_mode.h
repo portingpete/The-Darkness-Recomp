@@ -19,6 +19,7 @@ inline bool setNativeVideoMode(uint32_t width, uint32_t height) {
 }
 bool configureGuestRenderMode(uint32_t display);
 bool fitLegacyMenuMatrix(uint32_t drawContext);
+bool fitTitleTextMatrix(uint32_t drawContext);
 inline float fitMenuLabelX(float x, float textWidth, bool rightAligned, float scaleX, NativeVideoMode mode) {
     if (uint64_t(mode.width)*9 <= uint64_t(mode.height)*16 || scaleX <= 0 ||
         !std::isfinite(x) || !std::isfinite(textWidth) || !std::isfinite(scaleX)) return x;

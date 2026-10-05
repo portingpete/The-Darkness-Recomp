@@ -61,6 +61,9 @@ static void check(bool success, const char* message) { if (!success) throw std::
 #include "developer_missions_tests.h"
 #include "developer_update_tests.h"
 #include "screen_fade_tests.h"
+#include "title_text_layout_tests.h"
+#include "title_text_shadow_tests.h"
+#include "title_text_heading_tests.h"
 static PPC_FUNC(threadProbe) {
     uint32_t argument = ctx.r3.u32;
     memory->write32(argument + 24, base[ctx.r13.u32 + 0x10c]);
@@ -1541,6 +1544,18 @@ int main(int argc, char** argv) {
         }
         if (argc == 3 && strcmp(argv[2], "--screen-fade") == 0) {
             testScreenFade(ctx);
+            return 0;
+        }
+        if (argc == 3 && strcmp(argv[2], "--title-text-layout") == 0) {
+            testTitleTextLayout(ctx);
+            return 0;
+        }
+        if (argc == 3 && strcmp(argv[2], "--title-text-shadow") == 0) {
+            testTitleTextShadow(ctx);
+            return 0;
+        }
+        if (argc == 3 && strcmp(argv[2], "--title-text-heading") == 0) {
+            testTitleTextHeading(ctx);
             return 0;
         }
         if (argc == 3 && strcmp(argv[2], "--developer-tools") == 0) {

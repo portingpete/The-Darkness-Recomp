@@ -1980,6 +1980,89 @@ bool DarkRecomp::Native::fitLegacyMenuMatrix(uint32_t drawContext) {
     // consume them. Only the just-produced rendering transform is fitted.
     return true;
 }
+
+bool DarkRecomp::Native::fitTitleTextMatrix(uint32_t drawContext) {
+    const auto mode = nativeVideoMode();
+    if (!drawContext || uint64_t(mode.width) * 9 >= uint64_t(mode.height) * 16 ||
+        !guestBufferWritable(drawContext, 684) ||
+        memory->read32(drawContext + 668) || memory->read32(drawContext + 672) ||
+        memory->read32(drawContext + 676) != mode.width ||
+        memory->read32(drawContext + 680) != mode.height) return false;
+    struct RestoreMathMode {
+        unsigned value = _mm_getcsr();
+        ~RestoreMathMode() { _mm_setcsr(value); }
+    } restoreMathMode;
+    _mm_setcsr(restoreMathMode.value & ~(_MM_ROUND_MASK | _MM_FLUSH_ZERO_MASK | _MM_DENORMALS_ZERO_MASK));
+    auto value = [&](uint32_t offset) { return std::bit_cast<float>(memory->read32(drawContext + offset)); };
+    const float scale = float(mode.height) / 480;
+    if (!std::isfinite(value(336)) || !std::isfinite(value(340)) ||
+        std::abs(value(336) - scale) > .0001f || std::abs(value(340) - scale) > .0001f) return false;
+    std::array<float,16> matrix;
+    for (unsigned i = 0; i < matrix.size(); ++i) {
+        matrix[i] = value(272 + i * 4);
+        if (!std::isfinite(matrix[i])) return false;
+    }
+    // Gameplay headings and the credits use an authored 853x480 canvas.
+    // This matrix is a world-space plane before projection, so translate
+    // using its pixel basis, as in the original menu fitting above. Fit only
+    // the glyph transform and center it vertically without stretching.
+    const float fit = float(mode.width) / (853 * scale);
+    const float marginX = (mode.width - 853 * scale * fit) * .5f;
+    const float marginY = (mode.height - 480 * scale * fit) * .5f;
+    matrix[12] += marginX * (matrix[0] / scale);
+    matrix[13] += marginY * (matrix[5] / scale);
+    matrix[0] *= fit;
+    matrix[5] *= fit;
+    for (const unsigned i : {0u, 5u, 12u, 13u})
+        if (!std::isfinite(matrix[i])) return false;
+    for (const unsigned i : {0u, 5u, 12u, 13u})
+        memory->write32(drawContext + 272 + i * 4, std::bit_cast<uint32_t>(matrix[i]));
+    return true;
+}
+
+namespace {
+thread_local uint32_t titleTextContext = 0;
+struct TitleTextScope {
+    uint32_t previous = titleTextContext;
+    explicit TitleTextScope(uint32_t context) { titleTextContext = context; }
+    ~TitleTextScope() { titleTextContext = previous; }
+};
+}
+extern "C" PPC_FUNC(__imp__sub_8233EF70);
+PPC_FUNC(sub_8233EF70) {
+    // These are the original gameplay heading and credits callers, sharing
+    // FONT_TITLE/FONT_NAME and the authored title/credits layout.
+    const uint32_t caller = uint32_t(ctx.lr);
+    uint32_t drawContext = 0;
+    if ((caller == 0x822A11A0 || caller == 0x823B05D8) &&
+        guestBufferAccessible(ctx.r4.u32, 24) &&
+        memory->read32(ctx.r4.u32 + 8) == 0 && memory->read32(ctx.r4.u32 + 16) == 853)
+        drawContext = ctx.r5.u32;
+    TitleTextScope scope(drawContext);
+    __imp__sub_8233EF70(ctx, base);
+}
+extern "C" PPC_FUNC(__imp__sub_8234BFB0);
+PPC_FUNC(sub_8234BFB0) {
+    // All original glyph/shadow passes converge here. The other records in
+    // 8233EF70 (background fades and pictures) retain their own transforms.
+    const uint32_t drawContext = ctx.r3.u32;
+    std::array<uint32_t,16> original{};
+    bool fitted = false;
+    if (titleTextContext && titleTextContext == drawContext && guestBufferWritable(drawContext, 684)) {
+        for (unsigned i = 0; i < original.size(); ++i) original[i] = memory->read32(drawContext + 272 + i * 4);
+        fitted = fitTitleTextMatrix(drawContext);
+    }
+    struct RestoreMatrix {
+        uint32_t context;
+        bool fitted;
+        const std::array<uint32_t,16>& original;
+        ~RestoreMatrix() {
+            if (fitted) for (unsigned i = 0; i < original.size(); ++i)
+                memory->write32(context + 272 + i * 4, original[i]);
+        }
+    } restore{drawContext, fitted, original};
+    __imp__sub_8234BFB0(ctx, base);
+}
 extern "C" PPC_FUNC(__imp__sub_823471F8);
 PPC_FUNC(sub_823471F8) {
     const uint32_t caller = uint32_t(ctx.lr), drawContext = ctx.r3.u32;
@@ -1996,10 +2079,55 @@ PPC_FUNC(sub_823471F8) {
     }
 }
 
+namespace {
+bool titleStringCaller(uint32_t caller) {
+    switch (caller) {
+    case 0x8233F508: case 0x8233F5A4: case 0x8233F5F4:
+    case 0x8233F6FC: case 0x8233F790: case 0x8233F980: case 0x8233F8E4:
+        return true;
+    default: return false;
+    }
+}
+struct TitleTextShadow {
+    uint32_t colorAddress = 0, originalColor = 0;
+    explicit TitleTextShadow(PPCContext& ctx) {
+        const bool heading = uint32_t(ctx.lr) == 0x822A196C && ctx.r9.u32 == 0x2200;
+        if ((!heading && (!titleStringCaller(uint32_t(ctx.lr)) || ctx.r9.u32)) ||
+            !std::isfinite(ctx.f1.f64) || !std::isfinite(ctx.f2.f64) ||
+            uint64_t(ctx.r1.u32) + 96 > PPC_MEMORY_SIZE ||
+            !guestBufferWritable(ctx.r1.u32 + 92, 4)) return;
+        colorAddress = ctx.r1.u32 + 92;
+        originalColor = memory->read32(colorAddress);
+        memory->write32(colorAddress, ctx.r10.u32 & 0xff000000u);
+        // Coordinate-tagged headings already enable the effect but supply a
+        // transparent shadow. Keep their original flags and glyph positions.
+        if (heading) return;
+        ctx.r9.u64 = 0x200;
+        // The retail effect path adds (1,1) to the foreground, with its
+        // shadow at (2,2). Compensate to retain the authored glyph position.
+        const unsigned mathMode = _mm_getcsr();
+        _mm_setcsr(mathMode & ~(_MM_ROUND_MASK | _MM_FLUSH_ZERO_MASK | _MM_DENORMALS_ZERO_MASK));
+        ctx.f1.f64 -= 1;
+        ctx.f2.f64 -= 1;
+        _mm_setcsr(mathMode);
+    }
+    ~TitleTextShadow() {
+        if (colorAddress) memory->write32(colorAddress, originalColor);
+    }
+};
+}
+extern "C" PPC_FUNC(__imp__sub_8234C680);
+PPC_FUNC(sub_8234C680) {
+    TitleTextShadow shadow(ctx);
+    __imp__sub_8234C680(ctx, base);
+}
 extern "C" PPC_FUNC(__imp__sub_8234C7E0);
 PPC_FUNC(sub_8234C7E0) {
+    TitleTextShadow shadow(ctx);
     const auto mode = nativeVideoMode();
     const uint32_t caller = uint32_t(ctx.lr), drawContext = ctx.r3.u32;
+    // The #x,y gameplay-message branch bypasses the credits scroller.
+    TitleTextScope scope(caller == 0x822A196C ? drawContext : titleTextContext);
     // 8236D930 draws a binding icon with the supplied 640x480 scale, then
     // restores the font's independent scale at 8236DDE4. Fit the label's
     // anchor to the same canvas, retaining glyph size and right alignment.

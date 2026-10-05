@@ -51,6 +51,13 @@ Full-screen videos retain their source aspect, and the front-end menu retains
 its 16:9 content width. The journal and gameplay HUD keep their original
 height-based layout.
 
+Authored white intro, character-name and credit text fits its 853x480 canvas
+uniformly on displays narrower than 16:9, keeping it centered and inside the
+viewport. The original font renderer adds an alpha-matched black shadow while
+retaining each glyph's authored position. This adjustment is scoped to the
+original heading and title/credits painters; their fades, pictures and other HUD text retain
+their existing layout.
+
 Alt+Enter toggles borderless fullscreen. Window resizing recreates only the
 swapchain views, depth buffer and output readback resource, retaining the device,
 world textures and internal scene buffers. Presentation fits the existing scene
