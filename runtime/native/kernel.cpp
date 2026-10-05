@@ -2410,7 +2410,10 @@ PPC_FUNC(__imp__NtWaitForSingleObjectEx) {
     }
     static std::atomic<uint32_t> waitLogs = 0;
     uint32_t log = waitLogs.fetch_add(1);
-    if (log < 40 || (result != WAIT_OBJECT_0 && result != WAIT_TIMEOUT))
+    // Alertable audio waits routinely complete after delivering an APC. Keep
+    // those successes within the startup trace limit too: logging each refill
+    // contends on stderr and periodically flushes its buffer during playback.
+    if (log < 40 || (result != WAIT_OBJECT_0 && result != WAIT_TIMEOUT && result != WAIT_IO_COMPLETION))
         fprintf(stderr, "[Sync] wait tid=%lu handle=0x%08X timeout=%u result=0x%08X guest=0x%08X lr=0x%08X\n", GetCurrentThreadId(), ctx.r3.u32, uint32_t(timeout), uint32_t(result), ctx.lastFunction, uint32_t(ctx.lr));
     ctx.r3.u64 = result == WAIT_FAILED ? 0xc0000008 : result;
 }PPC_FUNC(__imp__NtClose) {

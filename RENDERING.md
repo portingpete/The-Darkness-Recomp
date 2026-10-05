@@ -258,6 +258,22 @@ rendered frames. `DisplayReuseContract` checks real GPU output with a quiescent
 producer, repaint, resize, partial frames, gamma/brightness and FXAA changes;
 hidden-window checks model acceptance separately from actual DXGI statuses.
 
+Completed authored texture uploads are prepared on the display thread during
+loading, between complete render frames. A queue of at most 4,096 weak image
+references avoids extending the lifetime of evicted CPU snapshots. Each loop
+examines at most 64 entries and stops after 4 MiB or 1 ms of preparation. The
+first image can exceed these thresholds because a device call cannot be
+preempted. Preloading uses spare GPU-cache capacity; unused prepared images
+receive the lowest eviction priority until a draw samples them.
+
+Complete authored mip chains initialize all texture faces and levels through
+one immutable D3D11 texture creation. Sparse resident chains and generated mips
+retain their existing upload paths. Hardware and WARP contracts check exact
+authored pixels, all 24 cubemap subresources, mip selection, binding preservation,
+cache pressure and upload reuse. `[TexturePreload]` reports preparation time,
+backlog, expired entries and failures. Routine APC completions in alertable
+audio waits share the bounded startup trace instead of logging every refill.
+
 Small deadline overruns retain the existing pacing schedule to avoid accumulating
 timing drift. A delay of at least one additional frame period resets the schedule
 so recovery does not chase a backlog of missed deadlines. Timer failures report

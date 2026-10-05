@@ -129,6 +129,15 @@ void previewPrepareTexture(uint32_t textureId);
 // from borrowing another generation or a different texture subobject.
 std::shared_ptr<const ColorImage> previewCapturedTexture(uint32_t id,uint32_t resource);
 void previewPublishTexture(uint32_t id,uint32_t resource,std::shared_ptr<const ColorImage> image);
+// Optional render-thread preloading of completed immutable upload snapshots.
+// The bounded queue retains weak references only. A successful pop may yield
+// nullptr when the source expired; false means the queue is empty.
+bool takePreviewTexturePreload(std::shared_ptr<const ColorImage>& image);
+struct PreviewTexturePreloadCounters {
+    uint64_t queued=0,taken=0,expired=0,overflow=0;
+    size_t pending=0;
+};
+PreviewTexturePreloadCounters previewTexturePreloadCounters();
 void previewObserveImage(uint8_t* base, uint32_t image, uint32_t textureId, uint32_t mip);
 void previewObserveVideo(uint8_t* base, uint32_t container, uint32_t localId);
 // Adaptive prompt icon substitution, resolved at the render boundary.

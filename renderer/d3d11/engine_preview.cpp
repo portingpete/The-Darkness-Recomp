@@ -273,6 +273,10 @@ bool EnginePreviewD3D11::resizeRenderTarget(uint32_t width,uint32_t height,uint3
     return true;
 }
 
+bool EnginePreviewD3D11::preloadImage(const std::shared_ptr<const ColorImage>& image) {
+    if(frameOpen_)return false;
+    return world_->preloadImage(image);
+}
 void EnginePreviewD3D11::uploadVideoFrame(const VideoFrame& video) {
     if (videoTexY_ && videoTexUV_ && videoWidth_ == video.width && videoHeight_ == video.height) {
         context_->UpdateSubresource(videoTexY_.Get(), 0, nullptr, video.luma.data(), video.width, 0);

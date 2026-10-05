@@ -418,6 +418,8 @@ int wmain(int argc, wchar_t** argv) {
         MSG message{};
         FrameMetrics performance;
         uint64_t unchangedDisplaySkips = 0;
+        uint64_t texturePreloadPrepared=0,texturePreloadBytes=0,texturePreloadFailures=0;
+        double texturePreloadMs=0,texturePreloadMaxMs=0;
         FrameOutlierTrace outlier;
         // Stage-boundary clocks work independently of per-draw profiling and
         // instruction sampling, so normal launches can diagnose slow frames.
@@ -827,6 +829,14 @@ int wmain(int argc, wchar_t** argv) {
                 const auto afterFps = outlierOn ? FrameMetrics::now() : FrameMetrics::Clock::time_point{};
                 if(preview)preview->printPerformance();
                 if(preview)std::printf("[DisplayReuse] unchangedSkips=%llu\n",unchangedDisplaySkips);
+                if(preview) {
+                    const auto preloads=previewTexturePreloadCounters();
+                    std::printf("[TexturePreload] queued=%llu taken=%llu expired=%llu overflow=%llu pending=%zu prepared=%llu sourceMiB=%.2f elapsedMs=%.3f maxLoopMs=%.3f failures=%llu budgetMiB=4 stopAfterMs=1 maxCandidates=64\n",
+                        preloads.queued,preloads.taken,preloads.expired,preloads.overflow,preloads.pending,
+                        texturePreloadPrepared,double(texturePreloadBytes)/(1024*1024),texturePreloadMs,
+                        texturePreloadMaxMs,texturePreloadFailures);
+                    texturePreloadMs=texturePreloadMaxMs=0;
+                }
                 const auto afterPreview = outlierOn ? FrameMetrics::now() : FrameMetrics::Clock::time_point{};
                 printEngineCpuPerformance();
                 const auto afterEngine = outlierOn ? FrameMetrics::now() : FrameMetrics::Clock::time_point{};
@@ -855,6 +865,37 @@ int wmain(int argc, wchar_t** argv) {
                 // deadline's process teardown rather than unwinding past them.
                 fflush(nullptr);
                 ExitProcess(6);
+            }
+            if(preview && !preview->frameInProgress()) {
+                // Upload immutable authored images while the engine is still
+                // loading/showing its prior frame. This optional work never
+                // refuses a draw or consumes guest memory. Stop after 4 MiB or
+                // 1 ms and inspect at most 64 weak entries. The first image may
+                // exceed either limit: a device call cannot be preempted, and
+                // large textures must still make progress. Existing hitch
+                // tracing accounts for this work in the loop's tail stage.
+                const auto preloadStart=FrameMetrics::now();
+                size_t preloadBytes=0;bool attempted=false;
+                for(unsigned candidate=0;candidate<64;++candidate) {
+                    std::shared_ptr<const DarkRecomp::ColorImage> image;
+                    if(!takePreviewTexturePreload(image))break;
+                    if(image) {
+                        attempted=true;preloadBytes+=image->bytes();
+                        try {
+                            if(preview->preloadImage(image)) {
+                                ++texturePreloadPrepared;texturePreloadBytes+=image->bytes();
+                            }
+                        } catch(const std::exception& preloadError) {
+                            if(++texturePreloadFailures<=4)
+                                std::fprintf(stderr,"[TexturePreload] optional upload failed: %s\n",preloadError.what());
+                        }
+                    }
+                    if(preloadBytes>=4*1024*1024 || FrameMetrics::ms(preloadStart)>=1.0)break;
+                }
+                if(attempted) {
+                    const auto elapsed=FrameMetrics::ms(preloadStart);
+                    texturePreloadMs+=elapsed;texturePreloadMaxMs=(std::max)(texturePreloadMaxMs,elapsed);
+                }
             }
         }
         setPreviewFrameBackpressure(false);

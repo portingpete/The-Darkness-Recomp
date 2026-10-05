@@ -47,6 +47,7 @@ static void check(bool success, const char* message) { if (!success) throw std::
 #include "texture_mip_layout_tests.h"
 #include "texture_upload_tests.h"
 #include "texture_residency_tests.h"
+#include "texture_preload_tests.h"
 #include "native_storage_tests.h"
 #include "fov_camera_tests.h"
 #include "video_settings_tests.h"
@@ -2083,6 +2084,10 @@ int main(int argc, char** argv) {
         if (argc == 3 && strcmp(argv[2], "--audio-driver") == 0) {
             currentContext = &ctx;
             testAudioDriver(ctx, argv[1]);
+            return 0;
+        }
+        if (argc == 3 && strcmp(argv[2], "--texture-preload") == 0) {
+            testTexturePreloadQueue();
             return 0;
         }
         if (argc == 3 && strcmp(argv[2], "--timestamp-bundle") == 0) {

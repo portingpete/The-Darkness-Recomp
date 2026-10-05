@@ -40,6 +40,7 @@ public:
 // by the engine's destination textures for later composition/presentation.
 class WorldRendererD3D11 {
     friend class EnginePreviewD3D11;
+    friend struct WorldImageBudgetTestAccess;
     template<class T> using Ptr=Microsoft::WRL::ComPtr<T>;
     struct StringHash {
         using is_transparent=void;
@@ -197,7 +198,7 @@ class WorldRendererD3D11 {
     Surface resizedSurface(const Surface&,uint32_t scale);
     Surface& surface(uint64_t storageKey,uint32_t width,uint32_t height,bool depth);
     std::vector<uint8_t> readSurfaceKey(uint64_t storageKey,bool depth);
-    ID3D11ShaderResourceView* image(const std::shared_ptr<const ColorImage>&);
+    ID3D11ShaderResourceView* image(const std::shared_ptr<const ColorImage>&,bool speculative=false);
     ID3D11SamplerState* sampler(const Native::WorldSampler&);
     void transfer(ID3D11ShaderResourceView*,ID3D11RenderTargetView*,const std::array<uint32_t,4>& source,
                   const std::array<uint32_t,2>& offset,float scale);
@@ -219,6 +220,10 @@ public:
     // Required after external code changes the shared immediate context.
     void invalidateBindings() {bindingsValid_=false;}
     size_t textureBudget() const {return imageBudget_;}
+    // Render-thread-only optional upload of a complete authored image. Device
+    // initialization leaves current immediate-context bindings unchanged.
+    bool preloadImage(const std::shared_ptr<const ColorImage>&);
+    uint64_t imageUploadCount() const {return imageUploads_;}
     bool draw(const Native::WorldDraw&);
     void clear(const Native::WorldClear&);
     bool resolve(const Native::WorldResolve&);

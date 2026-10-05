@@ -78,6 +78,8 @@ public:
     void setDiagnostics(bool enabled) {if(world_)world_->setDiagnostics(enabled);}
     void printPerformance() const {if(world_)world_->printPerformance();}
     size_t textureBudget() const {return world_->textureBudget();}
+    // Between complete frames only; optional preloading cannot change bindings.
+    bool preloadImage(const std::shared_ptr<const ColorImage>& image);
     uint32_t readPixel(uint32_t x, uint32_t y);
     void saveBmp(const std::filesystem::path& path);
     // Optional F8 evidence must not terminate gameplay or replace an existing capture.

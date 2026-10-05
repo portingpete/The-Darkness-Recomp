@@ -23,6 +23,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <mutex>
 #include <unordered_map>
 #include <unordered_set>
@@ -85,6 +86,11 @@ std::unordered_map<uint32_t, std::shared_ptr<const AlphaImage>> textures;
 std::unordered_map<uint32_t, std::shared_ptr<const ColorImage>> alphaColors;
 struct CachedColor { std::shared_ptr<const ColorImage> image; uint64_t used = 0; uint32_t resource = 0; };
 std::unordered_map<uint32_t, CachedColor> colorTextures;
+// Completed authored images can reach the GPU while loading is still showing
+// a prior frame. Never extend their CPU lifetime solely for this optional work.
+constexpr size_t texturePreloadLimit=4096;
+std::deque<std::weak_ptr<const ColorImage>> texturePreloads;
+PreviewTexturePreloadCounters texturePreloadCounts;
 // The original menu upload working set exceeds64MiB before its model is first
 // drawn. Keep that working set resident; dropping an uploaded map cannot cause
 // the guest to repeat its already-completed upload.
@@ -686,9 +692,29 @@ void previewPublishTexture(uint32_t id,uint32_t resource,std::shared_ptr<const C
         colorBytes-=oldest->second.image->bytes();colorTextures.erase(oldest);
     }
     colorBytes+=image->bytes();colorTextures[id]={image,++colorUse,resource};++colorImages;
+    if(image->authoredMips && !image->firstMip) {
+        if(texturePreloads.size()==texturePreloadLimit) {
+            texturePreloads.pop_front();++texturePreloadCounts.overflow;
+        }
+        texturePreloads.emplace_back(image);++texturePreloadCounts.queued;
+    }
     if (TextureUploadTraceEnabled())
         std::fprintf(stderr,"[EngineImageUpload] authored id=%u resource=%08X size=%ux%u faces=%u first=%u levels=%zu bytes=%zu\n",
             id,resource,image->width,image->height,image->faces,image->firstMip,image->mips.size()+1,image->bytes());
+}
+bool takePreviewTexturePreload(std::shared_ptr<const ColorImage>& image) {
+    // A caller's previous selection may own large pixel vectors. Release it
+    // before taking the handoff lock, like the frame consumer's retire path.
+    image.reset();
+    std::lock_guard lock(queueMutex);
+    if(texturePreloads.empty())return false;
+    image=texturePreloads.front().lock();texturePreloads.pop_front();
+    if(image)++texturePreloadCounts.taken;else ++texturePreloadCounts.expired;
+    return true;
+}
+PreviewTexturePreloadCounters previewTexturePreloadCounters() {
+    std::lock_guard lock(queueMutex);
+    auto counters=texturePreloadCounts;counters.pending=texturePreloads.size();return counters;
 }
 std::shared_ptr<const ColorImage> promptReplacementFor(uint32_t textureId,
     const std::shared_ptr<const ColorImage>& image, PromptRenderSource source, PromptRenderContext context) {

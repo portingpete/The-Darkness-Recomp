@@ -386,10 +386,17 @@ bool WorldRendererD3D11::setRenderScale(uint32_t scale) {
     boundColor_=nullptr;boundDepth_=nullptr;boundViews_.fill(nullptr);
     return true;
 }
-ID3D11ShaderResourceView* WorldRendererD3D11::image(const std::shared_ptr<const ColorImage>& source) {
+bool WorldRendererD3D11::preloadImage(const std::shared_ptr<const ColorImage>& source) {
+    if(!source || !source->authoredMips || source->firstMip || !source->valid())return false;
+    return image(source,true)!=nullptr;
+}
+ID3D11ShaderResourceView* WorldRendererD3D11::image(const std::shared_ptr<const ColorImage>& source,bool speculative) {
     if (!source || !source->valid())return nullptr;
     const unsigned levels=std::bit_width((std::max)(source->width,source->height));
-    if (auto it=images_.find(source.get());it!=images_.end()) {it->second.used=++resourceUse_;return it->second.view.Get();}
+    if (auto it=images_.find(source.get());it!=images_.end()) {
+        if(!speculative)it->second.used=++resourceUse_;
+        return it->second.view.Get();
+    }
     const auto imageStart=std::chrono::steady_clock::now();
     D3D11_TEXTURE2D_DESC desc{};desc.Width=source->width;desc.Height=source->height;
     desc.MipLevels=source->authoredMips?unsigned(source->mips.size()+1):levels;desc.ArraySize=source->faces;
@@ -397,25 +404,47 @@ ID3D11ShaderResourceView* WorldRendererD3D11::image(const std::shared_ptr<const 
     desc.BindFlags=D3D11_BIND_SHADER_RESOURCE;
     if(!source->authoredMips) {desc.BindFlags|=D3D11_BIND_RENDER_TARGET;desc.MiscFlags=D3D11_RESOURCE_MISC_GENERATE_MIPS;}
     if (source->faces==6) desc.MiscFlags|=D3D11_RESOURCE_MISC_TEXTURECUBE;
-    Image result;result.source=source;result.used=++resourceUse_;
+    // Preloading uses only spare cache capacity. Keep speculative entries cold
+    // until a draw uses them, so ordinary LRU eviction prefers unused images.
+    Image result;result.source=source;result.used=speculative?0:++resourceUse_;
     for(unsigned mip=0;mip<desc.MipLevels;++mip)
         result.bytes+=size_t((std::max)(1u,source->width>>mip))*(std::max)(1u,source->height>>mip)*source->faces*4;
+    if(speculative && (imageBytes_>imageBudget_ || result.bytes>imageBudget_-imageBytes_))return nullptr;
     while(!images_.empty() && imageBytes_+result.bytes>imageBudget_) {
         auto oldest=std::min_element(images_.begin(),images_.end(),[](const auto& l,const auto& r){return l.second.used<r.second.used;});
         imageBytes_-=oldest->second.bytes;images_.erase(oldest);
     }
-    Ptr<ID3D11Texture2D> texture;check(device_->CreateTexture2D(&desc,nullptr,&texture),"world image");
-    for(unsigned mip=source->firstMip;mip<=source->mips.size();++mip) {
-        const auto& pixels=mip?source->mips[mip-1]:source->pixels;
-        const unsigned width=(std::max)(1u,source->width>>mip),height=(std::max)(1u,source->height>>mip);
-        for(unsigned f=0;f<source->faces;++f)context_->UpdateSubresource(texture.Get(),D3D11CalcSubresource(mip,f,desc.MipLevels),nullptr,
-            pixels.data()+size_t(f)*width*height*4,width*4,0);
+    Ptr<ID3D11Texture2D> texture;
+    if(source->authoredMips && source->firstMip==0) {
+        // Owned authored levels are complete and never written after upload.
+        // Initialize every face/mip at creation to avoid separate immediate-
+        // context transfers (and their driver synchronization) per level.
+        desc.Usage=D3D11_USAGE_IMMUTABLE;
+        std::vector<D3D11_SUBRESOURCE_DATA> initial(size_t(desc.MipLevels)*desc.ArraySize);
+        for(unsigned mip=0;mip<desc.MipLevels;++mip) {
+            const auto& pixels=mip?source->mips[mip-1]:source->pixels;
+            const unsigned width=(std::max)(1u,source->width>>mip),height=(std::max)(1u,source->height>>mip);
+            const unsigned faceBytes=width*height*4;
+            for(unsigned f=0;f<source->faces;++f)
+                initial[D3D11CalcSubresource(mip,f,desc.MipLevels)]={
+                    pixels.data()+size_t(f)*faceBytes,width*4,faceBytes};
+        }
+        check(device_->CreateTexture2D(&desc,initial.data(),&texture),"world authored image");
+    } else {
+        check(device_->CreateTexture2D(&desc,nullptr,&texture),"world image");
+        for(unsigned mip=source->firstMip;mip<=source->mips.size();++mip) {
+            const auto& pixels=mip?source->mips[mip-1]:source->pixels;
+            const unsigned width=(std::max)(1u,source->width>>mip),height=(std::max)(1u,source->height>>mip);
+            for(unsigned f=0;f<source->faces;++f)context_->UpdateSubresource(texture.Get(),D3D11CalcSubresource(mip,f,desc.MipLevels),nullptr,
+                pixels.data()+size_t(f)*width*height*4,width*4,0);
+        }
     }
     check(device_->CreateShaderResourceView(texture.Get(),nullptr,&result.view),"world image view");
     if(!source->authoredMips)context_->GenerateMips(result.view.Get());
-    imageBytes_+=result.bytes;++imageUploads_;
-    noteWorstUpload(millisBetween(imageStart,std::chrono::steady_clock::now()),result.bytes,"image");
-    return images_.emplace(source.get(),std::move(result)).first->second.view.Get();
+    const auto cached=images_.emplace(source.get(),std::move(result)).first;
+    imageBytes_+=cached->second.bytes;++imageUploads_;
+    noteWorstUpload(millisBetween(imageStart,std::chrono::steady_clock::now()),cached->second.bytes,"image");
+    return cached->second.view.Get();
 }
 WorldRendererD3D11::Surface& WorldRendererD3D11::surface(uint64_t key,uint32_t width,uint32_t height,bool depth) {
     auto& s=surfaces_[key];

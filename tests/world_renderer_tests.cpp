@@ -959,6 +959,7 @@ static void immediateCanonicalContract(WorldRendererD3D11& renderer) {
 #include "world_prompt_render_tests.h"
 #include "world_projected_texture_tests.h"
 #include "world_material_tests.h"
+#include "world_image_initialization_tests.h"
 #include "world_video_tests.h"
 #include "world_shadow_projection_tests.h"
 #include "world_shadow_bias_tests.h"
@@ -1202,7 +1203,11 @@ static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
             auto* pixel=checker->pixels.data()+(y*8+x)*4;pixel[((x+y)&1)?0:2]=255;pixel[3]=255;
         }
         sampled.textures[0]=checker;sampled.samplers[0]=decodeWorldSampler({2,0,0,0,(3u<<2)|(3u<<6),0});
+        const auto generatedUploads=renderer.imageUploadCount();
+        require(!renderer.preloadImage(checker) && renderer.imageUploadCount()==generatedUploads,
+                "Generated mip image entered authored preload path");
         renderer.clear(clear);require(renderer.draw(sampled),"Minified checker draw rejected");
+        require(renderer.imageUploadCount()==generatedUploads+1,"Generated mip fallback did not upload one image");
         const auto minified=renderer.readSurface(1,false);std::memcpy(h,minified.data()+(32*64+32)*8,8);
         require(std::abs(halfFloat(h[0])-.5f)<.01 && std::abs(halfFloat(h[2])-.5f)<.01,
                 "Minification sampled an aliased base level instead of the averaged mip");
@@ -1237,6 +1242,14 @@ static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
         auto image=std::make_shared<ColorImage>();
         require(!decodeWorldTextureImage(b,resource,*image),"Authored mip fixture decode rejected");
         auto sampled=draw;sampled.textureObjects[0]={};sampled.textures[0]=image;
+        ComPtr<ID3D11ShaderResourceView> previousView;context->PSGetShaderResources(0,1,&previousView);
+        const auto authoredUploads=renderer.imageUploadCount();
+        require(renderer.preloadImage(image) && renderer.imageUploadCount()==authoredUploads+1,
+                "Complete authored 2D mip chain was not preloaded once");
+        ComPtr<ID3D11ShaderResourceView> preservedView;context->PSGetShaderResources(0,1,&preservedView);
+        require(previousView.Get()==preservedView.Get(),"Authored 2D preload changed active draw bindings");
+        require(renderer.preloadImage(image) && renderer.imageUploadCount()==authoredUploads+1,
+                "Repeated authored 2D preload duplicated GPU upload");
         constantTexgen(sampled,0,{.5f,.5f,0,1});
         for(unsigned mip=0;mip<colors.size();++mip) {
             sampled.samplers[0]=decodeWorldSampler({2,0,0,0,(mip<<2)|(mip<<6),0});
@@ -1248,8 +1261,11 @@ static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
                 throw std::runtime_error("Authored texture mip replaced by generated base-level pixels");
             }
         }
+        require(renderer.imageUploadCount()==authoredUploads+1,"Authored 2D draw did not reuse preloaded GPU image");
         auto sparse=std::make_shared<ColorImage>(*image);
         sparse->firstMip=2;sparse->pixels.clear();sparse->mips[0].clear();sampled.textures[0]=sparse;
+        require(!renderer.preloadImage(sparse) && renderer.imageUploadCount()==authoredUploads+1,
+                "Sparse authored image entered complete-chain preload path");
         for(unsigned mip=2;mip<colors.size();++mip) {
             sampled.samplers[0]=decodeWorldSampler({2,0,0,0,(mip<<2)|(mip<<6),0});
             renderer.clear(clear);require(renderer.draw(sampled),"Resident-tail image rejected");
@@ -1318,6 +1334,7 @@ static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
         require(desc.Width==64 && desc.Height==64 && desc.MipLevels==7 &&
                 viewDesc.Texture2D.MostDetailedMip==0 && viewDesc.Texture2D.MipLevels==7,
                 "Resident-tail GPU resource rebased dimensions or mip indices");
+        require(desc.Usage==D3D11_USAGE_DEFAULT,"Sparse authored image lost streaming fallback storage");
         // A newly completed prefix is a different immutable image; revisiting
         // the old queued generation must still sample its retained tail.
         for(const auto& current:{image,sparse,image}) {
@@ -1455,6 +1472,8 @@ static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
                 "Resident cube view rebased authored levels");
         std::puts("ResidentMip: cube faces preserve original four-level indices with missing base.");
     }
+    authoredCubeInitializationContract(renderer,device,context,lightingDraw,clear);
+    imagePreloadBudgetContract(renderer,context,draw,clear);
     // A clear of another engine identity must preserve the original surface.
     clear.targets[4]=3;clear.depth=.75f;clear.flags=49;renderer.clear(clear);
     require(renderer.readSurface(2,true)==greater,"Distinct engine depth targets alias");
