@@ -44,6 +44,11 @@ Click the game window to capture the mouse. **F1** shows controls, **F2** toggle
 capture, and **Esc** releases it. Graphics options are in **Options > Video Settings**
 and in the video settings launcher. Both use the same saved settings.
 Click menu choices to select them; the mouse wheel also changes choices and **E** confirms.
+Choose **Extra Content > Achievements** in the main menu to see the original
+achievement list. Unlocks from gameplay are stored in
+**saves/achievements.dat** and persist between launches. The list uses your game
+dump's achievement text and selected language; multiplayer achievements require
+their original gameplay conditions. Xbox Live synchronization is unavailable.
 Use **Options > Controls > Keyboard bindings** to remap gameplay keys.
 The four-page game menu supports primary/secondary keys, clear, defaults, and Save/Cancel.
 **Exit Game** in the pause or main menu closes the game after confirmation.

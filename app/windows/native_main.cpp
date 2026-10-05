@@ -5,6 +5,7 @@
 #include "runtime/native/input.h"
 #include "native_mouse.h"
 #include "developer_tools_window.h"
+#include "achievements_window.h"
 #include "developer_resolution_shortcut.h"
 #include "keyboard_settings.h"
 #include "runtime/native/keyboard_menu.h"
@@ -41,6 +42,7 @@
 using namespace DarkRecomp::Native;
 static NativeMouseWindow* mouseWindow = nullptr;
 static DeveloperToolsWindow* developerToolsWindow = nullptr;
+static AchievementsWindow* achievementsWindow = nullptr;
 static bool displayResizePending = false;
 static bool fullscreenTogglePending = false;
 static DeveloperResolutionShortcut resolutionShortcut;
@@ -88,6 +90,7 @@ static LRESULT CALLBACK NativeWindowProc(HWND window, UINT message, WPARAM wPara
     // The modeless panel keeps rendering/engine updates running, but game
     // input and mouse capture stay suspended even if the owner gets focus.
     if (mouseWindow && (!developerToolsWindow || !developerToolsWindow->isOpen()) &&
+        (!achievementsWindow || !achievementsWindow->isOpen()) &&
         mouseWindow->message(message, wParam, lParam)) return 0;
     if (message == WM_CLOSE) { DestroyWindow(window); return 0; }
     if (message == WM_DESTROY) { PostQuitMessage(0); return 0; }
@@ -299,13 +302,14 @@ int wmain(int argc, wchar_t** argv) {
         if (fullscreen) displayWindow.toggleFullscreen();
         nativeInput().attachWindow(window);
         nativeInput().windowMessage(window, WM_ACTIVATEAPP, GetForegroundWindow() == window, 0);
-        struct ClearMouseWindow { ~ClearMouseWindow() { mouseWindow = nullptr; developerToolsWindow = nullptr; } };
+        struct ClearMouseWindow { ~ClearMouseWindow() { mouseWindow = nullptr; developerToolsWindow = nullptr; achievementsWindow = nullptr; } };
         NativeMouseWindow mouse(window); mouseWindow = &mouse;
         NativeResolutionStatus resolutionStatus(window);
         if (!mouse.registered()) throw std::runtime_error("Cannot register native raw mouse input");
         DeveloperToolsWindow developerTools(window, mouse, [](bool enabled) {
             resolutionShortcut.setEnabled(enabled);
         }); developerToolsWindow = &developerTools;
+        AchievementsWindow achievements(window, mouse); achievementsWindow = &achievements;
         ClearMouseWindow clearMouseWindow;
         puts("[Input] Native Win32 keyboard/raw mouse ready. Click to capture, Esc releases, F1 controls, F5 developer tools; optional F6 720p/1440p shortcut starts disabled. WASD=move; E=use; R=reload; captured Space=jump; menu Space=confirm/skip.");
         if (!testInputPath.empty())
@@ -445,6 +449,14 @@ int wmain(int argc, wchar_t** argv) {
                     DispatchMessageW(&message);
                     continue;
                 }
+                if (achievements.isOpen() && message.message == WM_KEYDOWN && message.wParam == VK_F5) {
+                    if (!(message.lParam & (LPARAM(1) << 30))) {
+                        achievements.close();
+                        developerTools.toggle();
+                    }
+                    continue;
+                }
+                if (achievements.handleMessage(message)) continue;
                 if (developerTools.handleMessage(message)) continue;
                 if(manualShadowCapture && message.hwnd==window && message.message==WM_KEYDOWN &&
                    message.wParam==VK_F8 && !(message.lParam&(LPARAM(1)<<30))) {
@@ -458,6 +470,7 @@ int wmain(int argc, wchar_t** argv) {
                 DispatchMessageW(&message);
             }
             if (message.message == WM_QUIT) break;
+            if (!developerTools.isOpen() && !keyboardMenuInputBlocked()) achievements.update();
             if (guestMenuPointerActive()) mouse.release();
             KeyboardMenuSaveRequest keyboardSave;
             if (takeKeyboardMenuSaveRequest(keyboardSave)) {
@@ -599,9 +612,25 @@ int wmain(int argc, wchar_t** argv) {
                             inputCaptureAt=inputNow;inspectNextEngineFrame();if(preview)preview->inspectNextWorldFrame();
                         }
                         break;}
-                    if(command.starts_with("dev ") && developerTools.handleTestCommand(command)) {
-                        liveInputCount=count;
-                        continue;
+                    if(command.starts_with("achievements ")) {
+                        std::istringstream words(command);
+                        std::string prefix, action;
+                        words >> prefix >> action;
+                        if (action == "open") developerTools.close();
+                        if (achievements.handleTestCommand(command)) {
+                            liveInputCount=count;
+                            continue;
+                        }
+                    }
+                    if(command.starts_with("dev ")) {
+                        std::istringstream words(command);
+                        std::string prefix, action;
+                        words >> prefix >> action;
+                        if (action == "open") achievements.close();
+                        if (developerTools.handleTestCommand(command)) {
+                            liveInputCount=count;
+                            continue;
+                        }
                     }
                     if(command == "keyboard status") {
                         std::printf("[KeyboardMenu] capture=%u reload=%s status=%s\n", unsigned(keyboardMenuCaptureActive()),
@@ -650,6 +679,7 @@ int wmain(int argc, wchar_t** argv) {
                 }
             }
             if(testKey && inputNow>=keyRelease) {
+                if (testKey == VK_F5 && achievements.isOpen()) achievements.close();
                 if (testKey != VK_F5) nativeInput().windowMessage(window,WM_SETFOCUS,0,0);
                 MSG keyMessage{window, WM_KEYDOWN, WPARAM(testKey), 0};
                 if (!nativeInput().windowMessage(window,WM_KEYDOWN,testKey,0) &&
@@ -902,6 +932,7 @@ int wmain(int argc, wchar_t** argv) {
         timerResolution.stop();
         sampler.stop();
         developerTools.close();
+        achievements.close();
         endKeyboardMenu();
         mouse.release();
         nativeInput().attachWindow(nullptr);

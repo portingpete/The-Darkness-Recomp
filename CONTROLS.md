@@ -9,6 +9,12 @@ or close its window. `Launch.cmd preview` and
 `build_native/Release/DarkRecompPreview.exe` still default to muted;
 the preview executable also accepts `--sound` or `--mute`.
 
+Choose **Extra Content > Achievements** in the main menu to view achievement names,
+descriptions and unlock status. Select a row to read its details; **Esc** returns
+to the menu. The Xbox achievement screen opens a native viewer with earned points
+and a **Close** button. Progress is saved locally in
+`saves/achievements.dat`; keep that file when updating the port.
+
 Normal launchers record lightweight slow-frame timings in their runtime log.
 Automatic screenshots are disabled during normal play; use the preview executable's
 `--capture-frames` option when diagnostic BMP captures are specifically needed.

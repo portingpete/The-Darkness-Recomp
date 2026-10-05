@@ -4,12 +4,16 @@
 #include "ppc_image_metadata.h"
 #include "xex_image.h"
 #include "timebase_scale.h"
+#include "achievements.h"
+#include "language_settings.h"
 #include <array>
 #include <dbghelp.h>
 #include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
+#include <string_view>
 #include <vector>
 
 namespace DarkRecomp::Native {
@@ -349,6 +353,27 @@ void Memory::load(const std::filesystem::path& gameDir) {
     if (headerSize_ > xex.size() || headerSize_ > 0x100000 || !commit(xexHeader, headerSize_))
         throw std::runtime_error("Invalid XEX header size");
     memcpy(base_ + xexHeader, xex.data(), headerSize_);
+    // Read achievement metadata from this verified dump's title resource.
+    // Never embed the original game's strings or artwork in the port.
+    std::span<const uint8_t> achievementData;
+    const uint32_t resources = headerField(0x2FF);
+    if (resources && uint64_t(resources) + 4 <= uint64_t(xexHeader) + headerSize_) {
+        const uint32_t tableBytes = read32(resources);
+        if (tableBytes >= 4 && (tableBytes - 4) % 16 == 0 &&
+            uint64_t(resources) + tableBytes <= uint64_t(xexHeader) + headerSize_) {
+            for (uint32_t offset = 4; offset < tableBytes; offset += 16) {
+                const uint32_t record = resources + offset;
+                if (std::memcmp(base_ + record, "545407EE", 8)) continue;
+                const uint32_t address = read32(record + 8), size = read32(record + 12);
+                if (address >= PPC_IMAGE_BASE &&
+                    uint64_t(address) + size <= uint64_t(PPC_IMAGE_BASE) + bytes.size())
+                    achievementData = std::span(bytes).subspan(address - PPC_IMAGE_BASE, size);
+                break;
+            }
+        }
+    }
+    Achievements::initialize(achievementData, configuredConsoleLanguage(),
+        std::string_view(decoded.revisionName).starts_with("Russian localization"));
     uint32_t tlsHeader = headerField(0x20104);
     if (!tlsHeader || read32(tlsHeader) != 64) throw std::runtime_error("Unsupported XEX TLS slot count");
     uint32_t rawAddress = read32(tlsHeader + 4), size = read32(tlsHeader + 8), rawSize = read32(tlsHeader + 12);

@@ -952,6 +952,27 @@ PPC_FUNC(__imp__DbgPrint) {
 // local sign-in; no Xbox Live session or online entitlement is reported.
 PPC_FUNC(__imp__XamUserGetSigninState) { ctx.r3.u64 = ctx.r3.u32==0?1:0; }
 namespace {
+constexpr uint64_t kLocalUserXuid = 0xE000000000000001ull;
+}
+PPC_FUNC(__imp__XamUserGetXUID) {
+    const uint32_t user = ctx.r3.u32, mask = ctx.r4.u32, out = ctx.r5.u32;
+    if (!out || !guestBufferWritable(out, 8) || user >= 4 ||
+        (mask != 1 && mask != 2 && mask != 3 && mask != 4 && mask != 7)) {
+        ctx.r3.u64 = 0x80070057u;
+        return;
+    }
+    // A stable local profile identity. Only type 1 (offline) is signed in.
+    const uint64_t xuid = user == 0 && (mask & 1) ? kLocalUserXuid : 0;
+    memory->write32(out, uint32_t(xuid >> 32));
+    memory->write32(out + 4, uint32_t(xuid));
+    ctx.r3.u64 = xuid ? 0 : 0x80070525u;
+}
+PPC_FUNC(__imp__XamShowAchievementsUI) {
+    const uint32_t title = ctx.r4.u32;
+    ctx.r3.u64 = title && title != 0x545407EEu ? ERROR_INVALID_PARAMETER :
+                 Achievements::requestShow(ctx.r3.u32);
+}
+namespace {
 constexpr uint32_t kXContentDataSize = 308;
 constexpr uint32_t kOverlappedSize = 28;
 bool overlappedWritable(uint32_t ptr) {
@@ -1052,6 +1073,98 @@ uint32_t completeStorageOverlapped(PPCContext& ctx, uint32_t overlapped, uint32_
     }
     if (routine & ~1u) queueGuestXamApc(ctx, routine, error, length, overlapped);
     return 0x3E5;
+}
+constexpr uint32_t kAchievementDetailBytes = 36;
+constexpr uint32_t kAchievementStringBytes = 464;
+bool achievementSpansOverlap(uint32_t a, uint32_t aBytes, uint32_t b, uint32_t bBytes) {
+    return a && b && aBytes && bBytes && uint64_t(a) < uint64_t(b) + bBytes &&
+           uint64_t(b) < uint64_t(a) + aBytes;
+}
+std::u16string achievementWide(std::string_view text) {
+    if (text.empty()) return {};
+    const int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(),
+                                         int(text.size()), nullptr, 0);
+    if (!count) return {};
+    std::u16string result(count, u'\0');
+    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), int(text.size()),
+                        reinterpret_cast<wchar_t*>(result.data()), count);
+    return result;
+}
+uint32_t achievementStringsSize(const Achievements::Entry& entry, uint32_t flags) {
+    uint32_t result = 0;
+    if (flags & 1) result += uint32_t((achievementWide(entry.name).size() + 1) * 2);
+    if (flags & 2) result += uint32_t((achievementWide(entry.description).size() + 1) * 2);
+    if (flags & 4) result += uint32_t((achievementWide(entry.lockedDescription).size() + 1) * 2);
+    return result;
+}
+void enumerateAchievements(PPCContext& ctx, const std::shared_ptr<KernelObject>& entry) {
+    const uint32_t buffer = ctx.r5.u32, bytes = ctx.r6.u32;
+    const uint32_t countOut = ctx.r7.u32, overlapped = ctx.r8.u32;
+    if ((overlapped && !overlappedWritable(overlapped)) ||
+        (countOut && !guestBufferWritable(countOut, 4)) ||
+        !storageOverlapTargetsValid(overlapped) ||
+        achievementSpansOverlap(buffer, entry->achievementBufferBytes, countOut, 4) ||
+        achievementSpansOverlap(buffer, entry->achievementBufferBytes, overlapped, kOverlappedSize) ||
+        achievementSpansOverlap(countOut, 4, overlapped, kOverlappedSize)) {
+        ctx.r3.u64 = ERROR_INVALID_PARAMETER;
+        return;
+    }
+    if (!buffer || bytes < entry->achievementBufferBytes) {
+        ctx.r3.u64 = completeStorageOverlapped(ctx, overlapped, ERROR_INSUFFICIENT_BUFFER,
+                                               0, ERROR_INSUFFICIENT_BUFFER);
+        return;
+    }
+    if (!guestBufferWritable(buffer, bytes)) {
+        ctx.r3.u64 = ERROR_INVALID_PARAMETER;
+        return;
+    }
+    std::lock_guard lock(entry->ioMutex);
+    const size_t remaining = entry->achievementItems.size() -
+        (std::min)(entry->enumCursor, entry->achievementItems.size());
+    const uint32_t fetch = (std::min)(uint32_t(remaining), entry->enumFetch);
+    if (!fetch) {
+        if (countOut) memory->write32(countOut, 0);
+        ctx.r3.u64 = completeStorageOverlapped(ctx, overlapped, ERROR_NO_MORE_FILES,
+                                               0, ERROR_NO_MORE_FILES);
+        return;
+    }
+    // All fixed records are contiguous. The string area begins after the
+    // reserved fetch-count records, including on a shorter final page.
+    std::vector<uint8_t> output(entry->achievementBufferBytes, 0);
+    const auto word = [&](uint32_t offset, uint32_t value) {
+        output[offset] = uint8_t(value >> 24);
+        output[offset + 1] = uint8_t(value >> 16);
+        output[offset + 2] = uint8_t(value >> 8);
+        output[offset + 3] = uint8_t(value);
+    };
+    uint32_t stringOffset = entry->enumFetch * kAchievementDetailBytes;
+    const auto string = [&](std::string_view value) {
+        const auto wide = achievementWide(value);
+        const uint32_t result = buffer + stringOffset;
+        for (const char16_t c : wide) {
+            output[stringOffset++] = uint8_t(c >> 8);
+            output[stringOffset++] = uint8_t(c);
+        }
+        stringOffset += 2; // zero terminator from the staging buffer
+        return result;
+    };
+    for (uint32_t i = 0; i < fetch; ++i) {
+        const auto& item = entry->achievementItems[entry->enumCursor + i];
+        const uint32_t at = i * kAchievementDetailBytes;
+        word(at, item.id);
+        if (entry->achievementFlags & 1) word(at + 4, string(item.name));
+        if (entry->achievementFlags & 2) word(at + 8, string(item.description));
+        if (entry->achievementFlags & 4) word(at + 12, string(item.lockedDescription));
+        word(at + 16, item.imageId);
+        word(at + 20, item.gamerscore);
+        word(at + 24, uint32_t(item.unlockedAt >> 32));
+        word(at + 28, uint32_t(item.unlockedAt));
+        word(at + 32, item.unlockedAt ? item.flags | 0x20000u : item.flags & ~0x30000u);
+    }
+    std::memcpy(memory->base() + buffer, output.data(), output.size());
+    entry->enumCursor += fetch;
+    if (countOut) memory->write32(countOut, fetch);
+    ctx.r3.u64 = completeStorageOverlapped(ctx, overlapped, 0, fetch, 0);
 }
 }  // namespace
 // Bounded profile-only storage-import trace (cap 16, separate from the
@@ -1231,11 +1344,60 @@ PPC_FUNC(__imp__XamContentCreateEnumerator) {
     TraceStorageImport("CreateEnumerator", user, device, type, flags, count, uint32_t(itemCount), 0);
     ctx.r3.u64 = 0;
 }
+PPC_FUNC(__imp__XamUserCreateAchievementEnumerator) {
+    // Original sub_820D2278 -> sub_828A7958: title0, user0, XUID0,
+    // flags39, offset0, count50, size at stack112, handle at manager+992.
+    const uint32_t title = ctx.r3.u32, user = ctx.r4.u32, flags = ctx.r6.u32;
+    const uint64_t xuid = ctx.r5.u64;
+    const uint32_t offset = ctx.r7.u32, count = ctx.r8.u32;
+    const uint32_t sizeOut = ctx.r9.u32, handleOut = ctx.r10.u32;
+    if (!count || count > 256 || !sizeOut || !handleOut ||
+        achievementSpansOverlap(sizeOut, 4, handleOut, 4) ||
+        !guestBufferWritable(sizeOut, 4) || !guestBufferWritable(handleOut, 4) ||
+        user >= 4 || (title && title != 0x545407EEu) || (flags & ~0x3Fu)) {
+        ctx.r3.u64 = ERROR_INVALID_PARAMETER;
+        return;
+    }
+    if (user != 0 || (xuid && xuid != kLocalUserXuid)) {
+        ctx.r3.u64 = 0x525;
+        return;
+    }
+    auto snapshot = Achievements::snapshot();
+    if (snapshot.entries.empty()) {
+        ctx.r3.u64 = ERROR_INVALID_DATA;
+        return;
+    }
+    uint32_t strings = flags & 7 ? kAchievementStringBytes : 0;
+    for (const auto& item : snapshot.entries)
+        strings = (std::max)(strings, achievementStringsSize(item, flags));
+    // Retail text fits the SDK's 464-byte reservation. A larger localized
+    // catalog gets an honest larger size rather than truncated text.
+    const uint32_t required = count * (kAchievementDetailBytes + strings);
+    const size_t start = (std::min)(size_t(offset), snapshot.entries.size());
+    snapshot.entries.erase(snapshot.entries.begin(), snapshot.entries.begin() + start);
+    const uint32_t id = storeObject(nullptr);
+    const auto entry = object(id);
+    entry->isEnumerator = true;
+    entry->isAchievementEnumerator = true;
+    entry->enumFetch = count;
+    entry->enumCursor = 0;
+    entry->achievementFlags = flags;
+    entry->achievementStringBytes = strings;
+    entry->achievementBufferBytes = required;
+    entry->achievementItems = std::move(snapshot.entries);
+    memory->write32(sizeOut, required);
+    memory->write32(handleOut, id);
+    ctx.r3.u64 = 0;
+}
 PPC_FUNC(__imp__XamEnumerate) {
     uint32_t handle = ctx.r3.u32;
     uint32_t buffer = ctx.r5.u32, bytes = ctx.r6.u32, countOut = ctx.r7.u32;
     uint32_t overlapped = ctx.r8.u32;
     auto e = object(handle);
+    if (e && e->isAchievementEnumerator) {
+        enumerateAchievements(ctx, e);
+        return;
+    }
     if (!e || !e->isEnumerator) {
         TraceStorageImport("Enumerate", handle, 0, buffer, bytes, countOut, overlapped,
                            ERROR_INVALID_PARAMETER);
@@ -1634,7 +1796,57 @@ PPC_FUNC(__imp__XamInputGetState) {
 PPC_FUNC(__imp__XamInputSetState) {
     ctx.r3.u64 = nativeInput().setState(*memory, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32);
 }
+namespace {
+void setAchievementLastError(PPCContext& ctx, uint32_t error) {
+    // Same guest TLS contract as sub_828AAEA8/sub_828AAEF8. The original
+    // synchronous XUserWriteAchievements wrapper checks this last-error cell.
+    const uint64_t flag = uint64_t(ctx.r13.u32) + 336;
+    const uint64_t pointer = uint64_t(ctx.r13.u32) + 256;
+    if (flag + 4 > PPC_MEMORY_SIZE || pointer + 4 > PPC_MEMORY_SIZE ||
+        !guestBufferAccessible(uint32_t(flag), 4) ||
+        !guestBufferAccessible(uint32_t(pointer), 4) || memory->read32(uint32_t(flag))) return;
+    const uint32_t thread = memory->read32(uint32_t(pointer));
+    const uint64_t out = uint64_t(thread) + 352;
+    if (thread && out + 4 <= PPC_MEMORY_SIZE && guestBufferWritable(uint32_t(out), 4))
+        memory->write32(uint32_t(out), error);
+}
+uint32_t achievementWriteMessage(PPCContext& ctx) {
+    const uint32_t overlapped = ctx.r5.u32, buffer = ctx.r6.u32, length = ctx.r7.u32;
+    if ((length && length != 8) || !buffer || !guestBufferAccessible(buffer, 8) ||
+        (overlapped && !overlappedWritable(overlapped)) ||
+        !storageOverlapTargetsValid(overlapped)) return 0x80070057u;
+    const uint32_t count = memory->read32(buffer), pairs = memory->read32(buffer + 4);
+    if (!count || count > 256 || !pairs || !guestBufferAccessible(pairs, count * 8))
+        return 0x80070057u;
+    // Snapshot and validate the entire batch before filesystem effects. This
+    // also protects aliased guest output cells from changing later pair inputs.
+    std::vector<uint32_t> ids;
+    ids.reserve(count);
+    uint32_t result = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        const uint32_t user = memory->read32(pairs + i * 8);
+        if (user >= 4) result = ERROR_INVALID_PARAMETER;
+        else if (user && !result) result = 0x525;
+        ids.push_back(memory->read32(pairs + i * 8 + 4));
+    }
+    if (!result) result = Achievements::award(ids);
+    if (overlapped) {
+        const uint32_t status = completeStorageOverlapped(ctx, overlapped, result, 0, result);
+        setAchievementLastError(ctx, 0);
+        return status;
+    }
+    setAchievementLastError(ctx, result);
+    return result ? 0x80070000u | (result & 0xFFFFu) : 0;
+}
+}
 PPC_FUNC(__imp__XMsgStartIORequest) {
+    // XUserWriteAchievements is an XGI message rather than a named import.
+    // Proven sub_828A7528 ABI: app0xFB/message0xB0008, overlap in r5,
+    // 8-byte {count, pairs*} in r6; each pair is {userIndex, achievementId}.
+    if (ctx.r3.u32 == 0xFBu && ctx.r4.u32 == 0xB0008u) {
+        ctx.r3.u64 = achievementWriteMessage(ctx);
+        return;
+    }
     fprintf(stderr, "[XAM] XMsgStartIORequest app=%u message=0x%08X overlapped=0x%08X buffer=0x%08X size=%u\n", ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, ctx.r6.u32, ctx.r7.u32);
     // Offline titles use this XAM message path to submit asynchronous setup
     // requests. The native filesystem completes its own I/O, so these control
@@ -2207,10 +2419,17 @@ void notifyListeners(uint32_t id, uint32_t data) {
     }
 }
 }
+void DarkRecomp::Native::publishSystemUiNotification(bool open) {
+    notifyListeners(0x00000009u, open ? 1u : 0u);
+}
 PPC_FUNC(__imp__XMsgStartIORequestEx) {
     // This message API returns HRESULT, not NTSTATUS.
     uint32_t app = ctx.r3.u32, message = ctx.r4.u32, overlapped = ctx.r5.u32;
     uint32_t buffer = ctx.r6.u32, length = ctx.r7.u32;
+    if (app == 0xFBu && message == 0xB0008u) {
+        ctx.r3.u64 = achievementWriteMessage(ctx);
+        return;
+    }
     if (app != 0xFAu) { ctx.r3.u64 = 0x80070057; return; }
     if (message != 0x7001Au) { ctx.r3.u64 = 0x80004001; return; }
     if (overlapped) { ctx.r3.u64 = 0x80070032; return; }

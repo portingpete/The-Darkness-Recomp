@@ -110,6 +110,7 @@ uint32_t dispatcherWaiterCount(uint8_t* base, uint32_t address);
 using DispatcherWaitResumeHook = void (*)(void*) noexcept;
 void setDispatcherWaitResumeHook(DispatcherWaitResumeHook hook, void* context);
 void initializeKernel();
+void publishSystemUiNotification(bool open);
 // Optional worker profiler snapshot: at most 64 live registered guest threads.
 // Caller owns/closes the duplicate handles; no registry lock survives this call.
 // Threads can exit after the snapshot. Does not suspend or modify guest state.

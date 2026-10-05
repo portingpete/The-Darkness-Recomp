@@ -49,6 +49,7 @@ static void check(bool success, const char* message) { if (!success) throw std::
 #include "texture_residency_tests.h"
 #include "texture_preload_tests.h"
 #include "native_storage_tests.h"
+#include "achievement_guest_tests.h"
 #include "fov_camera_tests.h"
 #include "video_settings_tests.h"
 #include "developer_tools_tests.h"
@@ -1585,6 +1586,14 @@ int main(int argc, char** argv) {
         }
         if (argc == 3 && strcmp(argv[2], "--file-buffers") == 0) {
             testFileBuffers(ctx);
+            return 0;
+        }
+        if (argc == 6 && strcmp(argv[2], "--achievement-worker") == 0) {
+            testAchievementRaceWorker(ctx, argv[3], argv[4], argv[5]);
+            return 0;
+        }
+        if (argc == 3 && strcmp(argv[2], "--achievements") == 0) {
+            testAchievementGuest(ctx);
             return 0;
         }
         if (argc == 3 && strcmp(argv[2], "--save-storage") == 0) {
