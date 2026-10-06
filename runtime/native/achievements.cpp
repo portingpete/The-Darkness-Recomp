@@ -1,4 +1,5 @@
 #include "achievements.h"
+#include "stall_profiler.h"
 #include "achievements_catalog.h"
 #include "runtime.h"
 #include "storage.h"
@@ -36,6 +37,10 @@ struct ProgressLock {
         const auto name = L"Local\\DarkRecompAchievements-" + std::to_wstring(hash);
         handle = CreateMutexW(nullptr, FALSE, name.c_str());
         if (!handle) return;
+        StallProfiler::Scope wait(StallProfiler::Section::Wait, "achievement-progress-mutex",
+            currentContext ? currentContext->lastFunction : 0,
+            currentContext ? uint32_t(currentContext->lr) : 0,
+            reinterpret_cast<uintptr_t>(handle), "host-achievement-progress-mutex");
         const auto result = WaitForSingleObject(handle, 2000);
         owned = result == WAIT_OBJECT_0 || result == WAIT_ABANDONED;
     }
@@ -152,6 +157,8 @@ Snapshot snapshot() {
 }
 
 uint32_t award(std::span<const uint32_t> ids) {
+    StallProfiler::Scope profile(StallProfiler::Section::FileIO, "Achievements::award",
+        currentContext ? currentContext->lastFunction : 0, currentContext ? uint32_t(currentContext->lr) : 0);
     std::lock_guard lock(mutex);
     ProgressLock fileLock(Storage::SaveRoot());
     if (!fileLock.owned) {

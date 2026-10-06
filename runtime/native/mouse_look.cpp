@@ -1,3 +1,4 @@
+#include "stall_profiler.h"
 #include "mouse_look.h"
 #include "runtime.h"
 #include "ppc_recomp_shared.h"
@@ -60,6 +61,7 @@ void ApplyNativeMouseLookMidAsmHook(PPCRegister& client, PPCRegister& stack,
 extern "C" PPC_FUNC(__imp__sub_823FC650);
 extern "C" PPC_FUNC(__imp__sub_823FCF68);
 PPC_FUNC(sub_823FC650) {
+    DarkRecomp::Native::StallProfiler::Scope stallProfile(DarkRecomp::Native::StallProfiler::Section::Guest, __func__, 0x823FC650u, uint32_t(ctx.lr));
     const uint32_t client = ctx.r3.u32, caller = uint32_t(ctx.lr);
     __imp__sub_823FC650(ctx, base);
     // This periodic call is independent of changed XInput packets and of the

@@ -1,3 +1,4 @@
+#include "stall_profiler.h"
 #include "developer_tools.h"
 #include "runtime.h"
 #include "ppc_recomp_shared.h"
@@ -111,10 +112,12 @@ void initializeDeveloperTools() noexcept {}
 
 extern "C" PPC_FUNC(__imp__sub_820C5D30);
 PPC_FUNC(sub_820C5D30) {
+    DarkRecomp::Native::StallProfiler::Scope stallProfile(DarkRecomp::Native::StallProfiler::Section::Guest, __func__, 0x820C5D30u, uint32_t(ctx.lr));
     const auto application = ctx.r3.u32;
     thread_local unsigned probes = 0;
     probeUpdate(base, application, uint32_t(ctx.lr), "820C5D30", probes);
     __imp__sub_820C5D30(ctx, base);
+    if (!developerToolsNeedsUpdate() && !probeEnabled()) return;
     // Finish the whole original Mod update, including its client/GUI work,
     // before any console transition can invalidate the objects it used.
     if (!readable(base, application, 5024)) return;
@@ -136,10 +139,12 @@ PPC_FUNC(sub_820C5D30) {
 
 extern "C" PPC_FUNC(__imp__sub_820F68D8);
 PPC_FUNC(sub_820F68D8) {
+    DarkRecomp::Native::StallProfiler::Scope stallProfile(DarkRecomp::Native::StallProfiler::Section::Guest, __func__, 0x820F68D8u, uint32_t(ctx.lr));
     const auto application = ctx.r3.u32;
     thread_local unsigned probes = 0;
     probeUpdate(base, application, uint32_t(ctx.lr), "820F68D8", probes);
     __imp__sub_820F68D8(ctx, base);
+    if (!developerToolsNeedsUpdate() && !probeEnabled()) return;
     if (!readable(base, application, 4909)) return;
     const auto table = PPC_LOAD_U32(application);
     // The base retail CGameContext uses this general update directly. Mod

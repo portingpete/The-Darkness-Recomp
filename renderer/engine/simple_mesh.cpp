@@ -14,6 +14,8 @@
 #include "scene_work.h"
 #include "render_trace.h"
 #include "runtime/native/display_mode.h"
+#include "runtime/native/runtime.h"
+#include "runtime/native/stall_profiler.h"
 #include <windows.h>
 #include <algorithm>
 #include <atomic>
@@ -1305,7 +1307,13 @@ bool previewReadHistogram(unsigned bin,uint64_t& samples) {
 }
 namespace {
 void publishPreviewPart(std::unique_lock<std::mutex>& lock,bool last) {
-    frameConsumed.wait(lock,[]{return !frameBackpressure || !frameReady;});
+    {
+        const auto* ctx=currentContext;
+        StallProfiler::Scope stallWait(StallProfiler::Section::Wait, "preview frame producer backpressure",
+            ctx ? ctx->lastFunction : 0, ctx ? uint32_t(ctx->lr) : 0,
+            reinterpret_cast<uint64_t>(&frameConsumed), "frameConsumed condition variable");
+        frameConsumed.wait(lock,[]{return !frameBackpressure || !frameReady;});
+    }
     pendingCounts.commands+=pending.size();++pendingCounts.parts;
     for(const auto& command:pending)if(command.world)++pendingCounts.passes[size_t(command.world->material)];
     if(!last)++streamedParts;
@@ -1339,16 +1347,31 @@ void publishPreviewPart(std::unique_lock<std::mutex>& lock,bool last) {
 }
 }
 void previewEndFrame() {
+    StallProfiler::Scope stallRender(StallProfiler::Section::Rendering, "previewEndFrame");
     EngineCpuScope profile(EnginePhase::handoff);
     recordEngineFrameProcessor();
     if (!active) return;
-    std::unique_lock lock(queueMutex);
+    std::unique_lock lock(queueMutex,std::defer_lock);
+    {
+        StallProfiler::Scope stallWait(StallProfiler::Section::Wait, "previewEndFrame queue mutex",
+            0,0,reinterpret_cast<uint64_t>(&queueMutex),"preview queue mutex");
+        lock.lock();
+    }
     publishPreviewPart(lock,true);
 }
 bool takePreviewFrame(std::vector<SimpleMesh>& frame,unsigned waitMilliseconds,PreviewFramePart* part) {
-    std::unique_lock lock(queueMutex);
-    if(waitMilliseconds && !frameReady)
+    StallProfiler::Scope stallRender(StallProfiler::Section::Rendering, "takePreviewFrame");
+    std::unique_lock lock(queueMutex,std::defer_lock);
+    {
+        StallProfiler::Scope stallWait(StallProfiler::Section::Wait, "takePreviewFrame queue mutex",
+            0,0,reinterpret_cast<uint64_t>(&queueMutex),"preview queue mutex");
+        lock.lock();
+    }
+    if(waitMilliseconds && !frameReady) {
+        StallProfiler::Scope stallWait(StallProfiler::Section::Wait, "preview frame consumer wait",
+            0,0,reinterpret_cast<uint64_t>(&frameAvailable),"frameAvailable condition variable");
         frameAvailable.wait_for(lock,std::chrono::milliseconds(waitMilliseconds),[]{return frameReady;});
+    }
     if (!frameReady) return false;
     if(part)*part=readyPart;
     auto completed=std::move(ready);ready.clear();frameReady=false;

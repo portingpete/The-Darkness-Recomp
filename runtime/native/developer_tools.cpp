@@ -6,6 +6,7 @@
 #include "developer_player_lookup.h"
 #include "ppc_recomp_shared.h"
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <mutex>
 #include <optional>
@@ -20,14 +21,23 @@ bool playerToolsEnabled = false;
 bool pendingDarknessUnlock = false;
 bool pendingDarknessLevel = false;
 uint64_t requestRevision = 0;
+bool panelVisible = false;
+std::atomic<bool> needsUpdate{false};
+
+void refreshWorkLocked() {
+    needsUpdate.store(panelVisible || pendingMission.has_value() || playerToolsEnabled ||
+        pendingDarknessUnlock || pendingDarknessLevel, std::memory_order_release);
+}
 
 void requested(std::string_view status) {
     state.status = status;
     ++state.revision;
     ++requestRevision;
+    refreshWorkLocked();
 }
 
-void publish(uint64_t request, bool canLoad, bool hasPlayer, std::string_view status, bool playerApplied = false) {
+void publish(uint64_t request, bool canLoad, bool hasPlayer, std::string_view status,
+             bool playerApplied = false, bool playerProcessed = false) {
     std::lock_guard lock(stateMutex);
     const bool availabilityChanged = state.canLoadMission != canLoad || state.hasActivePlayer != hasPlayer;
     state.canLoadMission = canLoad;
@@ -39,7 +49,22 @@ void publish(uint64_t request, bool canLoad, bool hasPlayer, std::string_view st
     const bool statusChanged = requestRevision == request && !status.empty() && state.status != status;
     if (statusChanged) state.status = status;
     if (availabilityChanged || statusChanged) ++state.revision;
+    // Returning to defaults still needs one update to clear previously applied
+    // hooks. A request arriving during that update must keep its next update.
+    if (playerProcessed && requestRevision == request && state.playerSpeed == 1 &&
+        !state.invincible && !state.noclip) playerToolsEnabled = false;
+    refreshWorkLocked();
 }
+}
+
+bool developerToolsNeedsUpdate() noexcept {
+    return needsUpdate.load(std::memory_order_acquire);
+}
+
+void setDeveloperToolsVisible(bool visible) {
+    std::lock_guard lock(stateMutex);
+    panelVisible = visible;
+    refreshWorkLocked();
 }
 
 DeveloperSnapshot developerSnapshot() {
@@ -101,6 +126,7 @@ void resetDeveloperTools() {
     pendingDarknessUnlock = pendingDarknessLevel = false;
     ++requestRevision;
     resetDeveloperPlayer();
+    refreshWorkLocked();
 }
 
 bool processDeveloperTools(PPCContext& ctx, uint8_t* base, uint32_t client, bool missionReady) {
@@ -143,8 +169,8 @@ bool processDeveloperTools(PPCContext& ctx, uint8_t* base, uint32_t client, bool
     if (unlockDarkness || maxDarkness) {
         const auto handles = resolveDeveloperPlayer(call, base, client);
         const auto darkness = applyDeveloperDarkness(call, base, handles, unlockDarkness, maxDarkness);
-        publish(request, canLoad, player.hasActivePlayer, darkness.status);
-    } else publish(request, canLoad, player.hasActivePlayer, player.status, player.applied);
+        publish(request, canLoad, player.hasActivePlayer, darkness.status, false, true);
+    } else publish(request, canLoad, player.hasActivePlayer, player.status, player.applied, true);
     return false;
 }
 }

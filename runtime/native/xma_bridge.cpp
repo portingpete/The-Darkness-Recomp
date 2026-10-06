@@ -1,4 +1,5 @@
 #include "xma_bridge.h"
+#include "stall_profiler.h"
 #include "xma_raw_decoder.h"
 #include "audio_refill_trace.h"
 #include "runtime.h"
@@ -103,6 +104,9 @@ const char* XmaBridge::decodeSequence(Memory& memory, size_t count, ContextAt co
 }
 const char* XmaBridge::decodeValidated(Memory& memory, uint32_t context, uint32_t slot,
                                       ValidationCache& validation) {
+    StallProfiler::Scope profile(StallProfiler::Section::Audio, "XmaBridge::decodeValidated",
+        currentContext ? currentContext->lastFunction : 0,
+        currentContext ? uint32_t(currentContext->lr) : 0, context, "guest-xma-context");
     auto* stats = activeAudioRefill;
     AudioRefillTimer timer(stats ? &stats->decodeTicks : nullptr,
                            stats ? &stats->maxDecodeTicks : nullptr);

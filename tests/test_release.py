@@ -82,6 +82,7 @@ class ReleaseTests(unittest.TestCase):
             self.assertIn('build_native/Release/vcruntime140_1.dll', names)
             self.assertIn('build_native/Release/DarkRecompSettings.exe', names)
             self.assertEqual(bundle.read('LaunchWithSettings.cmd'), (ROOT / 'LaunchWithSettings.cmd').read_bytes())
+            self.assertEqual(bundle.read('LaunchStallProfiler.cmd'), (ROOT / 'LaunchStallProfiler.cmd').read_bytes())
             self.assertIn('Launch.sh', names)
             self.assertIn('SetupLinux.cmd', names)
             self.assertIn('PlayLinux.cmd', names)
@@ -183,6 +184,28 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn('Extract the ENTIRE Windows release ZIP', result.stdout)
         self.assertIn('LaunchWithSettings.cmd', result.stdout)
         self.assertFalse((self.root / 'build_native/run').exists())
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows launcher')
+    def test_stall_launcher_keeps_normal_play_arguments_and_scopes_environment(self):
+        # Capture the wrapper's delegation without running the game. The outer
+        # script also checks that opting in does not persist in its caller.
+        (self.root / 'Launch.cmd').write_text(
+            '@echo off\n>launcher-env.txt echo %DARKRECOMP_STALL_PROFILE%\n'
+            '>launcher-args.txt echo %*\nexit /b 37\n', encoding='utf-8')
+        (self.root / 'test-launch.cmd').write_text(
+            '@echo off\nset "DARKRECOMP_STALL_PROFILE=0"\n'
+            'call LaunchStallProfiler.cmd --game-dir "dump & files!" --fps 120\n'
+            'set "LAUNCH_RESULT=%ERRORLEVEL%"\n'
+            '>outer-env.txt echo %DARKRECOMP_STALL_PROFILE%\n'
+            'exit /b %LAUNCH_RESULT%\n', encoding='utf-8')
+        result = subprocess.run('cmd /d /c test-launch.cmd', cwd=self.root,
+                                capture_output=True, text=True, timeout=15,
+                                creationflags=subprocess.CREATE_NO_WINDOW)
+        self.assertEqual(result.returncode, 37, result.stdout + result.stderr)
+        self.assertEqual((self.root / 'launcher-env.txt').read_text().strip(), '1')
+        self.assertEqual((self.root / 'outer-env.txt').read_text().strip(), '0')
+        self.assertEqual((self.root / 'launcher-args.txt').read_text().strip(),
+                         'play --game-dir "dump & files!" --fps 120')
 
     @unittest.skipUnless(os.name == 'nt', 'Windows launcher')
     def test_help_does_not_require_game_files(self):

@@ -1,4 +1,5 @@
 #include "world_renderer.h"
+#include "stall_profile_d3d11.h"
 #include "world_render_state.h"
 #include "shader_bytecode_cache.h"
 #include "runtime/native/graphics_settings.h"
@@ -34,7 +35,8 @@ double millisBetween(std::chrono::steady_clock::time_point begin,std::chrono::st
 // before; only the upload mechanism changes to DISCARD mapping.
 void updateConstants(ID3D11DeviceContext* context,ID3D11Buffer* buffer,const void* data,size_t bytes) {
     D3D11_MAPPED_SUBRESOURCE mapped{};
-    check(context->Map(buffer,0,D3D11_MAP_WRITE_DISCARD,0,&mapped),"world constant map");
+    check(stallProfileMap(context,buffer,0,D3D11_MAP_WRITE_DISCARD,0,&mapped,
+                         "world constants Map"),"world constant map");
     std::memcpy(mapped.pData,data,bytes);
     context->Unmap(buffer,0);
 }
@@ -103,6 +105,8 @@ VertexOutput rasterMain(VertexInput input) {
     const bool cached=cacheKey && cache.load(*cacheKey,code_) &&
         SUCCEEDED(device->CreateVertexShader(code_->GetBufferPointer(),code_->GetBufferSize(),nullptr,&shader_));
     if(!cached) {
+        Native::StallProfiler::Scope stallCompile(Native::StallProfiler::Section::Rendering,
+                                                 "WorldVertexShaderD3D11 shader compile");
         code_.Reset();shader_.Reset();Ptr<ID3DBlob> errors;
         const auto compileStart=std::chrono::steady_clock::now();
         const auto hr=D3DCompile(source.data(),source.size(),"original_world_VP",macros.data(),nullptr,
@@ -196,6 +200,8 @@ WorldRendererD3D11::WorldRendererD3D11(ID3D11Device* d,ID3D11DeviceContext* c,ui
     unsigned fragmentCacheHits=0,fragmentCacheMisses=0;
     const auto fragmentsStart=std::chrono::steady_clock::now();
     auto compile=[&](const char* source,const char* name,Ptr<ID3D11PixelShader>& shader) {
+        Native::StallProfiler::Scope stallCompile(Native::StallProfiler::Section::Rendering,
+                                                 "WorldRendererD3D11 fragment compile");
         Ptr<ID3DBlob> code,errors;
         constexpr UINT flags=D3DCOMPILE_ENABLE_STRICTNESS|D3DCOMPILE_WARNINGS_ARE_ERRORS|D3DCOMPILE_IEEE_STRICTNESS;
         const std::string_view sourceView(source);
@@ -328,7 +334,8 @@ WorldRendererD3D11::Ptr<ID3D11Texture2D> WorldRendererD3D11::resizedTexture(
     std::array<D3D11_SUBRESOURCE_DATA,6> initial{};
     for(unsigned face=0;face<desc.ArraySize;++face) {
         D3D11_MAPPED_SUBRESOURCE mapped{};
-        check(context_->Map(staging.Get(),face,D3D11_MAP_READ,0,&mapped),"resize texture map");
+        check(stallProfileMap(context_.Get(),staging.Get(),face,D3D11_MAP_READ,0,&mapped,
+                             "world resized texture Map"),"resize texture map");
         auto* output=pixels.data()+faceBytes*face;
         for(uint32_t y=0;y<height;++y) {
             const auto sourceY=uint32_t(((uint64_t(y)*2+1)*desc.Height)/(uint64_t(height)*2));
@@ -372,6 +379,7 @@ WorldRendererD3D11::Surface WorldRendererD3D11::resizedSurface(const Surface& so
     return result;
 }
 bool WorldRendererD3D11::setRenderScale(uint32_t scale) {
+    Native::StallProfiler::Scope stallRender(Native::StallProfiler::Section::Rendering, "WorldRendererD3D11::setRenderScale");
     if(scale<1 || scale>3)throw std::invalid_argument("World render scale must be between one and three");
     requireResizeBoundary();
     if(scale==scale_)return false;
@@ -387,6 +395,7 @@ bool WorldRendererD3D11::setRenderScale(uint32_t scale) {
     return true;
 }
 bool WorldRendererD3D11::preloadImage(const std::shared_ptr<const ColorImage>& source) {
+    Native::StallProfiler::Scope stallRender(Native::StallProfiler::Section::Rendering, "WorldRendererD3D11::preloadImage");
     if(!source || !source->authoredMips || source->firstMip || !source->valid())return false;
     return image(source,true)!=nullptr;
 }
@@ -398,6 +407,8 @@ ID3D11ShaderResourceView* WorldRendererD3D11::image(const std::shared_ptr<const 
         return it->second.view.Get();
     }
     const auto imageStart=std::chrono::steady_clock::now();
+    Native::StallProfiler::Scope stallUpload(Native::StallProfiler::Section::Rendering,
+                                            "WorldRendererD3D11 image upload");
     D3D11_TEXTURE2D_DESC desc{};desc.Width=source->width;desc.Height=source->height;
     desc.MipLevels=source->authoredMips?unsigned(source->mips.size()+1):levels;desc.ArraySize=source->faces;
     desc.SampleDesc.Count=1;desc.Format=DXGI_FORMAT_R8G8B8A8_UNORM;desc.Usage=D3D11_USAGE_DEFAULT;
@@ -450,6 +461,8 @@ WorldRendererD3D11::Surface& WorldRendererD3D11::surface(uint64_t key,uint32_t w
     auto& s=surfaces_[key];
     if (s.texture && s.width>=width && s.height>=height) return s;
     const auto surfaceStart=std::chrono::steady_clock::now();
+    Native::StallProfiler::Scope stallSurface(Native::StallProfiler::Section::Rendering,
+                                             "WorldRendererD3D11 surface allocation");
     const auto old=s;
     width=(std::max)(old.width,width);height=(std::max)(old.height,height);
     if(!width || !height || width>D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION/scale_ || height>D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION/scale_)
@@ -518,6 +531,7 @@ void WorldRendererD3D11::transfer(ID3D11ShaderResourceView* source,ID3D11RenderT
     context_->PSSetShaderResources(0,16,empty.data());context_->OMSetRenderTargets(0,nullptr,nullptr);
 }
 bool WorldRendererD3D11::resolve(const Native::WorldResolve& r) {
+    Native::StallProfiler::Scope stallRender(Native::StallProfiler::Section::Rendering, "WorldRendererD3D11::resolve");
     Native::setRenderSamplePhase(Native::RenderSamplePhase::resolve);
     const unsigned command=captureFrame_?captureCommand_++:0;
     const unsigned attachment=r.flags&7;const bool depth=attachment==4;
@@ -638,6 +652,7 @@ bool WorldRendererD3D11::resolve(const Native::WorldResolve& r) {
     return true;
 }
 bool WorldRendererD3D11::present(const Native::WorldTexture& texture,ID3D11Texture2D* target) {
+    Native::StallProfiler::Scope stallRender(Native::StallProfiler::Section::Rendering, "WorldRendererD3D11::present frontbuffer");
     Native::setRenderSamplePhase(Native::RenderSamplePhase::copy);
     const unsigned command=captureFrame_?captureCommand_++:0;
     auto result=[&](unsigned reason) {
@@ -689,6 +704,7 @@ void WorldRendererD3D11::resumeHistogram() {
     context_->Begin(activeHistogram_.query.Get());
 }
 void WorldRendererD3D11::pollHistograms() {
+    Native::StallProfiler::Scope stallRender(Native::StallProfiler::Section::Rendering, "WorldRendererD3D11::pollHistograms");
     Native::setRenderSamplePhase(Native::RenderSamplePhase::queries);
     // Keep completion ordered: an older pending measurement must never replace
     // a newer result. No CPU estimate or synthetic completion is published.
@@ -696,6 +712,8 @@ void WorldRendererD3D11::pollHistograms() {
     for(auto& query:pendingHistograms_) {
         uint64_t samples=0;
         auto collect=[&](ID3D11Query* part) {
+            Native::StallProfiler::Scope stallQuery(Native::StallProfiler::Section::Rendering,
+                "ID3D11DeviceContext::GetData histogram", 0, 0, reinterpret_cast<uint64_t>(part), "D3D11 query");
             uint64_t value=0;
             const auto hr=context_->GetData(part,&value,sizeof(value),D3D11_ASYNC_GETDATA_DONOTFLUSH);
             if(hr==S_FALSE)return false;
@@ -723,6 +741,8 @@ float4 clearVS(uint id : SV_VertexID) : SV_Position {
 float4 clearPS() : SV_Target {return clearColor;}
 )";
     auto compile=[&](const char* entry,const char* profile) {
+        Native::StallProfiler::Scope stallCompile(Native::StallProfiler::Section::Rendering,
+                                                 "WorldRendererD3D11 clear shader compile");
         Ptr<ID3DBlob> code,error;
         const auto hr=D3DCompile(source,sizeof(source)-1,"native_rectangular_clear",nullptr,nullptr,entry,profile,
             D3DCOMPILE_ENABLE_STRICTNESS|D3DCOMPILE_IEEE_STRICTNESS,0,&code,&error);
@@ -749,6 +769,7 @@ float4 clearPS() : SV_Target {return clearColor;}
     clearReady_=true;
 }
 void WorldRendererD3D11::clear(const Native::WorldClear& c) {
+    Native::StallProfiler::Scope stallRender(Native::StallProfiler::Section::Rendering, "WorldRendererD3D11::clear");
     Native::setRenderSamplePhase(Native::RenderSamplePhase::clear);
     const unsigned command=captureFrame_?captureCommand_++:0;
     unsigned cleared=0;
@@ -811,7 +832,8 @@ std::vector<uint8_t> WorldRendererD3D11::readSurfaceKey(uint64_t key,bool depth)
     desc.Usage=D3D11_USAGE_STAGING;desc.BindFlags=0;desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
     Ptr<ID3D11Texture2D> staging;check(device_->CreateTexture2D(&desc,nullptr,&staging),"world readback texture");
     context_->CopyResource(staging.Get(),s.texture.Get());D3D11_MAPPED_SUBRESOURCE mapped{};
-    const auto mapResult=context_->Map(staging.Get(),0,D3D11_MAP_READ,0,&mapped);
+    const auto mapResult=stallProfileMap(context_.Get(),staging.Get(),0,D3D11_MAP_READ,0,&mapped,
+                                        "world surface readback Map");
     if(FAILED(mapResult))check(device_->GetDeviceRemovedReason(),"world readback device removal");
     check(mapResult,"world readback map");
     const size_t row=size_t(desc.Width)*(depth?4:8);std::vector<uint8_t> result(row*desc.Height);
@@ -870,7 +892,8 @@ void WorldRendererD3D11::captureOtherWorldTexture(ID3D11Texture2D* texture,unsig
             std::vector<uint8_t> pixels(size);
             context_->CopySubresourceRegion(staging.Get(),0,0,0,0,texture,sub,nullptr);
             D3D11_MAPPED_SUBRESOURCE mapped{};
-            if(FAILED(context_->Map(staging.Get(),0,D3D11_MAP_READ,0,&mapped))) {
+            if(FAILED(stallProfileMap(context_.Get(),staging.Get(),0,D3D11_MAP_READ,0,&mapped,
+                                      "world capture texture Map"))) {
                 omitted("map-failed",sub,width,height,row);continue;
             }
             for(unsigned y=0;y<height;++y)
@@ -957,7 +980,8 @@ void WorldRendererD3D11::captureOtherWorldDraw(const Native::WorldDraw& draw,uns
                 desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;Ptr<ID3D11Buffer> staging;
                 if(FAILED(device_->CreateBuffer(&desc,nullptr,&staging))){omitted("staging-create-failed");continue;}
                 context_->CopyResource(staging.Get(),source.Get());D3D11_MAPPED_SUBRESOURCE mapped{};
-                if(FAILED(context_->Map(staging.Get(),0,D3D11_MAP_READ,0,&mapped))){omitted("map-failed");continue;}
+                if(FAILED(stallProfileMap(context_.Get(),staging.Get(),0,D3D11_MAP_READ,0,&mapped,
+                                         "world capture draw Map"))){omitted("map-failed");continue;}
                 std::memcpy(bytes.data(),mapped.pData,bytes.size());context_->Unmap(staging.Get(),0);
                 captureGpuBytes_+=bytes.size();
                 Native::traceWorldGpu(inspection_,command,ordinal,pass,stage,role,0,slot,desc.ByteWidth/16,1,0,0,
@@ -1020,7 +1044,8 @@ void WorldRendererD3D11::captureShadow(const Native::WorldDraw& draw,unsigned co
                 std::vector<uint8_t> pixels(size);
                 context_->CopySubresourceRegion(staging.Get(),0,0,0,0,texture,sub,nullptr);
                 D3D11_MAPPED_SUBRESOURCE mapped{};
-                if(FAILED(context_->Map(staging.Get(),0,D3D11_MAP_READ,0,&mapped))) {omitted("map-failed",sub,width,height,row);continue;}
+                if(FAILED(stallProfileMap(context_.Get(),staging.Get(),0,D3D11_MAP_READ,0,&mapped,
+                                         "world capture shadow Map"))) {omitted("map-failed",sub,width,height,row);continue;}
                 for(unsigned y=0;y<height;++y) {
                     const auto* source=static_cast<const uint8_t*>(mapped.pData)+size_t(mapped.RowPitch)*y;
                     auto* target=pixels.data()+size_t(row)*y;
@@ -1054,6 +1079,7 @@ void WorldRendererD3D11::noteWorstUpload(double ms, size_t bytes, const char* ki
     if (ms > worstUploadMs_) { worstUploadMs_ = ms; worstUploadBytes_ = bytes; worstUploadKind_ = kind; }
 }
 bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
+    Native::StallProfiler::Scope stallRender(Native::StallProfiler::Section::Rendering, "WorldRendererD3D11::draw");
     Native::setRenderSamplePhase(Native::RenderSamplePhase::textures);
     const unsigned command=captureFrame_?captureCommand_++:0;
     unsigned captureFlags=draw.fragmentFlags,captureTextureMask=0,captureResolvedMask=0;

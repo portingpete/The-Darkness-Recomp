@@ -1,3 +1,4 @@
+#include "stall_profiler.h"
 #include "fov_settings.h"
 #include "runtime.h"
 #include "ppc_recomp_shared.h"
@@ -184,6 +185,7 @@ void ConfigureGameplayFovBaselineMidAsmHook(PPCRegister& state, PPCRegister& val
 
 extern "C" PPC_FUNC(__imp__sub_8249A030);
 PPC_FUNC(sub_8249A030) {
+    DarkRecomp::Native::StallProfiler::Scope stallProfile(DarkRecomp::Native::StallProfiler::Section::Guest, __func__, 0x8249A030u, uint32_t(ctx.lr));
     const float configured = fieldOfViewSetting();
     if (configured == 0 && !probeEnabled()) {
         __imp__sub_8249A030(ctx, base);

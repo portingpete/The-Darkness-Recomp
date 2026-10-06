@@ -37,7 +37,10 @@ LRESULT CALLBACK inputTestWindowProc(HWND window, UINT message, WPARAM key, LPAR
 }
 }
 
+#include "input_backend_tests.h"
+
 static void testInputContract(PPCContext& ctx) {
+    testBackgroundInputContract();
     inputStatus.fill(ERROR_DEVICE_NOT_CONNECTED);
     inputStates = {}; inputCaps = {};
     inputVibrationCalls = 0;

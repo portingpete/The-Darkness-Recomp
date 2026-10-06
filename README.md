@@ -139,12 +139,13 @@ CMake 3.24+, Python 3.11+, and ~15 GB free. Output lands in
 The XMA audio build also requires MSYS2 at `C:\msys64` with MinGW64 GCC and
 `make`, plus standalone LLVM at `C:\Program Files\LLVM` (for `llvm-lib.exe`).
 
-**3. Play** — double-click either launcher:
+**3. Play** — double-click a launcher:
 
 | Command | What it does |
 |---|---|
 | `Launch.cmd` | Play with sound |
 | `LaunchWithSettings.cmd` | Choose settings and language, then play with sound |
+| `LaunchStallProfiler.cmd` | Play with sound and record runtime stalls in the runtime log |
 | `Launch.cmd mute` | Play muted |
 | `Launch.cmd preview` | Engine preview build (muted by default) |
 | `Launch.cmd stutter` | Play with sound while recording slow-frame timings |
@@ -152,6 +153,15 @@ The XMA audio build also requires MSYS2 at `C:\msys64` with MinGW64 GCC and
 | `Launch.cmd help` | Full usage |
 
 Extra arguments reach the game untouched, e.g. `Launch.cmd play --fps 120`.
+
+For runtime hitch diagnostics, use `LaunchStallProfiler.cmd`, reproduce the hitch,
+then close the game. The newest `build_native/run/desktop-*/runtime.log` includes
+`[STALL]` reports for frames over 16.67 ms and runtime/HLE calls over 2 ms,
+`[WAIT]` details, and the largest slow-frame contributors. The launcher uses
+your saved game settings. Profiling is disabled by default; set
+`DARKRECOMP_STALL_PROFILE=1` to enable it for another launch, or use
+`tools/run_native.py --stall-profile` for a bounded development run. Build with
+`-DDARK_STALL_PROFILER=OFF` to exclude the profiler completely.
 
 Click the game window to capture the mouse (**F1** controls guide, **F2**
 toggle capture, **Esc** release).

@@ -8,6 +8,25 @@
 namespace DarkRecomp::Native {
 struct HostProcessor {WORD group;BYTE number,core,efficiency;};
 
+// This title's resource pool and application system thread have private guest
+// TLS/scratch storage and use ordinary synchronized queues. Their guest identity
+// need not pin them behind higher-priority work on one Windows logical processor.
+// Other SDK workers include processor-indexed audio state and keep hard affinity.
+inline constexpr uint32_t resourcePoolThreadEntry = 0x821FBB00;
+inline constexpr uint32_t resourcePoolThreadVtable = 0x820656BC;
+inline constexpr uint32_t resourcePoolThreadCallback = 0x821F11A0;
+inline bool resourcePoolThreadRole(uint32_t entry, uint32_t vtable, uint32_t callback) noexcept {
+    return entry == resourcePoolThreadEntry && vtable == resourcePoolThreadVtable &&
+        callback == resourcePoolThreadCallback;
+}
+inline constexpr uint32_t applicationSystemThreadEntry = 0x821FBB00;
+inline constexpr uint32_t applicationSystemThreadVtable = 0x8205555C;
+inline constexpr uint32_t applicationSystemThreadCallback = 0x820DE068;
+inline bool applicationSystemThreadRole(uint32_t entry, uint32_t vtable, uint32_t callback) noexcept {
+    return entry == applicationSystemThreadEntry && vtable == applicationSystemThreadVtable &&
+        callback == applicationSystemThreadCallback;
+}
+
 // Guest processor numbers are synchronization identities, not Windows logical
 // processor indices. Prefer different physical cores over SMT siblings. On an
 // eight-P-core host, leave the first two cores for the native engine/display

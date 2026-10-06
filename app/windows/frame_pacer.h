@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <stdexcept>
+#include "runtime/native/stall_profiler.h"
 
 class NativeTimerResolution {
     bool active_=false;
@@ -63,7 +64,14 @@ public:
         due.QuadPart = -(std::max)(int64_t(1), std::chrono::duration_cast<std::chrono::nanoseconds>(deadline_ - now).count() / 100);
         if (!SetWaitableTimer(timer_, &due, 0, nullptr, nullptr, FALSE))
             throw std::runtime_error("Cannot arm native frame timer");
-        if (WaitForSingleObject(timer_, INFINITE) != WAIT_OBJECT_0)
+        DWORD waitResult;
+        {
+            DarkRecomp::Native::StallProfiler::Scope stallWait(
+                DarkRecomp::Native::StallProfiler::Section::Wait, "NativeFramePacer::WaitForSingleObject",
+                0, 0, reinterpret_cast<uint64_t>(timer_), "frame timer");
+            waitResult = WaitForSingleObject(timer_, INFINITE);
+        }
+        if (waitResult != WAIT_OBJECT_0)
             throw std::runtime_error("Native frame wait failed");
     }
 };

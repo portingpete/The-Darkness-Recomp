@@ -1,4 +1,5 @@
 #include "engine_preview.h"
+#include "stall_profile_d3d11.h"
 #include "renderer/engine/engine_performance.h"
 #include "runtime/native/graphics_settings.h"
 #include "renderer/engine/prompt_icons.h"
@@ -27,7 +28,8 @@ void check(HRESULT result, const char* operation) {
 // buffers. Preview constant uploads use DISCARD mapping.
 void updateConstants(ID3D11DeviceContext* context,ID3D11Buffer* buffer,const void* data,size_t bytes) {
     D3D11_MAPPED_SUBRESOURCE mapped{};
-    check(context->Map(buffer,0,D3D11_MAP_WRITE_DISCARD,0,&mapped),"preview constant map");
+    check(stallProfileMap(context,buffer,0,D3D11_MAP_WRITE_DISCARD,0,&mapped,
+                         "preview constants Map"),"preview constant map");
     std::memcpy(mapped.pData,data,bytes);
     context->Unmap(buffer,0);
 }
@@ -230,6 +232,7 @@ EnginePreviewD3D11::EnginePreviewD3D11(ID3D11Device* device, ID3D11DeviceContext
 }
 
 bool EnginePreviewD3D11::resizeRenderTarget(uint32_t width,uint32_t height,uint32_t scale) {
+    Native::StallProfiler::Scope stallRender(Native::StallProfiler::Section::Rendering, "EnginePreviewD3D11::resizeRenderTarget");
     if(frameOpen_)throw std::logic_error("Cannot resize an unfinished preview frame");
     if(scale<1 || scale>3 || !width || !height ||
        width>D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION || height>D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION)
@@ -274,10 +277,12 @@ bool EnginePreviewD3D11::resizeRenderTarget(uint32_t width,uint32_t height,uint3
 }
 
 bool EnginePreviewD3D11::preloadImage(const std::shared_ptr<const ColorImage>& image) {
+    Native::StallProfiler::Scope stallRender(Native::StallProfiler::Section::Rendering, "EnginePreviewD3D11::preloadImage");
     if(frameOpen_)return false;
     return world_->preloadImage(image);
 }
 void EnginePreviewD3D11::uploadVideoFrame(const VideoFrame& video) {
+    Native::StallProfiler::Scope stallRender(Native::StallProfiler::Section::Rendering, "EnginePreviewD3D11::uploadVideoFrame");
     if (videoTexY_ && videoTexUV_ && videoWidth_ == video.width && videoHeight_ == video.height) {
         context_->UpdateSubresource(videoTexY_.Get(), 0, nullptr, video.luma.data(), video.width, 0);
         context_->UpdateSubresource(videoTexUV_.Get(), 0, nullptr, video.chroma.data(), video.width, 0);
@@ -308,6 +313,7 @@ void EnginePreviewD3D11::uploadVideoFrame(const VideoFrame& video) {
 }
 
 void EnginePreviewD3D11::render(const std::vector<SimpleMesh>& meshes,Native::PreviewFramePart part) {
+    Native::StallProfiler::Scope stallRender(Native::StallProfiler::Section::Rendering, "EnginePreviewD3D11::render");
     if(part.first==frameOpen_)throw std::logic_error("Preview frame parts are out of order");
     if(part.first) {
     world_->beginFrame();
@@ -484,10 +490,12 @@ void EnginePreviewD3D11::render(const std::vector<SimpleMesh>& meshes,Native::Pr
           context_->OMSetBlendState(blend_.Get(),nullptr,~0u);
         }
         D3D11_MAPPED_SUBRESOURCE mappedVB{}, mappedIB{};
-        check(context_->Map(dynamicVB_.Get(),0,D3D11_MAP_WRITE_DISCARD,0,&mappedVB), "map dynamic VB");
+        check(stallProfileMap(context_.Get(),dynamicVB_.Get(),0,D3D11_MAP_WRITE_DISCARD,0,&mappedVB,
+                             "preview dynamic VB Map"), "map dynamic VB");
         std::memcpy(mappedVB.pData,mesh.vertices.data(),mesh.vertices.size()*sizeof(SimpleVertex));
         context_->Unmap(dynamicVB_.Get(),0);
-        check(context_->Map(dynamicIB_.Get(),0,D3D11_MAP_WRITE_DISCARD,0,&mappedIB), "map dynamic IB");
+        check(stallProfileMap(context_.Get(),dynamicIB_.Get(),0,D3D11_MAP_WRITE_DISCARD,0,&mappedIB,
+                             "preview dynamic IB Map"), "map dynamic IB");
         std::memcpy(mappedIB.pData,mesh.indices.data(),mesh.indices.size()*sizeof(uint16_t));
         context_->Unmap(dynamicIB_.Get(),0);
         ID3D11Buffer* vertexBuffer = dynamicVB_.Get(); UINT stride = sizeof(SimpleVertex), offset = 0;
@@ -534,6 +542,7 @@ void EnginePreviewD3D11::updateCalibratedImage() {
     calibrationDirty_=false;
 }
 void EnginePreviewD3D11::copyToDisplay() {
+    Native::StallProfiler::Scope stallRender(Native::StallProfiler::Section::Rendering, "EnginePreviewD3D11::copyToDisplay");
     if(frameOpen_)throw std::logic_error("Cannot display an unfinished preview frame");
     Ptr<ID3D11Texture2D> back; check(swapChain_->GetBuffer(0, IID_PPV_ARGS(&back)), "get display target");
     D3D11_TEXTURE2D_DESC desc{}; back->GetDesc(&desc);
@@ -572,7 +581,8 @@ uint32_t EnginePreviewD3D11::readPixel(uint32_t x, uint32_t y) {
     if(frameOpen_)throw std::logic_error("Cannot read an unfinished preview frame");
     if (x >= width_ || y >= height_) throw std::invalid_argument("Invalid preview pixel coordinate");
     context_->CopyResource(staging_.Get(), target_.Get());
-    D3D11_MAPPED_SUBRESOURCE mapped{}; check(context_->Map(staging_.Get(),0,D3D11_MAP_READ,0,&mapped), "read pixel");
+    D3D11_MAPPED_SUBRESOURCE mapped{}; check(stallProfileMap(context_.Get(),staging_.Get(),0,D3D11_MAP_READ,0,&mapped,
+                                                          "preview pixel readback Map"), "read pixel");
     uint32_t value; std::memcpy(&value, static_cast<const uint8_t*>(mapped.pData)+y*mapped.RowPitch+x*4,4);
     context_->Unmap(staging_.Get(),0); return highPrecisionDisplay_?rgba8From10(value):value;
 }
@@ -589,12 +599,14 @@ bool EnginePreviewD3D11::trySaveShadowCapture(const std::filesystem::path& path)
     return false;
 }
 void EnginePreviewD3D11::saveBmp(const std::filesystem::path& path) {
+    Native::StallProfiler::Scope stallCapture(Native::StallProfiler::Section::FileIO, "EnginePreviewD3D11::saveBmp");
     if(frameOpen_)throw std::logic_error("Cannot capture an unfinished preview frame");
     std::vector<uint8_t> pixels(size_t(width_)*height_*4);
     updateCalibratedImage();
     auto* staging=displayGamma_?calibratedStaging_.Get():staging_.Get();
     context_->CopyResource(staging,displayGamma_?calibrated_.Get():target_.Get());
-    D3D11_MAPPED_SUBRESOURCE mapped{}; check(context_->Map(staging,0,D3D11_MAP_READ,0,&mapped), "capture frame");
+    D3D11_MAPPED_SUBRESOURCE mapped{}; check(stallProfileMap(context_.Get(),staging,0,D3D11_MAP_READ,0,&mapped,
+                                                          "preview screenshot readback Map"), "capture frame");
     for (uint32_t y=0;y<height_;++y) {
         const auto* row = static_cast<const uint8_t*>(mapped.pData)+y*mapped.RowPitch;
         for (uint32_t x=0;x<width_;++x) {

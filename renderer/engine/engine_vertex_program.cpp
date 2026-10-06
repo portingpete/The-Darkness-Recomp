@@ -1,4 +1,5 @@
 #include "engine_vertex_program.h"
+#include "runtime/native/stall_profiler.h"
 #include "engine_performance.h"
 #include "simple_mesh.h"
 #include "render_trace.h"
@@ -254,6 +255,7 @@ void printEngineVertexProgramCounters() {
 }
 extern "C" PPC_FUNC(__imp__sub_82248C80);
 PPC_FUNC(sub_82248C80) {
+    DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::Section::Guest, "sub_82248C80", 0x82248C80, uint32_t(ctx.lr));
     DarkRecomp::Native::EngineCpuScope profile(DarkRecomp::Native::EnginePhase::vertexProgram);
     using namespace DarkRecomp::Native;
     if(enginePreviewEnabled() && !renderTraceEnabled()) {

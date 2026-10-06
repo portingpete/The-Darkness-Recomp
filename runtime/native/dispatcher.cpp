@@ -1,3 +1,5 @@
+#include "stall_profiler_lock.h"
+#include "stall_profiler.h"
 #include "runtime.h"
 #include "dispatcher_image_span.h"
 #include "renderer/engine/engine_performance.h"
@@ -186,7 +188,8 @@ void satisfyWaiters(uint8_t* base, uint32_t address, bool newlySignaled) {
 }
 
 uint32_t waitObjects(uint8_t* base, const uint32_t* objects, uint32_t count,
-                     uint32_t waitType, uint32_t alertable, uint32_t timeoutPointer) {
+                     uint32_t waitType, uint32_t alertable, uint32_t timeoutPointer,
+                     const PPCContext& ctx) {
     if (!count || count > 64 || waitType > 1) return invalidParameter;
     if (alertable) return 0xc00000bb; // Guest alert/APC delivery is not implemented here.
     if (timeoutPointer && !span(base, timeoutPointer, 8)) return invalidParameter;
@@ -200,7 +203,7 @@ uint32_t waitObjects(uint8_t* base, const uint32_t* objects, uint32_t count,
     uint64_t interval = ticks < 0 ? uint64_t(-(ticks + 1)) + 1 : 0;
     uint64_t relativeMs = interval / 10000 + (interval % 10000 != 0);
     uint64_t deadline = GetTickCount64() + relativeMs;
-    std::unique_lock lock(dispatcherMutex);
+    auto lock = StallProfiler::lock(dispatcherMutex, "dispatcher-mutex");
     for (uint32_t i = 0; i < count; ++i) {
         if (!validObject(base, objects[i])) return invalidParameter;
         for (uint32_t j = 0; j < i; ++j)
@@ -233,7 +236,12 @@ uint32_t waitObjects(uint8_t* base, const uint32_t* objects, uint32_t count,
         wait.allWakePending = false;
         if (!timeoutPointer) {
             wait.enroll();
-            dispatcherChanged.wait(lock);
+            {
+                StallProfiler::Scope profile(StallProfiler::Section::Wait, "dispatcherChanged.wait",
+                    ctx.lastFunction, uint32_t(ctx.lr), objects[0],
+                    count == 1 ? "guest-dispatcher-object" : "guest-dispatcher-first-object");
+                dispatcherChanged.wait(lock);
+            }
             observeWaitResume(lock);
             continue;
         }
@@ -243,7 +251,12 @@ uint32_t waitObjects(uint8_t* base, const uint32_t* objects, uint32_t count,
         if (!remainingMs) return timeoutStatus;
         // Wait-all reacquires all objects together on the waiting thread.
         wait.enroll();
-        dispatcherChanged.wait_for(lock, std::chrono::milliseconds(remainingMs));
+        {
+            StallProfiler::Scope profile(StallProfiler::Section::Wait, "dispatcherChanged.wait_for",
+                ctx.lastFunction, uint32_t(ctx.lr), objects[0],
+                count == 1 ? "guest-dispatcher-object" : "guest-dispatcher-first-object");
+            dispatcherChanged.wait_for(lock, std::chrono::milliseconds(remainingMs));
+        }
         observeWaitResume(lock);
     }
 }
@@ -255,7 +268,7 @@ void setDispatcherWaitResumeHook(DispatcherWaitResumeHook hook, void* context) {
     currentResumeContext = context;
 }
 uint32_t dispatcherWaiterCount(uint8_t* base, uint32_t address) {
-    std::lock_guard lock(dispatcherMutex);
+    auto lock = StallProfiler::lock(dispatcherMutex, "dispatcher-mutex");
     uint32_t count = 0;
     for (const auto* wait : pendingWaits) {
         if (wait->base == base && wait->result == UINT32_MAX && (!wait->expired() || wait->allWakePending) &&
@@ -266,15 +279,16 @@ uint32_t dispatcherWaiterCount(uint8_t* base, uint32_t address) {
 }
 void setDispatcherCancellation(DispatcherCancellation* cancellation) { currentCancellation = cancellation; }
 void cancelDispatcherWaits(DispatcherCancellation& cancellation) {
-    std::lock_guard lock(dispatcherMutex);
+    auto lock = StallProfiler::lock(dispatcherMutex, "dispatcher-mutex");
     cancellation.requested = true;
     dispatcherChanged.notify_all();
 }
 }
 
 PPC_FUNC(__imp__KeSetEvent) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t address = ctx.r3.u32;
-    std::lock_guard lock(dispatcherMutex);
+    auto lock = StallProfiler::lock(dispatcherMutex, "dispatcher-mutex");
     if (!validObject(base, address) || base[address] > 1) { ctx.r3.u64 = invalidParameter; return; }
     ctx.r3.u64 = read32(base, address + 4);
     write32(base, address + 4, 1);
@@ -282,17 +296,19 @@ PPC_FUNC(__imp__KeSetEvent) {
     dispatcherChanged.notify_all();
 }
 PPC_FUNC(__imp__KeResetEvent) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t address = ctx.r3.u32;
-    std::lock_guard lock(dispatcherMutex);
+    auto lock = StallProfiler::lock(dispatcherMutex, "dispatcher-mutex");
     if (!validObject(base, address) || base[address] > 1) { ctx.r3.u64 = invalidParameter; return; }
     ctx.r3.u64 = read32(base, address + 4);
     write32(base, address + 4, 0);
 }
 PPC_FUNC(__imp__KeInitializeSemaphore) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t address = ctx.r3.u32;
     if ((address & 3) || !span(base, address, 20, true) || ctx.r4.s32 < 0 ||
         ctx.r5.s32 <= 0 || ctx.r4.s32 > ctx.r5.s32) { ctx.r3.u64 = invalidParameter; return; }
-    std::lock_guard lock(dispatcherMutex);
+    auto lock = StallProfiler::lock(dispatcherMutex, "dispatcher-mutex");
     memset(base + address, 0, 20);
     base[address] = 5;
     write32(base, address + 4, ctx.r4.u32);
@@ -302,8 +318,9 @@ PPC_FUNC(__imp__KeInitializeSemaphore) {
     ctx.r3.u64 = 0;
 }
 PPC_FUNC(__imp__KeReleaseSemaphore) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t address = ctx.r3.u32;
-    std::unique_lock lock(dispatcherMutex);
+    auto lock = StallProfiler::lock(dispatcherMutex, "dispatcher-mutex");
     if (!validObject(base, address) || base[address] != 5 || ctx.r5.s32 <= 0) {
         ctx.r3.u64 = invalidParameter; return;
     }
@@ -320,10 +337,12 @@ PPC_FUNC(__imp__KeReleaseSemaphore) {
     ctx.r3.u64 = previous;
 }
 PPC_FUNC(__imp__KeWaitForSingleObject) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr), ctx.r3.u32, "guest-dispatcher-object");
     uint32_t address = ctx.r3.u32;
-    ctx.r3.u64 = waitObjects(base, &address, 1, 1, ctx.r6.u32, ctx.r7.u32);
+    ctx.r3.u64 = waitObjects(base, &address, 1, 1, ctx.r6.u32, ctx.r7.u32, ctx);
 }
 PPC_FUNC(__imp__KeWaitForMultipleObjects) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr), ctx.r4.u32, "guest-dispatcher-array");
     uint32_t count = ctx.r3.u32, array = ctx.r4.u32;
     if (!count || count > 64 || (array & 3) || !span(base, array, count * 4)) {
         ctx.r3.u64 = invalidParameter; return;
@@ -332,5 +351,5 @@ PPC_FUNC(__imp__KeWaitForMultipleObjects) {
     for (uint32_t i = 0; i < count; ++i) objects[i] = read32(base, array + i * 4);
     // Wait records live on the native stack; the guest's optional wait block
     // storage is never retained or accessed after this call.
-    ctx.r3.u64 = waitObjects(base, objects, count, ctx.r5.u32, ctx.r8.u32, ctx.r9.u32);
+    ctx.r3.u64 = waitObjects(base, objects, count, ctx.r5.u32, ctx.r8.u32, ctx.r9.u32, ctx);
 }

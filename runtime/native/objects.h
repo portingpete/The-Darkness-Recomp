@@ -32,6 +32,11 @@ struct KernelObject {
     std::vector<DarkRecomp::Native::Achievements::Entry> achievementItems;
     uint32_t affinity = 0x3f;
     int32_t priority = 0;
+    // Immutable creation metadata, published before the native thread resumes.
+    uint32_t threadEntry = 0;
+    uint32_t threadArgument = 0;
+    bool resourcePoolWorker = false;
+    bool applicationSystemWorker = false;
     std::filesystem::path path;
     std::mutex ioMutex;
     // A native directory read advances before its UTF-8 guest record is copied.

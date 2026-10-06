@@ -1,3 +1,5 @@
+#include "stall_profiler_lock.h"
+#include "stall_profiler.h"
 #include "runtime.h"
 #include "audio_driver.h"
 #include "audio_resampler_trace.h"
@@ -85,6 +87,7 @@ static void registerCurrentThread();
 void CompleteGpuFenceMidAsmHook() {}
 void SkipMissingFontLaunchReturn() {}
 PPC_FUNC(sub_828A7A68) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Guest, __func__, 0x828A7A68u, uint32_t(ctx.lr));
     __imp__XamShowDirtyDiscErrorUI(ctx, base);
     ctx.r3.u64 = 0;
     ctx.r4.u64 = 0;
@@ -100,12 +103,14 @@ bool guestBufferWritable(uint32_t address, uint32_t bytes) {
 
 }
 PPC_FUNC(sub_828B0B10) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Audio, __func__, 0x828B0B10u, uint32_t(ctx.lr));
     // Native engine-facing pool discovery: publish the real owned backing
     // instead of the unimplemented hardware register. The original leaf only
     // uses r10/r11, so all input registers are preserved.
     memory->write32(0x82A49AD0u, memory->xmaPoolBase());
 }
 PPC_FUNC(__imp__XMACreateContext) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Audio, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t out = ctx.r3.u32;
     if (!out || !guestBufferWritable(out, 4)) { ctx.r3.u64 = 0xc000000d; return; }
     uint32_t context = memory->xmaCreate();
@@ -113,6 +118,7 @@ PPC_FUNC(__imp__XMACreateContext) {
     ctx.r3.u64 = context ? 0 : 0xc0000017;
 }
 PPC_FUNC(__imp__XMAReleaseContext) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Audio, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     ctx.r3.u64 = memory->xmaFree(ctx.r3.u32) ? 0 : 0xc000000d;
 }
 extern "C" {
@@ -165,6 +171,7 @@ void audioEvidenceEdges(AudioResamplerTrace::Record& row, uint32_t output,
 }
 }
 PPC_FUNC(sub_8281E758) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Audio, __func__, 0x8281E758u, uint32_t(ctx.lr));
     AudioResamplerTrace::Call evidence;
     if (audioResamplerTrace.sourceWindow()) audioResamplerTrace.begin(evidence);
     auto* row = evidence.record;
@@ -208,6 +215,7 @@ PPC_FUNC(sub_8281E758) {
     }
 }
 PPC_FUNC(sub_828248D0) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Audio, __func__, 0x828248D0u, uint32_t(ctx.lr));
     AudioResamplerTrace::Call evidence;
     if (audioResamplerTrace.sourceWindow()) audioResamplerTrace.begin(evidence);
     auto* row = evidence.record;
@@ -308,10 +316,10 @@ void traceVoiceSrc(PPCContext& ctx, uint8_t* base, uint32_t tag,
     ctx.fpscr.setcsr(returnedCsr);
 }
 }
-PPC_FUNC(sub_8281D758) { traceVoiceSrc(ctx, base, 0x8281D758, __imp__sub_8281D758, false, false); }
-PPC_FUNC(sub_8281DB98) { traceVoiceSrc(ctx, base, 0x8281DB98, __imp__sub_8281DB98, true, false); }
-PPC_FUNC(sub_8281DF58) { traceVoiceSrc(ctx, base, 0x8281DF58, __imp__sub_8281DF58, false, true); }
-PPC_FUNC(sub_8281E398) { traceVoiceSrc(ctx, base, 0x8281E398, __imp__sub_8281E398, true, true); }
+PPC_FUNC(sub_8281D758) { StallProfiler::Scope stallProfile(StallProfiler::Section::Audio, __func__, 0x8281D758u, uint32_t(ctx.lr)); traceVoiceSrc(ctx, base, 0x8281D758, __imp__sub_8281D758, false, false); }
+PPC_FUNC(sub_8281DB98) { StallProfiler::Scope stallProfile(StallProfiler::Section::Audio, __func__, 0x8281DB98u, uint32_t(ctx.lr)); traceVoiceSrc(ctx, base, 0x8281DB98, __imp__sub_8281DB98, true, false); }
+PPC_FUNC(sub_8281DF58) { StallProfiler::Scope stallProfile(StallProfiler::Section::Audio, __func__, 0x8281DF58u, uint32_t(ctx.lr)); traceVoiceSrc(ctx, base, 0x8281DF58, __imp__sub_8281DF58, false, true); }
+PPC_FUNC(sub_8281E398) { StallProfiler::Scope stallProfile(StallProfiler::Section::Audio, __func__, 0x8281E398u, uint32_t(ctx.lr)); traceVoiceSrc(ctx, base, 0x8281E398, __imp__sub_8281E398, true, true); }
 namespace {
 // Tagged mix-stage records, enabled only by DARKRECOMP_AUDIO_MIX_TRACE=1:
 // before: original descriptor[12], r4/r5/r6/lr[16], validity[4],
@@ -398,12 +406,13 @@ void traceAudioMixStage(PPCContext& ctx, uint8_t* base, uint32_t tag,
     ctx.fpscr.setcsr(returnedCsr);
 }
 }
-PPC_FUNC(sub_8281D308) { traceAudioMixStage(ctx, base, 0x8281D308, __imp__sub_8281D308, false, true); }
-PPC_FUNC(sub_82820DD8) { traceAudioMixStage(ctx, base, 0x82820DD8, __imp__sub_82820DD8, false, false); }
-PPC_FUNC(sub_82822988) { traceAudioMixStage(ctx, base, 0x82822988, __imp__sub_82822988, true, false); }
-PPC_FUNC(sub_82828018) { traceAudioMixStage(ctx, base, 0x82828018, __imp__sub_82828018, false, false); }
-PPC_FUNC(sub_82828020) { traceAudioMixStage(ctx, base, 0x82828020, __imp__sub_82828020, true, false); }
+PPC_FUNC(sub_8281D308) { StallProfiler::Scope stallProfile(StallProfiler::Section::Audio, __func__, 0x8281D308u, uint32_t(ctx.lr)); traceAudioMixStage(ctx, base, 0x8281D308, __imp__sub_8281D308, false, true); }
+PPC_FUNC(sub_82820DD8) { StallProfiler::Scope stallProfile(StallProfiler::Section::Audio, __func__, 0x82820DD8u, uint32_t(ctx.lr)); traceAudioMixStage(ctx, base, 0x82820DD8, __imp__sub_82820DD8, false, false); }
+PPC_FUNC(sub_82822988) { StallProfiler::Scope stallProfile(StallProfiler::Section::Audio, __func__, 0x82822988u, uint32_t(ctx.lr)); traceAudioMixStage(ctx, base, 0x82822988, __imp__sub_82822988, true, false); }
+PPC_FUNC(sub_82828018) { StallProfiler::Scope stallProfile(StallProfiler::Section::Audio, __func__, 0x82828018u, uint32_t(ctx.lr)); traceAudioMixStage(ctx, base, 0x82828018, __imp__sub_82828018, false, false); }
+PPC_FUNC(sub_82828020) { StallProfiler::Scope stallProfile(StallProfiler::Section::Audio, __func__, 0x82828020u, uint32_t(ctx.lr)); traceAudioMixStage(ctx, base, 0x82828020, __imp__sub_82828020, true, false); }
 PPC_FUNC(sub_82828518) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Audio, __func__, 0x82828518u, uint32_t(ctx.lr));
     AudioResamplerTrace::Call evidence;
     audioResamplerTrace.begin(evidence);
     auto* row = evidence.record;
@@ -450,6 +459,7 @@ PPC_FUNC(sub_82828518) {
     }
 }
 PPC_FUNC(sub_828C5060) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Audio, __func__, 0x828C5060u, uint32_t(ctx.lr));
     AudioResamplerTrace::Call evidence;
     audioResamplerTrace.begin(evidence);
     auto* row = evidence.record;
@@ -485,10 +495,12 @@ PPC_FUNC(sub_828C5060) {
     }
 }
 PPC_FUNC(sub_827D9188) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Audio, __func__, 0x827D9188u, uint32_t(ctx.lr));
     AudioRefillPass pass(ctx.r3.u32);
     __imp__sub_827D9188(ctx, base);
 }
 PPC_FUNC(sub_828B1BA8) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Audio, __func__, 0x828B1BA8u, uint32_t(ctx.lr));
     auto* stats = activeAudioRefill;
     AudioRefillTimer timer(stats ? &stats->submitTicks : nullptr);
     if (stats) ++stats->batches;
@@ -514,6 +526,7 @@ PPC_FUNC(sub_828B1BA8) {
     }
 }
 PPC_FUNC(sub_828B13A0) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Audio, __func__, 0x828B13A0u, uint32_t(ctx.lr));
     uint32_t group = ctx.r3.u32, index = ctx.r4.u32;
     if (!guestBufferAccessible(group, 12) || index >= memory->read32(group))
         PPC_RECOMP_FAILURE(ctx, uint32_t(ctx.lr), "invalid native XMA reset group");
@@ -527,6 +540,7 @@ PPC_FUNC(sub_828B13A0) {
     memory->xmaReset(context);
 }
 PPC_FUNC(sub_820C60F8) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Guest, __func__, 0x820C60F8u, uint32_t(ctx.lr));
     // Opt-in Continue-gate diagnostic: with --profile-engine off this is a
     // direct call-through, so production behavior matches the original exactly.
     // When on, the first invocation plus later STATE CHANGES log full snapshots
@@ -667,6 +681,7 @@ PPC_FUNC(sub_820C60F8) {
     }
 }
 PPC_FUNC(sub_820F5F28) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Guest, __func__, 0x820F5F28u, uint32_t(ctx.lr));
     // Opt-in save-list state-machine trace (list producer per loc_820F64E0:
     // provider virtual+80, count>0 gate, then ctx+4088 alloc/resize/record-
     // copy). Direct call-through when off. When on: entry/exit snapshots of
@@ -811,6 +826,7 @@ static void appendFormatGuestString(std::string& output, const uint8_t* base,
     }
 }
 PPC_FUNC(__imp___vsnprintf) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t destination = ctx.r3.u32;
     uint32_t capacity = ctx.r4.u32;
     uint32_t formatAddress = ctx.r5.u32;
@@ -889,6 +905,7 @@ PPC_FUNC(__imp___vsnprintf) {
     ctx.r3.s64 = output.size() < capacity ? static_cast<int32_t>(output.size()) : -1;
 }
 PPC_FUNC(__imp__sprintf) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t destination = ctx.r3.u32;
     uint32_t formatAddress = ctx.r4.u32;
     if (!destination || !formatAddress) { ctx.r3.s64 = -1; return; }
@@ -940,6 +957,7 @@ PPC_FUNC(__imp__sprintf) {
     ctx.r3.s64 = static_cast<int32_t>(output.size());
 }
 PPC_FUNC(__imp__DbgPrint) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t address = ctx.r3.u32;
     if (address) {
         const char* message = reinterpret_cast<const char*>(base + address);
@@ -950,11 +968,12 @@ PPC_FUNC(__imp__DbgPrint) {
 }
 // The native single-player port has one local player in slot0. State1 is
 // local sign-in; no Xbox Live session or online entitlement is reported.
-PPC_FUNC(__imp__XamUserGetSigninState) { ctx.r3.u64 = ctx.r3.u32==0?1:0; }
+PPC_FUNC(__imp__XamUserGetSigninState) { StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = ctx.r3.u32==0?1:0; }
 namespace {
 constexpr uint64_t kLocalUserXuid = 0xE000000000000001ull;
 }
 PPC_FUNC(__imp__XamUserGetXUID) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     const uint32_t user = ctx.r3.u32, mask = ctx.r4.u32, out = ctx.r5.u32;
     if (!out || !guestBufferWritable(out, 8) || user >= 4 ||
         (mask != 1 && mask != 2 && mask != 3 && mask != 4 && mask != 7)) {
@@ -968,6 +987,7 @@ PPC_FUNC(__imp__XamUserGetXUID) {
     ctx.r3.u64 = xuid ? 0 : 0x80070525u;
 }
 PPC_FUNC(__imp__XamShowAchievementsUI) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     const uint32_t title = ctx.r4.u32;
     ctx.r3.u64 = title && title != 0x545407EEu ? ERROR_INVALID_PARAMETER :
                  Achievements::requestShow(ctx.r3.u32);
@@ -1118,7 +1138,7 @@ void enumerateAchievements(PPCContext& ctx, const std::shared_ptr<KernelObject>&
         ctx.r3.u64 = ERROR_INVALID_PARAMETER;
         return;
     }
-    std::lock_guard lock(entry->ioMutex);
+    auto lock = StallProfiler::lock(entry->ioMutex, "kernel-entry-ioMutex");
     const size_t remaining = entry->achievementItems.size() -
         (std::min)(entry->enumCursor, entry->achievementItems.size());
     const uint32_t fetch = (std::min)(uint32_t(remaining), entry->enumFetch);
@@ -1182,7 +1202,7 @@ static void TraceStorageImport(const char* kind, uint32_t r3, uint32_t r4, uint3
     static std::mutex storageMutex;
     if (storageEvents.load(std::memory_order_relaxed) >= 16)
         return;
-    std::lock_guard<std::mutex> storageLock(storageMutex);
+    auto storageLock = StallProfiler::lock(storageMutex, "kernel-storageMutex");
     uint32_t event = storageEvents.fetch_add(1, std::memory_order_relaxed);
     if (event >= 16)
         return;
@@ -1190,6 +1210,7 @@ static void TraceStorageImport(const char* kind, uint32_t r3, uint32_t r4, uint3
                  event, kind, r3, r4, r5, r6, r7, extra, result);
 }
 PPC_FUNC(__imp__XamShowDeviceSelectorUI) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     // Proven caller ABI (build_native/generated/ppc_recomp.60.cpp:45700 loc_827A7520):
     // r3=user, r4=contentType(1), r5=flags, r6=requestedBytes(u64), r7=deviceOut*, r8=overlapped*.
     uint32_t user = ctx.r3.u32;
@@ -1265,6 +1286,7 @@ PPC_FUNC(__imp__XamShowDeviceSelectorUI) {
     ctx.r3.u64 = completeStorageOverlapped(ctx, overlapped, 0, 4, 0);
 }
 PPC_FUNC(__imp__XamContentGetDeviceState) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::FileIO, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t device = ctx.r3.u32;
     uint32_t overlapped = ctx.r4.u32;
     if (overlapped && !overlappedWritable(overlapped)) {
@@ -1282,6 +1304,7 @@ PPC_FUNC(__imp__XamContentGetDeviceState) {
     ctx.r3.u64 = completeStorageOverlapped(ctx, overlapped, state, 0, state);
 }
 PPC_FUNC(__imp__XamContentCreateEnumerator) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::FileIO, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t user = ctx.r3.u32, device = ctx.r4.u32, type = ctx.r5.u32;
     uint32_t flags = ctx.r6.u32, count = ctx.r7.u32;
     uint32_t sizeOut = ctx.r8.u32, handleOut = ctx.r9.u32;
@@ -1320,7 +1343,7 @@ PPC_FUNC(__imp__XamContentCreateEnumerator) {
     size_t itemCount = items.size();
     uint32_t id = storeObject(nullptr);
     if (auto e = object(id)) {
-        std::lock_guard guard(e->ioMutex);
+        auto guard = StallProfiler::lock(e->ioMutex, "kernel-e-ioMutex");
         e->isEnumerator = true;
         e->enumFetch = count;
         e->enumCursor = 0;
@@ -1345,6 +1368,7 @@ PPC_FUNC(__imp__XamContentCreateEnumerator) {
     ctx.r3.u64 = 0;
 }
 PPC_FUNC(__imp__XamUserCreateAchievementEnumerator) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     // Original sub_820D2278 -> sub_828A7958: title0, user0, XUID0,
     // flags39, offset0, count50, size at stack112, handle at manager+992.
     const uint32_t title = ctx.r3.u32, user = ctx.r4.u32, flags = ctx.r6.u32;
@@ -1390,6 +1414,7 @@ PPC_FUNC(__imp__XamUserCreateAchievementEnumerator) {
     ctx.r3.u64 = 0;
 }
 PPC_FUNC(__imp__XamEnumerate) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::FileIO, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t handle = ctx.r3.u32;
     uint32_t buffer = ctx.r5.u32, bytes = ctx.r6.u32, countOut = ctx.r7.u32;
     uint32_t overlapped = ctx.r8.u32;
@@ -1423,7 +1448,7 @@ PPC_FUNC(__imp__XamEnumerate) {
         ctx.r3.u64 = ERROR_INVALID_PARAMETER;
         return;
     }
-    std::lock_guard guard(e->ioMutex);
+    auto guard = StallProfiler::lock(e->ioMutex, "kernel-e-ioMutex");
     size_t remaining = e->enumItems.size() - (std::min)(e->enumCursor, e->enumItems.size());
     if (!remaining) {
         if (countOut) memory->write32(countOut, 0);
@@ -1461,6 +1486,7 @@ PPC_FUNC(__imp__XamEnumerate) {
     ctx.r3.u64 = completeStorageOverlapped(ctx, overlapped, 0, fetch, 0);
 }
 PPC_FUNC(__imp__XamContentCreateEx) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::FileIO, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     // Proven wrapper ABI (build_native/generated/ppc_recomp.72.cpp:13462 sub_828AAC60):
     // caller stack+180 is copied to callee stack+84 immediately before the import;
     // qword content size occupies r10.u64 and the overlapped pointer is stack84.
@@ -1515,6 +1541,7 @@ PPC_FUNC(__imp__XamContentCreateEx) {
     ctx.r3.u64 = completeStorageOverlapped(ctx, overlapped, result, disp, result);
 }
 PPC_FUNC(__imp__XamContentClose) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::FileIO, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t rootPtr = ctx.r3.u32, overlapped = ctx.r4.u32;
     if (overlapped && !overlappedWritable(overlapped)) {
         ctx.r3.u64 = ERROR_INVALID_PARAMETER;
@@ -1534,6 +1561,7 @@ PPC_FUNC(__imp__XamContentClose) {
     ctx.r3.u64 = completeStorageOverlapped(ctx, overlapped, result, 0, result);
 }
 PPC_FUNC(__imp__XamContentDelete) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::FileIO, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t user = ctx.r3.u32, dataPtr = ctx.r4.u32, overlapped = ctx.r5.u32;
     if (user != 0) {
         ctx.r3.u64 = 0x525;
@@ -1562,9 +1590,11 @@ PPC_FUNC(__imp__XamContentDelete) {
     ctx.r3.u64 = completeStorageOverlapped(ctx, overlapped, result, 0, result);
 }
 PPC_FUNC(__imp__XamInputGetCapabilities) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     ctx.r3.u64 = nativeInput().getCapabilities(*memory, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32);
 }
 PPC_FUNC(__imp__XAudioRegisterRenderDriverClient) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Audio, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t descriptor = ctx.r3.u32;
     uint32_t driver = ctx.r4.u32;
     uint32_t callback = 0, argument = 0;
@@ -1582,11 +1612,13 @@ PPC_FUNC(__imp__XAudioRegisterRenderDriverClient) {
     ctx.r3.u64 = status;
 }
 PPC_FUNC(__imp__XAudioUnregisterRenderDriverClient) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Audio, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t status = AudioRenderDriver::instance().unregisterClient(ctx.r3.u32);
     fprintf(stderr, "[Audio] unregister token=0x%08X status=0x%08X\n", ctx.r3.u32, status);
     ctx.r3.u64 = status;
 }
 PPC_FUNC(__imp__XAudioSubmitRenderDriverFrame) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Audio, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t status = AudioRenderDriver::instance().submitFrame(ctx.r3.u32, ctx.r4.u32);
     AudioDriverCounters counters = AudioRenderDriver::instance().counters();
     static std::atomic<uint64_t> logged{0};
@@ -1598,6 +1630,7 @@ PPC_FUNC(__imp__XAudioSubmitRenderDriverFrame) {
     ctx.r3.u64 = status;
 }
 PPC_FUNC(__imp__XAudioGetVoiceCategoryVolumeChangeMask) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Audio, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t status = audioDriverVoiceCategoryVolumeChangeMask(ctx.r3.u32, ctx.r4.u32);
     static std::atomic<uint64_t> logged{0};
     if (status != 0 || (logged.fetch_add(1) % 512) == 0)
@@ -1605,9 +1638,10 @@ PPC_FUNC(__imp__XAudioGetVoiceCategoryVolumeChangeMask) {
                 ctx.r3.u32, ctx.r4.u32, status);
     ctx.r3.u64 = status;
 }
-PPC_FUNC(__imp__XamShowDirtyDiscErrorUI) { ctx.r3.u64 = 0; }
-PPC_FUNC(__imp__XamGetSystemVersion) { ctx.r3.u64 = kXboxVersionPacked; }
+PPC_FUNC(__imp__XamShowDirtyDiscErrorUI) { StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = 0; }
+PPC_FUNC(__imp__XamGetSystemVersion) { StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = kXboxVersionPacked; }
 PPC_FUNC(__imp__XamGetExecutionId) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     // Proven caller ABI (build_native/generated/ppc_recomp.72.cpp:13774 sub_828AAE40):
     // r3=&guestPointer (stack80 slot), import checks signed NTSTATUS, then reads
     // the BE pointer back and compares the u16 at +12. Xenia xam_info.cc
@@ -1662,6 +1696,7 @@ bool profileDefaultValue(uint32_t id, uint32_t& value) {
 }
 }  // namespace
 PPC_FUNC(__imp__XamUserReadProfileSettings) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     // Proven wrapper ABI (build_native/generated/ppc_recomp.69.cpp:32384 sub_82883970):
     // r3=title, r4=user, r5=xuidCount(0), r6=xuids(null), r7=settingCount,
     // r8=ids, r9=sizePtr, r10=buffer, overlap at stack84. Matches Xenia
@@ -1789,11 +1824,13 @@ PPC_FUNC(__imp__XamUserReadProfileSettings) {
     }
     ctx.r3.u64 = completeStorageOverlapped(ctx, overlapped, 0, 0, 0);
 }
-PPC_FUNC(__imp__XamLoaderLaunchTitle) { }
+PPC_FUNC(__imp__XamLoaderLaunchTitle) { StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr)); }
 PPC_FUNC(__imp__XamInputGetState) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     ctx.r3.u64 = nativeInput().getState(*memory, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32);
 }
 PPC_FUNC(__imp__XamInputSetState) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     ctx.r3.u64 = nativeInput().setState(*memory, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32);
 }
 namespace {
@@ -1840,6 +1877,7 @@ uint32_t achievementWriteMessage(PPCContext& ctx) {
 }
 }
 PPC_FUNC(__imp__XMsgStartIORequest) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     // XUserWriteAchievements is an XGI message rather than a named import.
     // Proven sub_828A7528 ABI: app0xFB/message0xB0008, overlap in r5,
     // 8-byte {count, pairs*} in r6; each pair is {userIndex, achievementId}.
@@ -1855,9 +1893,11 @@ PPC_FUNC(__imp__XMsgStartIORequest) {
 }
 
 PPC_FUNC(__imp__XMsgInProcessCall) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     ctx.r3.u64 = 0;
 }
 PPC_FUNC(__imp__NetDll_XNetRandom) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t buffer = ctx.r4.u32, length = ctx.r5.u32;
     if ((!buffer && length) || uint64_t(buffer) + length > 0x100000000ull) {
         ctx.r3.u64 = 10014; // WSAEFAULT
@@ -1922,10 +1962,12 @@ void initializeKernel() {
 }
 
 PPC_FUNC(__imp__RtlImageXexHeaderField) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     if (ctx.r3.u32 != Memory::xexHeader) PPC_RECOMP_FAILURE(ctx, ctx.r3.u32, "unknown XEX module header");
     ctx.r3.u64 = memory->headerField(ctx.r4.u32);
 }
 PPC_FUNC(__imp__XexCheckExecutablePrivilege) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t flags = memory->headerField(0x30000);
     uint32_t privilege = ctx.r3.u32;
     ctx.r3.u64 = privilege < 32 && flags && (memory->read32(flags) & (uint32_t(1) << privilege)) ? 1 : 0;
@@ -1951,6 +1993,7 @@ bool DarkRecomp::Native::configureGuestRenderMode(uint32_t display) {
 }
 extern "C" PPC_FUNC(__imp__sub_8223E268);
 PPC_FUNC(sub_8223E268) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, 0x8223E268u, uint32_t(ctx.lr));
     const auto mode = nativeVideoMode();
     if (ctx.r3.u32 == 0x82A8B610 && (mode.width != 1280 || mode.height != 720)) {
         if (!configureGuestRenderMode(ctx.r3.u32))
@@ -2030,6 +2073,7 @@ struct TitleTextScope {
 }
 extern "C" PPC_FUNC(__imp__sub_8233EF70);
 PPC_FUNC(sub_8233EF70) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, 0x8233EF70u, uint32_t(ctx.lr));
     // These are the original gameplay heading and credits callers, sharing
     // FONT_TITLE/FONT_NAME and the authored title/credits layout.
     const uint32_t caller = uint32_t(ctx.lr);
@@ -2043,6 +2087,7 @@ PPC_FUNC(sub_8233EF70) {
 }
 extern "C" PPC_FUNC(__imp__sub_8234BFB0);
 PPC_FUNC(sub_8234BFB0) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, 0x8234BFB0u, uint32_t(ctx.lr));
     // All original glyph/shadow passes converge here. The other records in
     // 8233EF70 (background fades and pictures) retain their own transforms.
     const uint32_t drawContext = ctx.r3.u32;
@@ -2065,6 +2110,7 @@ PPC_FUNC(sub_8234BFB0) {
 }
 extern "C" PPC_FUNC(__imp__sub_823471F8);
 PPC_FUNC(sub_823471F8) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, 0x823471F8u, uint32_t(ctx.lr));
     const uint32_t caller = uint32_t(ctx.lr), drawContext = ctx.r3.u32;
     __imp__sub_823471F8(ctx, base);
     // Original 823F9630 rebuilds this canvas exclusively for the player fade,
@@ -2118,11 +2164,13 @@ struct TitleTextShadow {
 }
 extern "C" PPC_FUNC(__imp__sub_8234C680);
 PPC_FUNC(sub_8234C680) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, 0x8234C680u, uint32_t(ctx.lr));
     TitleTextShadow shadow(ctx);
     __imp__sub_8234C680(ctx, base);
 }
 extern "C" PPC_FUNC(__imp__sub_8234C7E0);
 PPC_FUNC(sub_8234C7E0) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, 0x8234C7E0u, uint32_t(ctx.lr));
     TitleTextShadow shadow(ctx);
     const auto mode = nativeVideoMode();
     const uint32_t caller = uint32_t(ctx.lr), drawContext = ctx.r3.u32;
@@ -2166,11 +2214,13 @@ static void writeVideoMode(uint8_t* base, uint32_t address) {
 }
 
 PPC_FUNC(__imp__XGetVideoMode) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     writeVideoMode(base, ctx.r3.u32);
     ctx.r3.u64 = 0;
 }
 
 PPC_FUNC(__imp__VdQueryVideoMode) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     writeVideoMode(base, ctx.r3.u32);
     ctx.r3.u64 = 0;
 }
@@ -2179,6 +2229,7 @@ PPC_FUNC(__imp__VdQueryVideoMode) {
 // their successful, side-effect-free contract lets title initialization reach
 // the first actual renderer operation.
 PPC_FUNC(__imp__RtlFillMemoryUlong) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t destination = ctx.r3.u32;
     uint32_t length = ctx.r4.u32 & ~3u;
     uint32_t value = ctx.r5.u32;
@@ -2187,12 +2238,13 @@ PPC_FUNC(__imp__RtlFillMemoryUlong) {
     }
     ctx.r3.u64 = 0;
 }
-PPC_FUNC(__imp__VdPersistDisplay) { if (ctx.r4.u32) memory->write32(ctx.r4.u32, 0); ctx.r3.u64 = 0; }
-PPC_FUNC(__imp__VdSetDisplayMode) { ctx.r3.u64 = 0; }
-PPC_FUNC(__imp__VdGetCurrentDisplayInformation) { ctx.r3.u64 = 0; }
-PPC_FUNC(__imp__VdInitializeEngines) { ctx.r3.u64 = 0; }
-PPC_FUNC(__imp__ExRegisterTitleTerminateNotification) { ctx.r3.u64 = 0; }
+PPC_FUNC(__imp__VdPersistDisplay) { StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, ctx.lastFunction, uint32_t(ctx.lr)); if (ctx.r4.u32) memory->write32(ctx.r4.u32, 0); ctx.r3.u64 = 0; }
+PPC_FUNC(__imp__VdSetDisplayMode) { StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = 0; }
+PPC_FUNC(__imp__VdGetCurrentDisplayInformation) { StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = 0; }
+PPC_FUNC(__imp__VdInitializeEngines) { StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = 0; }
+PPC_FUNC(__imp__ExRegisterTitleTerminateNotification) { StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = 0; }
 PPC_FUNC(__imp__VdSetGraphicsInterruptCallback) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t callback = ctx.r3.u32;
     uint32_t callbackContext = ctx.r4.u32;
     if (callback) {
@@ -2206,18 +2258,19 @@ PPC_FUNC(__imp__VdSetGraphicsInterruptCallback) {
     }
     ctx.r3.u64 = 0;
 }
-PPC_FUNC(__imp__VdSetSystemCommandBufferGpuIdentifierAddress) { ctx.r3.u64 = 0; }
-PPC_FUNC(__imp__VdEnableRingBufferRPtrWriteBack) { ctx.r3.u64 = 0; }
-PPC_FUNC(__imp__VdEnableDisableClockGating) { ctx.r3.u64 = 0; }
-PPC_FUNC(__imp__KeEnterCriticalRegion) { ctx.r3.u64 = 0; }
-PPC_FUNC(__imp__KeLeaveCriticalRegion) { ctx.r3.u64 = 0; }
-PPC_FUNC(__imp__KiApcNormalRoutineNop) { ctx.r3.u64 = 0; }
-PPC_FUNC(__imp__VdIsHSIOTrainingSucceeded) { ctx.r3.u64 = 0; }
-PPC_FUNC(__imp__VdRetrainEDRAM) { ctx.r3.u64 = 0; }
-PPC_FUNC(__imp__VdRetrainEDRAMWorker) { ctx.r3.u64 = 0; }
-PPC_FUNC(__imp__VdQueryVideoFlags) { ctx.r3.u64 = 0; }
-PPC_FUNC(__imp__VdCallGraphicsNotificationRoutines) { ctx.r3.u64 = 0; }
+PPC_FUNC(__imp__VdSetSystemCommandBufferGpuIdentifierAddress) { StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = 0; }
+PPC_FUNC(__imp__VdEnableRingBufferRPtrWriteBack) { StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = 0; }
+PPC_FUNC(__imp__VdEnableDisableClockGating) { StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = 0; }
+PPC_FUNC(__imp__KeEnterCriticalRegion) { StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = 0; }
+PPC_FUNC(__imp__KeLeaveCriticalRegion) { StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = 0; }
+PPC_FUNC(__imp__KiApcNormalRoutineNop) { StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = 0; }
+PPC_FUNC(__imp__VdIsHSIOTrainingSucceeded) { StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = 0; }
+PPC_FUNC(__imp__VdRetrainEDRAM) { StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = 0; }
+PPC_FUNC(__imp__VdRetrainEDRAMWorker) { StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = 0; }
+PPC_FUNC(__imp__VdQueryVideoFlags) { StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = 0; }
+PPC_FUNC(__imp__VdCallGraphicsNotificationRoutines) { StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = 0; }
 PPC_FUNC(__imp__VdGetCurrentDisplayGamma) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     // Xbox HDTV transfer. The original D3D helpers consume BOTH ABI outputs.
     if(ctx.r3.u32)PPC_STORE_U32(ctx.r3.u32,2);
     if(ctx.r4.u32)PPC_STORE_U32(ctx.r4.u32,std::bit_cast<uint32_t>(2.22222233f));
@@ -2225,14 +2278,15 @@ PPC_FUNC(__imp__VdGetCurrentDisplayGamma) {
 }
 
 
-PPC_FUNC(__imp__VdInitializeRingBuffer) { ctx.r3.u64 = 0; }
-PPC_FUNC(__imp__VdInitializeScalerCommandBuffer) { ctx.r3.u64 = 0; }
+PPC_FUNC(__imp__VdInitializeRingBuffer) { StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = 0; }
+PPC_FUNC(__imp__VdInitializeScalerCommandBuffer) { StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = 0; }
 
 static std::mutex launchMutex;
 static std::vector<uint8_t> launchData;
 static bool launchDataPresent = false;
 PPC_FUNC(__imp__XamLoaderGetLaunchData) {
-    std::lock_guard lock(launchMutex);
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
+    auto lock = StallProfiler::lock(launchMutex, "kernel-launchMutex");
     if (!launchDataPresent) { ctx.r3.u64 = ERROR_NOT_FOUND; return; }
     uint32_t count = (std::min)(ctx.r4.u32, uint32_t(launchData.size()));
     if (count && !ctx.r3.u32) { ctx.r3.u64 = ERROR_INVALID_PARAMETER; return; }
@@ -2240,7 +2294,8 @@ PPC_FUNC(__imp__XamLoaderGetLaunchData) {
     ctx.r3.u64 = ERROR_SUCCESS;
 }
 PPC_FUNC(__imp__XamLoaderSetLaunchData) {
-    std::lock_guard lock(launchMutex);
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
+    auto lock = StallProfiler::lock(launchMutex, "kernel-launchMutex");
     if (!ctx.r3.u32) { launchData.clear(); launchDataPresent = false; ctx.r3.u64 = 0; return; }
     if (ctx.r4.u32 > 0x1000) { ctx.r3.u64 = ERROR_INVALID_PARAMETER; return; }
     launchData.assign(base + ctx.r3.u32, base + ctx.r3.u32 + ctx.r4.u32);
@@ -2248,6 +2303,7 @@ PPC_FUNC(__imp__XamLoaderSetLaunchData) {
     ctx.r3.u64 = ERROR_SUCCESS;
 }
 PPC_FUNC(__imp__ExGetXConfigSetting) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t category = ctx.r3.u16, setting = ctx.r4.u16;
     if (category != 3 || (setting != 9 && setting != 10 && setting != 12 && (setting < 1 || setting > 7)))
         PPC_RECOMP_FAILURE(ctx, uint32_t(ctx.lr), "unsupported console configuration setting");
@@ -2282,6 +2338,7 @@ PPC_FUNC(__imp__ExGetXConfigSetting) {
     ctx.r3.u64 = 0;
 }
 PPC_FUNC(__imp__RtlTimeFieldsToTime) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     auto field = [&](size_t index) { return _byteswap_ushort(*reinterpret_cast<uint16_t*>(base + ctx.r3.u32 + index * 2)); };
     SYSTEMTIME time{field(0), field(1), field(7), field(2), field(3), field(4), field(5), field(6)};
     FILETIME result{};
@@ -2290,6 +2347,7 @@ PPC_FUNC(__imp__RtlTimeFieldsToTime) {
     ctx.r3.u64 = valid;
 }
 PPC_FUNC(__imp__RtlTimeToTimeFields) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint64_t value = _byteswap_uint64(*reinterpret_cast<uint64_t*>(base + ctx.r3.u32));
     FILETIME input{DWORD(value), DWORD(value >> 32)};
     SYSTEMTIME time{};
@@ -2298,29 +2356,32 @@ PPC_FUNC(__imp__RtlTimeToTimeFields) {
     for (uint32_t i = 0; i < 8; ++i) *reinterpret_cast<uint16_t*>(base + ctx.r4.u32 + i * 2) = _byteswap_ushort(fields[i]);
 }
 
-PPC_FUNC(__imp__KeQueryPerformanceFrequency) { ctx.r3.u64 = kTimebaseFrequency; }
+PPC_FUNC(__imp__KeQueryPerformanceFrequency) { StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = kTimebaseFrequency; }
 PPC_FUNC(__imp__RtlLowerChar) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint8_t value = ctx.r3.u8;
     ctx.r3.u64 = value >= 'A' && value <= 'Z' ? value + ('a' - 'A') : value;
 }
 PPC_FUNC(__imp__RtlInitAnsiString) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t destination = ctx.r3.u32, source = ctx.r4.u32;
     size_t length = source ? strnlen(reinterpret_cast<char*>(base + source), 0xfffe) : 0;
     memory->write32(destination, (uint32_t(length) << 16) | (source ? uint32_t(length + 1) : 0));
     memory->write32(destination + 4, source);
 }
 PPC_FUNC(__imp__FscSetCacheElementCount) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     // Windows owns the filesystem cache; its size is not a title-local setting.
     // Report the unsupported request so the original caller can handle it.
     fprintf(stderr, "[File] Console cache-size request is unsupported on Windows (device=%u, count=%u)\n",
             ctx.r3.u32, ctx.r4.u32);
     ctx.r3.u64 = 0xc00000bb;
 }
-PPC_FUNC(__imp__KeGetCurrentProcessType) { ctx.r3.u64 = 1; }
-PPC_FUNC(__imp__KeQueryPerformanceCounter) { ctx.r3.u64 = PPCQueryTimebase(); }
-PPC_FUNC(__imp__VdSwap) { }
-PPC_FUNC(__imp__VdGetSystemCommandBuffer) { ctx.r3.u64 = 0; }
-PPC_FUNC(__imp__KeRaiseIrqlToDpcLevel) { ctx.r3.u64 = 0; }
+PPC_FUNC(__imp__KeGetCurrentProcessType) { StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = 1; }
+PPC_FUNC(__imp__KeQueryPerformanceCounter) { StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = PPCQueryTimebase(); }
+PPC_FUNC(__imp__VdSwap) { StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, ctx.lastFunction, uint32_t(ctx.lr)); }
+PPC_FUNC(__imp__VdGetSystemCommandBuffer) { StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = 0; }
+PPC_FUNC(__imp__KeRaiseIrqlToDpcLevel) { StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = 0; }
 static void acquireGuestSpinLock(uint8_t* base, uint32_t address, uint32_t owner) {
     auto* lock = reinterpret_cast<volatile LONG*>(base + address);
     LONG expected = 0;
@@ -2332,12 +2393,13 @@ static void acquireGuestSpinLock(uint8_t* base, uint32_t address, uint32_t owner
 static void releaseGuestSpinLock(uint8_t* base, uint32_t address) {
     InterlockedExchange(reinterpret_cast<volatile LONG*>(base + address), 0);
 }
-PPC_FUNC(__imp__KfAcquireSpinLock) { acquireGuestSpinLock(base, ctx.r3.u32, ctx.r13.u32); }
-PPC_FUNC(__imp__KfReleaseSpinLock) { releaseGuestSpinLock(base, ctx.r3.u32); }
-PPC_FUNC(__imp__KeAcquireSpinLockAtRaisedIrql) { acquireGuestSpinLock(base, ctx.r3.u32, ctx.r13.u32); }
-PPC_FUNC(__imp__KeReleaseSpinLockFromRaisedIrql) { releaseGuestSpinLock(base, ctx.r3.u32); }
-PPC_FUNC(__imp__KfLowerIrql) { }
+PPC_FUNC(__imp__KfAcquireSpinLock) { StallProfiler::Scope stallProfile(StallProfiler::Section::Wait, __func__, ctx.lastFunction, uint32_t(ctx.lr), ctx.r3.u32, "guest-spinlock"); acquireGuestSpinLock(base, ctx.r3.u32, ctx.r13.u32); }
+PPC_FUNC(__imp__KfReleaseSpinLock) { StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr)); releaseGuestSpinLock(base, ctx.r3.u32); }
+PPC_FUNC(__imp__KeAcquireSpinLockAtRaisedIrql) { StallProfiler::Scope stallProfile(StallProfiler::Section::Wait, __func__, ctx.lastFunction, uint32_t(ctx.lr), ctx.r3.u32, "guest-spinlock"); acquireGuestSpinLock(base, ctx.r3.u32, ctx.r13.u32); }
+PPC_FUNC(__imp__KeReleaseSpinLockFromRaisedIrql) { StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr)); releaseGuestSpinLock(base, ctx.r3.u32); }
+PPC_FUNC(__imp__KfLowerIrql) { StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr)); }
 PPC_FUNC(__imp__KeEnableFpuExceptions) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     if (ctx.r3.u32) PPC_RECOMP_FAILURE(ctx, uint32_t(ctx.lr), "guest floating-point exception delivery is not implemented");
     unsigned control;
     _controlfp_s(&control, _MCW_EM, _MCW_EM);
@@ -2345,6 +2407,7 @@ PPC_FUNC(__imp__KeEnableFpuExceptions) {
     ctx.msr &= ~0x900u; // Clear PPC MSR FE0 and FE1.
 }
 PPC_FUNC(__imp__KeQuerySystemTime) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     FILETIME now; GetSystemTimeAsFileTime(&now);
     uint64_t value = (uint64_t(now.dwHighDateTime) << 32) | now.dwLowDateTime;
     *reinterpret_cast<uint64_t*>(base + ctx.r3.u32) = _byteswap_uint64(value);
@@ -2353,7 +2416,8 @@ PPC_FUNC(__imp__KeQuerySystemTime) {
 static uint64_t tlsBitmap = 0;
 static std::mutex tlsMutex;
 PPC_FUNC(__imp__KeTlsAlloc) {
-    std::lock_guard lock(tlsMutex);
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
+    auto lock = StallProfiler::lock(tlsMutex, "kernel-tlsMutex");
     for (uint32_t index = 0; index < 64; ++index) {
         if (!(tlsBitmap & (uint64_t(1) << index))) {
             tlsBitmap |= uint64_t(1) << index;
@@ -2365,7 +2429,8 @@ PPC_FUNC(__imp__KeTlsAlloc) {
     ctx.r3.u64 = 0xffffffff;
 }
 PPC_FUNC(__imp__KeTlsFree) {
-    std::lock_guard lock(tlsMutex);
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
+    auto lock = StallProfiler::lock(tlsMutex, "kernel-tlsMutex");
     uint32_t index = ctx.r3.u32;
     if (index >= 64) { ctx.r3.u64 = 0; return; }
     memory->clearDynamicTls(index);
@@ -2373,10 +2438,12 @@ PPC_FUNC(__imp__KeTlsFree) {
     ctx.r3.u64 = 1;
 }
 PPC_FUNC(__imp__KeTlsGetValue) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t index = ctx.r3.u32;
     ctx.r3.u64 = index < 64 ? memory->read32(memory->dynamicTls(ctx) + index * 4) : 0;
 }
 PPC_FUNC(__imp__KeTlsSetValue) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t index = ctx.r3.u32;
     if (index >= 64) { ctx.r3.u64 = 0; return; }
     memory->write32(memory->dynamicTls(ctx) + index * 4, ctx.r4.u32);
@@ -2391,7 +2458,7 @@ struct HostCriticalSection {
 static std::unordered_map<uint32_t, std::unique_ptr<HostCriticalSection>> criticalSections;
 static std::mutex criticalMutex;
 static HostCriticalSection& critical(PPCContext& ctx, bool create) {
-    std::lock_guard lock(criticalMutex);
+    auto lock = StallProfiler::lock(criticalMutex, "kernel-criticalMutex");
     auto it = criticalSections.find(ctx.r3.u32);
     if (it == criticalSections.end()) {
         bool staticInitializer = memory->read32(ctx.r3.u32 + 16) == 0xffffffff &&
@@ -2402,6 +2469,7 @@ static HostCriticalSection& critical(PPCContext& ctx, bool create) {
     return *it->second;
 }
 PPC_FUNC(__imp__RtlInitializeCriticalSection) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     critical(ctx, true);
     // XRTL_CRITICAL_SECTION: dispatcher header then lock/recursion/owner.
     memset(base + ctx.r3.u32, 0, 28);
@@ -2411,16 +2479,22 @@ PPC_FUNC(__imp__RtlInitializeCriticalSection) {
     memory->write32(ctx.r3.u32 + 16, 0xffffffff);
     ctx.r3.u64 = 0;
 }
-PPC_FUNC(__imp__RtlInitializeCriticalSectionAndSpinCount) { __imp__RtlInitializeCriticalSection(ctx, base); }
+PPC_FUNC(__imp__RtlInitializeCriticalSectionAndSpinCount) { StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr)); __imp__RtlInitializeCriticalSection(ctx, base); }
 PPC_FUNC(__imp__RtlEnterCriticalSection) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr), ctx.r3.u32, "guest-critical-section");
     auto& section = critical(ctx, false).native;
-    EnterCriticalSection(&section);
+    {
+        StallProfiler::Scope wait(StallProfiler::Section::Wait, "EnterCriticalSection",
+            ctx.lastFunction, uint32_t(ctx.lr), ctx.r3.u32, "guest-critical-section");
+        EnterCriticalSection(&section);
+    }
     // Original callback waiters read RecursionCount to fully release/reacquire
     // this lock. Publish its big-endian value while we own the native section.
     memory->write32(ctx.r3.u32 + 20, uint32_t(section.RecursionCount));
     ctx.r3.u64 = 0;
 }
 PPC_FUNC(__imp__RtlLeaveCriticalSection) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     auto& section = critical(ctx, false).native;
     // Update before handing ownership to another thread, whose acquisition
     // publishes its own depth. A post-release store could overwrite that value.
@@ -2429,6 +2503,7 @@ PPC_FUNC(__imp__RtlLeaveCriticalSection) {
     ctx.r3.u64 = 0;
 }
 PPC_FUNC(__imp__RtlTryEnterCriticalSection) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     auto& section = critical(ctx, false).native;
     const BOOL acquired = TryEnterCriticalSection(&section);
     if (acquired) memory->write32(ctx.r3.u32 + 20, uint32_t(section.RecursionCount));
@@ -2455,7 +2530,7 @@ std::vector<HANDLE> DarkRecomp::Native::nativeThreadSampleHandles() {
     // this bound cannot allocate; the catch also protects partial snapshots.
     handles.reserve(limit);
     try {
-        std::lock_guard lock(objectMutex);
+        auto lock = StallProfiler::lock(objectMutex, "kernel-objectMutex");
         for (const auto& [id, weakThread] : threadsById) {
             if (handles.size() == limit) break;
             const auto thread = weakThread.lock();
@@ -2479,6 +2554,7 @@ std::vector<HANDLE> DarkRecomp::Native::nativeThreadSampleHandles() {
 }
 
 PPC_FUNC(__imp__XamNotifyCreateListener) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     // ABI: full 64-bit notification mask in r3, max version in r4. The
     // listener owns a real manual-reset event so waits and GetNext drain
     // observe actual delivery; the event resets when the queue empties.
@@ -2488,17 +2564,18 @@ PPC_FUNC(__imp__XamNotifyCreateListener) {
     listener->notificationListener = true;
     listener->notificationAreas = ctx.r3.u64;
     listener->notificationMaxVersion = ctx.r4.u32;
-    std::lock_guard lock(objectMutex);
+    auto lock = StallProfiler::lock(objectMutex, "kernel-objectMutex");
     uint32_t handle = nextHandle++;
     objects.emplace(handle, std::move(listener));
     ctx.r3.u64 = handle;
 }
 
 PPC_FUNC(__imp__XNotifyGetNext) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     auto listener = object(ctx.r3.u32);
     if (!listener || !listener->notificationListener) { ctx.r3.u64 = 0; return; }
     uint32_t filter = ctx.r4.u32;
-    std::lock_guard lock(listener->ioMutex);
+    auto lock = StallProfiler::lock(listener->ioMutex, "kernel-listener-ioMutex");
     auto match = listener->notifications.end();
     if (!filter) {
         if (!listener->notifications.empty()) match = listener->notifications.begin();
@@ -2515,6 +2592,7 @@ PPC_FUNC(__imp__XNotifyGetNext) {
 }
 
 PPC_FUNC(__imp__XNotifyPositionUI) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     // The Xbox notification tray has no native desktop surface in this host.
     ctx.r3.u64 = 0;
 }
@@ -2533,7 +2611,7 @@ void notifyListeners(uint32_t id, uint32_t data) {
     uint32_t maskIndex = (id >> 25) & 63;
     uint64_t bit = uint64_t(1) << maskIndex;
     uint32_t eventVersion = (id >> 16) & 0x1FF;
-    std::lock_guard lock(objectMutex);
+    auto lock = StallProfiler::lock(objectMutex, "kernel-objectMutex");
     std::unordered_set<const KernelObject*> notified;
     for (const auto& [handle, listener] : objects) {
         if (!listener->notificationListener) continue;
@@ -2541,7 +2619,7 @@ void notifyListeners(uint32_t id, uint32_t data) {
         if (eventVersion > listener->notificationMaxVersion) continue;
         // Duplicated handles share one listener queue and wait event.
         if (!notified.insert(listener.get()).second) continue;
-        std::lock_guard queueLock(listener->ioMutex);
+        auto queueLock = StallProfiler::lock(listener->ioMutex, "kernel-listener-ioMutex");
         listener->notifications.emplace_back(id, data);
         if (listener->handle) SetEvent(listener->handle);
     }
@@ -2551,6 +2629,7 @@ void DarkRecomp::Native::publishSystemUiNotification(bool open) {
     notifyListeners(0x00000009u, open ? 1u : 0u);
 }
 PPC_FUNC(__imp__XMsgStartIORequestEx) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     // This message API returns HRESULT, not NTSTATUS.
     uint32_t app = ctx.r3.u32, message = ctx.r4.u32, overlapped = ctx.r5.u32;
     uint32_t buffer = ctx.r6.u32, length = ctx.r7.u32;
@@ -2568,7 +2647,7 @@ PPC_FUNC(__imp__XMsgStartIORequestEx) {
     bool legal = (client == 2 && controller == 0) || (client == 0 && controller == 1);
     if (!legal || playback > 1) { ctx.r3.u64 = 0x80070057; return; }
     {
-        std::lock_guard lock(xmpMutex);
+        auto lock = StallProfiler::lock(xmpMutex, "kernel-xmpMutex");
         xmpPolicy = {client, controller, playback, true};
         fprintf(stderr, "[XMP] playback controller client=%u controller=%u playback=%u\n",
             client, controller, playback);
@@ -2584,7 +2663,7 @@ PPC_FUNC(__imp__XMsgStartIORequestEx) {
     ctx.r3.u64 = 0;
 }
 uint32_t storeObject(HANDLE handle) {
-    std::lock_guard lock(objectMutex);
+    auto lock = StallProfiler::lock(objectMutex, "kernel-objectMutex");
     uint32_t id = nextHandle++;
     objects.emplace(id, std::make_shared<KernelObject>(handle));
     return id;
@@ -2598,12 +2677,12 @@ std::shared_ptr<KernelObject> object(uint32_t id) {
             currentThread = std::make_shared<KernelObject>(handle);
             currentThread->isThread = true;
             currentThread->guestAddress = memory->read32(currentContext->r13.u32 + 0x100);
-            std::lock_guard lock(objectMutex);
+            auto lock = StallProfiler::lock(objectMutex, "kernel-objectMutex");
             threadsById[GetCurrentThreadId()] = currentThread;
         }
         return currentThread;
     }
-    std::lock_guard lock(objectMutex);
+    auto lock = StallProfiler::lock(objectMutex, "kernel-objectMutex");
     auto it = objects.find(id);
     return it == objects.end() ? nullptr : it->second;
 }
@@ -2675,6 +2754,7 @@ static DWORD timeoutMilliseconds(uint8_t* base, uint32_t pointer) {
     return DWORD((std::min)((relative + 9999) / 10000, uint64_t(INFINITE - 1)));
 }
 PPC_FUNC(__imp__NtCreateEvent) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t out = ctx.r3.u32, attributes = ctx.r4.u32, type = ctx.r5.u32, initial = ctx.r6.u32;
     if (!out || type > 1) { ctx.r3.u64 = 0xc000000d; return; }
     if (attributes) PPC_RECOMP_FAILURE(ctx, uint32_t(ctx.lr), "named event attributes are not implemented");
@@ -2686,6 +2766,7 @@ PPC_FUNC(__imp__NtCreateEvent) {
     ctx.r3.u64 = 0;
 }
 PPC_FUNC(__imp__NtSetEvent) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     auto event = object(ctx.r3.u32);
     if (!event) { ctx.r3.u64 = 0xc0000008; return; }
     using SetEventFunction = LONG (NTAPI*)(HANDLE, LONG*);
@@ -2697,10 +2778,12 @@ PPC_FUNC(__imp__NtSetEvent) {
     ctx.r3.u64 = uint32_t(result);
 }
 PPC_FUNC(__imp__NtClearEvent) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     auto event = object(ctx.r3.u32);
     ctx.r3.u64 = event && ResetEvent(event->handle) ? 0 : 0xc0000008;
 }
 PPC_FUNC(__imp__NtCreateSemaphore) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t out = ctx.r3.u32;
     if (!out || ctx.r5.s32 < 0 || ctx.r6.s32 <= 0 || ctx.r5.s32 > ctx.r6.s32) { ctx.r3.u64 = 0xc000000d; return; }
     if (ctx.r4.u32) PPC_RECOMP_FAILURE(ctx, uint32_t(ctx.lr), "named semaphore attributes are not implemented");
@@ -2710,6 +2793,7 @@ PPC_FUNC(__imp__NtCreateSemaphore) {
     ctx.r3.u64 = 0;
 }
 PPC_FUNC(__imp__NtReleaseSemaphore) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     auto sem = object(ctx.r3.u32);
     if (!sem) { ctx.r3.u64 = 0xc0000008; return; }
     LONG previous;
@@ -2718,6 +2802,7 @@ PPC_FUNC(__imp__NtReleaseSemaphore) {
     ctx.r3.u64 = 0;
 }
 PPC_FUNC(__imp__NtWaitForSingleObjectEx) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr), ctx.r3.u32, "guest-handle");
     auto target = object(ctx.r3.u32);
     if (!target) { ctx.r3.u64 = 0xc0000008; return; }
     DWORD timeout = timeoutMilliseconds(base, ctx.r6.u32);
@@ -2728,7 +2813,12 @@ PPC_FUNC(__imp__NtWaitForSingleObjectEx) {
     const bool profileWait = profileEngineCpu && ctx.r13.u32 == 0x7ff00000u;
     const auto waitStarted = profileWait ? std::chrono::steady_clock::now() :
         std::chrono::steady_clock::time_point{};
-    DWORD result = nativeTimedWait(target->handle, ctx.r5.u32 != 0, ctx.r6.u32 ? &ticks : nullptr);
+    DWORD result;
+    {
+        StallProfiler::Scope wait(StallProfiler::Section::Wait, "nativeTimedWait",
+            ctx.lastFunction, uint32_t(ctx.lr), ctx.r3.u32, "guest-handle");
+        result = nativeTimedWait(target->handle, ctx.r5.u32 != 0, ctx.r6.u32 ? &ticks : nullptr);
+    }
     if (profileWait) {
         const auto waitUs = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - waitStarted).count();
@@ -2764,15 +2854,19 @@ PPC_FUNC(__imp__NtWaitForSingleObjectEx) {
         fprintf(stderr, "[Sync] wait tid=%lu handle=0x%08X timeout=%u result=0x%08X guest=0x%08X lr=0x%08X\n", GetCurrentThreadId(), ctx.r3.u32, uint32_t(timeout), uint32_t(result), ctx.lastFunction, uint32_t(ctx.lr));
     ctx.r3.u64 = result == WAIT_FAILED ? 0xc0000008 : result;
 }PPC_FUNC(__imp__NtClose) {
-    std::lock_guard lock(objectMutex);
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
+    auto lock = StallProfiler::lock(objectMutex, "kernel-objectMutex");
     ctx.r3.u64 = objects.erase(ctx.r3.u32) ? 0 : 0xc0000008;
 }
 PPC_FUNC(__imp__KeDelayExecutionThread) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     if (!ctx.r5.u32) { ctx.r3.u64 = 0xc000000d; return; }
     const int64_t ticks = int64_t(PPC_LOAD_U64(ctx.r5.u32));
     const BOOL alertable = ctx.r4.u32 != 0;
     if (ticks == 0) {
         // The original SDK also uses a zero interval as a scheduler yield.
+        StallProfiler::Scope wait(StallProfiler::Section::Wait, "SleepEx(yield)",
+            ctx.lastFunction, uint32_t(ctx.lr));
         ctx.r3.u64 = SleepEx(0, alertable) == WAIT_IO_COMPLETION ? 0xc0 : 0;
         return;
     }
@@ -2806,13 +2900,19 @@ PPC_FUNC(__imp__KeDelayExecutionThread) {
     if (lease.handle && SetWaitableTimer(lease.handle, &due, 0, nullptr, nullptr, FALSE)) {
         // Keep the original signed 100 ns interval: negative is relative,
         // positive is an absolute UTC deadline. Do not round up to milliseconds.
-        result = WaitForSingleObjectEx(lease.handle, INFINITE, alertable);
+        {
+            StallProfiler::Scope wait(StallProfiler::Section::Wait, "WaitForSingleObjectEx(delay)",
+                ctx.lastFunction, uint32_t(ctx.lr), reinterpret_cast<uintptr_t>(lease.handle), "host-delay-timer");
+            result = WaitForSingleObjectEx(lease.handle, INFINITE, alertable);
+        }
         if (result == WAIT_FAILED)
             PPC_RECOMP_FAILURE(ctx, uint32_t(ctx.lr), "Native delay timer wait failed");
     } else {
         // Older Windows versions lack high-resolution timers. Preserve the
         // existing wait behavior there, including interruptible SDK INFINITE.
         const DWORD timeout = ticks == INT64_MIN ? INFINITE : timeoutMilliseconds(base, ctx.r5.u32);
+        StallProfiler::Scope wait(StallProfiler::Section::Wait, "SleepEx(delay)",
+            ctx.lastFunction, uint32_t(ctx.lr));
         result = SleepEx(timeout, alertable);
     }
     ctx.r3.u64 = result == WAIT_IO_COMPLETION ? 0xc0 : 0;
@@ -2850,7 +2950,11 @@ static DWORD WINAPI guestThreadMain(void* raw) {
     start->ctx.fpscr.loadFromHost();
     fprintf(stderr, "[Thread] worker start tid=%lu entry=0x%08X argument=0x%08X\n", GetCurrentThreadId(), start->entry, start->argument);
     DWORD result = 0;
-    try { result = callGuestThread(start.get()); }
+    try {
+        StallProfiler::Scope guest(StallProfiler::Section::Guest, "guest-thread-entry",
+            start->startup ? start->startup : start->entry, uint32_t(start->ctx.lr));
+        result = callGuestThread(start.get());
+    }
     catch (const ThreadExit& exit) { result = exit.code; }
     if (start->object && start->object->guestAddress) {
         // Join poller sub_828A7F50 reports 259 while the low byte at +4 is
@@ -2865,7 +2969,30 @@ static DWORD WINAPI guestThreadMain(void* raw) {
     currentThread.reset();
     return result;
 }
+enum class HostSchedulingRole { HardAffinity, ResourcePool, ApplicationSystem };
+static HostSchedulingRole classifyHostSchedulingRole(uint8_t* base, uint32_t entry, uint32_t argument) noexcept {
+    if ((entry != resourcePoolThreadEntry && entry != applicationSystemThreadEntry) || !argument || (argument & 3) ||
+        uint64_t(argument) + 4 > PPC_MEMORY_SIZE) return HostSchedulingRole::HardAffinity;
+    // Optional scheduling metadata must never fault an otherwise valid thread
+    // creation or consume its PAGE_GUARD. Check current permissions only here,
+    // then guard the read against a concurrent protection change.
+    if (!guestBufferAccessible(argument, 4)) return HostSchedulingRole::HardAffinity;
+    __try {
+        const auto vtable = _byteswap_ulong(*reinterpret_cast<const uint32_t*>(base + argument));
+        if (vtable != resourcePoolThreadVtable && vtable != applicationSystemThreadVtable)
+            return HostSchedulingRole::HardAffinity;
+        if (!guestBufferAccessible(vtable + 48, 4)) return HostSchedulingRole::HardAffinity;
+        const auto callback = _byteswap_ulong(*reinterpret_cast<const uint32_t*>(base + vtable + 48));
+        if (resourcePoolThreadRole(entry, vtable, callback)) return HostSchedulingRole::ResourcePool;
+        if (applicationSystemThreadRole(entry, vtable, callback)) return HostSchedulingRole::ApplicationSystem;
+        return HostSchedulingRole::HardAffinity;
+    } __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION || GetExceptionCode() == EXCEPTION_IN_PAGE_ERROR
+        ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+        return HostSchedulingRole::HardAffinity;
+    }
+}
 PPC_FUNC(__imp__ExCreateThread) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t out = ctx.r3.u32, stackSize = ctx.r4.u32, idOut = ctx.r5.u32;
     uint32_t startup = ctx.r6.u32, entry = ctx.r7.u32, argument = ctx.r8.u32, flags = ctx.r9.u32;
     if (!out || !entry || stackSize > 0x1000000) { ctx.r3.u64 = 0xc000000d; return; }
@@ -2888,6 +3015,7 @@ PPC_FUNC(__imp__ExCreateThread) {
     if (!VirtualProtect(base + allocation + 0x1000, 0x1000, PAGE_NOACCESS, &oldProtection)) {
         memory->release(allocation); ctx.r3.u64 = 0xc0000017; return;
     }
+    const auto schedulingRole = classifyHostSchedulingRole(base, entry, argument);
     DWORD id;
     HANDLE handle = CreateThread(nullptr, 64 * 1024 * 1024, guestThreadMain, start.get(),
         CREATE_SUSPENDED | STACK_SIZE_PARAM_IS_A_RESERVATION, &id);
@@ -2899,8 +3027,12 @@ PPC_FUNC(__imp__ExCreateThread) {
     stored->affinity = affinity ? affinity : 0x3f;
     stored->guestAddress = allocation + Memory::threadObjectOffset;
     stored->allocation = allocation;
+    stored->threadEntry = entry;
+    stored->threadArgument = argument;
+    stored->resourcePoolWorker = schedulingRole == HostSchedulingRole::ResourcePool;
+    stored->applicationSystemWorker = schedulingRole == HostSchedulingRole::ApplicationSystem;
     start->object = stored;
-    { std::lock_guard lock(objectMutex); threadsById[id] = stored; }
+    { auto lock = StallProfiler::lock(objectMutex, "kernel-objectMutex"); threadsById[id] = stored; }
     memory->write32(out, guestHandle);
     if (idOut) memory->write32(idOut, id);
     start.release();
@@ -2910,14 +3042,16 @@ PPC_FUNC(__imp__ExCreateThread) {
     }
     ctx.r3.u64 = 0;
 }
-PPC_FUNC(__imp__ExTerminateThread) { throw ThreadExit{ctx.r3.u32}; }
+PPC_FUNC(__imp__ExTerminateThread) { StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr)); throw ThreadExit{ctx.r3.u32}; }
 PPC_FUNC(__imp__RtlNtStatusToDosError) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     using Convert = ULONG (WINAPI*)(LONG);
     static auto convert = reinterpret_cast<Convert>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlNtStatusToDosError"));
     if (!convert) PPC_RECOMP_FAILURE(ctx, uint32_t(ctx.lr), "Windows status conversion is unavailable");
     ctx.r3.u64 = convert(ctx.r3.s32);
 }
 PPC_FUNC(__imp__NtSuspendThread) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     auto thread = object(ctx.r3.u32);
     if (!thread || !thread->isThread) { ctx.r3.u64 = 0xc0000008; return; }
     DWORD previous = SuspendThread(thread->handle);
@@ -2926,6 +3060,7 @@ PPC_FUNC(__imp__NtSuspendThread) {
     ctx.r3.u64 = 0;
 }
 PPC_FUNC(__imp__NtResumeThread) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     auto thread = object(ctx.r3.u32);
     if (!thread || !thread->isThread) { ctx.r3.u64 = 0xc0000008; return; }
     DWORD previous = ResumeThread(thread->handle);
@@ -2934,6 +3069,7 @@ PPC_FUNC(__imp__NtResumeThread) {
     ctx.r3.u64 = 0;
 }
 PPC_FUNC(__imp__ObReferenceObjectByHandle) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     auto target = object(ctx.r3.u32);
     if (!target || !target->guestAddress) { ctx.r3.u64 = 0xc0000008; return; }
     if (!ctx.r5.u32) { ctx.r3.u64 = 0xc000000d; return; }
@@ -2941,7 +3077,7 @@ PPC_FUNC(__imp__ObReferenceObjectByHandle) {
     // A host fault under objectMutex cannot unwind its lock_guard with /EHsc.
     // Validate the complete output before publishing references or aliases.
     if (!guestOutputAccessible(ctx.r5.u32, 4)) { ctx.r3.u64 = 0xc0000005; return; }
-    std::lock_guard lock(objectMutex);
+    auto lock = StallProfiler::lock(objectMutex, "kernel-objectMutex");
     auto& reference = references[target->guestAddress];
     reference.first = target;
     ++reference.second;
@@ -2949,15 +3085,17 @@ PPC_FUNC(__imp__ObReferenceObjectByHandle) {
     ctx.r3.u64 = 0;
 }
 PPC_FUNC(__imp__ObDereferenceObject) {
-    std::lock_guard lock(objectMutex);
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
+    auto lock = StallProfiler::lock(objectMutex, "kernel-objectMutex");
     auto it = references.find(ctx.r3.u32);
     if (it == references.end()) PPC_RECOMP_FAILURE(ctx, ctx.r3.u32, "invalid kernel object dereference");
     if (--it->second.second == 0) references.erase(it);
 }
 PPC_FUNC(__imp__ObLookupThreadByThreadId) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     if (!ctx.r4.u32) { ctx.r3.u64 = 0xc000000d; return; }
     if (!guestOutputAccessible(ctx.r4.u32, 4)) { ctx.r3.u64 = 0xc0000005; return; }
-    std::lock_guard lock(objectMutex);
+    auto lock = StallProfiler::lock(objectMutex, "kernel-objectMutex");
     auto it = threadsById.find(ctx.r3.u32);
     auto thread = it == threadsById.end() ? nullptr : it->second.lock();
     if (!thread) { ctx.r3.u64 = 0xc0000225; return; }
@@ -2967,9 +3105,10 @@ PPC_FUNC(__imp__ObLookupThreadByThreadId) {
     ctx.r3.u64 = 0;
 }
 PPC_FUNC(__imp__KeResumeThread) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     std::shared_ptr<KernelObject> thread;
     {
-        std::lock_guard lock(objectMutex);
+        auto lock = StallProfiler::lock(objectMutex, "kernel-objectMutex");
         auto it = references.find(ctx.r3.u32);
         if (it != references.end()) thread = it->second.first;
     }
@@ -2983,9 +3122,10 @@ PPC_FUNC(__imp__KeResumeThread) {
     }
     ctx.r3.u64 = 0;
 }PPC_FUNC(__imp__ObOpenObjectByPointer) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     if (!ctx.r4.u32) { ctx.r3.u64 = 0xc000000d; return; }
     if (!guestOutputAccessible(ctx.r4.u32, 4)) { ctx.r3.u64 = 0xc0000005; return; }
-    std::lock_guard lock(objectMutex);
+    auto lock = StallProfiler::lock(objectMutex, "kernel-objectMutex");
     auto it = references.find(ctx.r3.u32);
     if (it == references.end()) { ctx.r3.u64 = 0xc0000008; return; }
     uint32_t handle = nextHandle++;
@@ -2994,11 +3134,12 @@ PPC_FUNC(__imp__KeResumeThread) {
     ctx.r3.u64 = 0;
 }
 PPC_FUNC(__imp__NtDuplicateObject) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     auto original = object(ctx.r3.u32);
     if (!original) { ctx.r3.u64 = 0xc0000008; return; }
     if (ctx.r5.u32 & ~1u) PPC_RECOMP_FAILURE(ctx, uint32_t(ctx.lr), "unsupported handle duplication options");
     if (ctx.r4.u32 && !guestOutputAccessible(ctx.r4.u32, 4)) { ctx.r3.u64 = 0xc0000005; return; }
-    std::lock_guard lock(objectMutex);
+    auto lock = StallProfiler::lock(objectMutex, "kernel-objectMutex");
     if (ctx.r4.u32) {
         uint32_t handle = nextHandle++;
         objects.emplace(handle, original);
@@ -3008,11 +3149,12 @@ PPC_FUNC(__imp__NtDuplicateObject) {
     ctx.r3.u64 = 0;
 }
 static std::shared_ptr<KernelObject> referencedThread(uint32_t address) {
-    std::lock_guard lock(objectMutex);
+    auto lock = StallProfiler::lock(objectMutex, "kernel-objectMutex");
     auto it = references.find(address);
     return it == references.end() ? nullptr : it->second.first;
 }
 PPC_FUNC(__imp__KeSetBasePriorityThread) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     auto thread = referencedThread(ctx.r3.u32);
     if (!thread) PPC_RECOMP_FAILURE(ctx, ctx.r3.u32, "unknown thread object in priority change");
     int32_t previous = thread->priority;
@@ -3023,13 +3165,18 @@ PPC_FUNC(__imp__KeSetBasePriorityThread) {
     ctx.r3.s64 = previous;
 }
 PPC_FUNC(__imp__KeSetAffinityThread) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     auto thread = referencedThread(ctx.r3.u32);
     if (!thread || !ctx.r4.u32 || (ctx.r4.u32 & ~0x3fu)) { ctx.r3.u64 = 0xc000000d; return; }
     DWORD_PTR allowed, system;
     if (!GetProcessAffinityMask(GetCurrentProcess(), &allowed, &system)) { ctx.r3.u64 = 0xc0000001; return; }
     GROUP_AFFINITY group{};
     if(!GetThreadGroupAffinity(thread->handle,&group)) {ctx.r3.u64=0xc0000001;return;}
-    DWORD_PTR selected = nativeGuestAffinity(ctx.r4.u32,allowed,group.Group);
+    // The qualified resource pool and application system keep their guest
+    // synchronization identity, but can escape a CPU occupied by title workers.
+    // All other workers retain the existing hard-affinity mapping.
+    DWORD_PTR selected = (thread->resourcePoolWorker || thread->applicationSystemWorker) ? allowed :
+        nativeGuestAffinity(ctx.r4.u32,allowed,group.Group);
     if (!selected) { ctx.r3.u64 = 0xc000000d; return; }
     if (!SetThreadAffinityMask(thread->handle, selected)) { ctx.r3.u64 = 0xc0000001; return; }
     if (ctx.r5.u32) memory->write32(ctx.r5.u32, thread->affinity);
@@ -3039,12 +3186,14 @@ PPC_FUNC(__imp__KeSetAffinityThread) {
     InterlockedExchange8(reinterpret_cast<volatile CHAR*>(base + thread->guestAddress - Memory::threadObjectOffset + 0x10c), CHAR(processor));
     static std::atomic<unsigned> reports{};
     if(reports.fetch_add(1,std::memory_order_relaxed)<32)
-        std::fprintf(stderr,"[Scheduling] guestMask=%02X nativeMask=%llX group=%u guestProcessor=%u\n",
-            ctx.r4.u32,static_cast<unsigned long long>(selected),unsigned(group.Group),unsigned(processor));
+        std::fprintf(stderr,"[Scheduling] guestMask=%02X nativeMask=%llX group=%u guestProcessor=%u resourcePool=%u applicationSystem=%u\n",
+            ctx.r4.u32,static_cast<unsigned long long>(selected),unsigned(group.Group),unsigned(processor),
+            unsigned(thread->resourcePoolWorker),unsigned(thread->applicationSystemWorker));
     ctx.r3.u64 = 0;
 }
 
 PPC_FUNC(__imp__NtAllocateVirtualMemory) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t basePointer = ctx.r3.u32, sizePointer = ctx.r4.u32;
     uint32_t flags = ctx.r5.u32, protect = ctx.r6.u32;
     if (!basePointer || !sizePointer || !memory->read32(sizePointer) || !(flags & 0x3000)) {
@@ -3060,11 +3209,12 @@ PPC_FUNC(__imp__NtAllocateVirtualMemory) {
     fprintf(stderr, "[Memory] allocated 0x%X at 0x%08X\n", size, address);
     ctx.r3.u64 = 0;
 }
-PPC_FUNC(__imp__MmGetPhysicalAddress) { ctx.r3.u64 = ctx.r3.u32>=0xa0000000u?Memory::physicalAddress(ctx.r3.u32):ctx.r3.u32; ctx.r4.u64 = 0; }
-PPC_FUNC(__imp__MmQueryAllocationSize) { ctx.r3.u64 = memory->allocationSize(ctx.r3.u32); }
-PPC_FUNC(__imp__MmQueryAddressProtect) { ctx.r3.u64 = PAGE_READWRITE; }
+PPC_FUNC(__imp__MmGetPhysicalAddress) { StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = ctx.r3.u32>=0xa0000000u?Memory::physicalAddress(ctx.r3.u32):ctx.r3.u32; ctx.r4.u64 = 0; }
+PPC_FUNC(__imp__MmQueryAllocationSize) { StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = memory->allocationSize(ctx.r3.u32); }
+PPC_FUNC(__imp__MmQueryAddressProtect) { StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = PAGE_READWRITE; }
 
 PPC_FUNC(__imp__MmAllocatePhysicalMemoryEx) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t flags = ctx.r3.u32, size = ctx.r4.u32, protection = ctx.r5.u32;
     uint32_t minimum = ctx.r6.u32, maximum = ctx.r7.u32, alignment = ctx.r8.u32;
     if (flags > 2 || minimum != 0 || maximum != 0xffffffff)
@@ -3083,6 +3233,7 @@ PPC_FUNC(__imp__MmAllocatePhysicalMemoryEx) {
     ctx.r3.u64 = address;
 }
 PPC_FUNC(__imp__MmFreePhysicalMemory) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t address = ctx.r4.u32;
     if (address && !memory->release(address)) {
         // Physical pools are suballocated by the title; an interior address
@@ -3091,6 +3242,7 @@ PPC_FUNC(__imp__MmFreePhysicalMemory) {
     }
 }
 PPC_FUNC(__imp__MmQueryStatistics) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t address = ctx.r3.u32;
     if (!address) { ctx.r3.u64 = 0xc000000d; return; }
     if (memory->read32(address) != 104) { ctx.r3.u64 = 0xc0000023; return; }
@@ -3116,8 +3268,8 @@ PPC_FUNC(__imp__MmQueryStatistics) {
     ctx.r3.u64 = 0;
 }
 
-PPC_FUNC(__imp__KeBugCheck) { PPC_RECOMP_FAILURE(ctx, uint32_t(ctx.lr), "guest KeBugCheck"); }
-PPC_FUNC(__imp__KeBugCheckEx) { PPC_RECOMP_FAILURE(ctx, uint32_t(ctx.lr), "guest KeBugCheckEx"); }
-PPC_FUNC(__imp__DbgBreakPoint) { PPC_RECOMP_FAILURE(ctx, uint32_t(ctx.lr), "guest DbgBreakPoint assertion"); }
-PPC_FUNC(__imp__HalReturnToFirmware) { PPC_RECOMP_FAILURE(ctx, uint32_t(ctx.lr), "guest firmware transition requested"); }
-PPC_FUNC(__imp__XamLoaderTerminateTitle) { PPC_RECOMP_FAILURE(ctx, uint32_t(ctx.lr), "guest requested title termination before gameplay"); }
+PPC_FUNC(__imp__KeBugCheck) { StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr)); PPC_RECOMP_FAILURE(ctx, uint32_t(ctx.lr), "guest KeBugCheck"); }
+PPC_FUNC(__imp__KeBugCheckEx) { StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr)); PPC_RECOMP_FAILURE(ctx, uint32_t(ctx.lr), "guest KeBugCheckEx"); }
+PPC_FUNC(__imp__DbgBreakPoint) { StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr)); PPC_RECOMP_FAILURE(ctx, uint32_t(ctx.lr), "guest DbgBreakPoint assertion"); }
+PPC_FUNC(__imp__HalReturnToFirmware) { StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr)); PPC_RECOMP_FAILURE(ctx, uint32_t(ctx.lr), "guest firmware transition requested"); }
+PPC_FUNC(__imp__XamLoaderTerminateTitle) { StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr)); PPC_RECOMP_FAILURE(ctx, uint32_t(ctx.lr), "guest requested title termination before gameplay"); }

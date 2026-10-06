@@ -1,4 +1,6 @@
+#include "stall_profiler_lock.h"
 #include "runtime.h"
+#include "stall_profiler.h"
 #include "audio_driver.h"
 #include "xma_bridge.h"
 #include "ppc_image_metadata.h"
@@ -124,7 +126,13 @@ void Memory::writeTimestamp(uint32_t storage, uint32_t millis) {
 }
 void Memory::stopTimestampLocked() {
     timestampStop_.store(true, std::memory_order_relaxed);
-    if (timestampThread_.joinable()) timestampThread_.join();
+    if (timestampThread_.joinable()) {
+        StallProfiler::Scope wait(StallProfiler::Section::Wait, "timestamp-thread-join",
+            currentContext ? currentContext->lastFunction : 0,
+            currentContext ? uint32_t(currentContext->lr) : 0,
+            reinterpret_cast<uintptr_t>(timestampThread_.native_handle()), "host-timestamp-thread");
+        timestampThread_.join();
+    }
 }
 void Memory::stopTimestamp() {
     std::lock_guard lock(mutex_);
@@ -296,14 +304,21 @@ bool Memory::xmaOwned(uint32_t context) {
         (context-xmaPool_) % kXmaContextBytes == 0 && xmaUsed_[(context-xmaPool_)/kXmaContextBytes];
 }
 const char* Memory::xmaDecode(uint32_t context) {
-    std::lock_guard lock(mutex_);
+    StallProfiler::Scope profile(StallProfiler::Section::Audio, "Memory::xmaDecode",
+        currentContext ? currentContext->lastFunction : 0,
+        currentContext ? uint32_t(currentContext->lr) : 0, context, "guest-xma-context");
+    auto lock = StallProfiler::lock(mutex_, "xma-memory-mutex");
     if (!xmaOwned(context))
         return "context is not owned by this address space";
     if (!xmaBridge_) xmaBridge_ = std::make_unique<XmaBridge>();
     return xmaBridge_->decode(*this, context, (context-xmaPool_)/kXmaContextBytes);
 }
 const char* Memory::xmaDecodeBatch(std::span<const uint32_t> contexts, uint32_t& failedContext) {
-    std::lock_guard lock(mutex_);
+    StallProfiler::Scope profile(StallProfiler::Section::Audio, "Memory::xmaDecodeBatch",
+        currentContext ? currentContext->lastFunction : 0,
+        currentContext ? uint32_t(currentContext->lr) : 0,
+        contexts.empty() ? 0 : contexts.front(), "guest-xma-first-context");
+    auto lock = StallProfiler::lock(mutex_, "xma-memory-mutex");
     failedContext = 0;
     if (contexts.empty()) return nullptr;
     if (!xmaOwned(contexts.front())) {
@@ -314,7 +329,10 @@ const char* Memory::xmaDecodeBatch(std::span<const uint32_t> contexts, uint32_t&
     return xmaBridge_->decodeBatch(*this, contexts, failedContext);
 }
 const char* Memory::xmaDecodeRecords(uint32_t records, uint32_t count, uint32_t& failedContext) {
-    std::lock_guard lock(mutex_);
+    StallProfiler::Scope profile(StallProfiler::Section::Audio, "Memory::xmaDecodeRecords",
+        currentContext ? currentContext->lastFunction : 0,
+        currentContext ? uint32_t(currentContext->lr) : 0, records, "guest-xma-records");
+    auto lock = StallProfiler::lock(mutex_, "xma-memory-mutex");
     failedContext = 0;
     if (!count) return nullptr;
     const uint32_t firstContext = read32(records + 64);
@@ -333,6 +351,7 @@ void Memory::xmaReset(uint32_t context) {
 }
 
 void Memory::load(const std::filesystem::path& gameDir) {
+    StallProfiler::Scope profile(StallProfiler::Section::FileIO, "Memory::load");
     gameDir_ = std::filesystem::weakly_canonical(gameDir);
     std::ifstream file(gameDir / "default.xex", std::ios::binary | std::ios::ate);
     if (!file) throw std::runtime_error("Game directory must contain the original default.xex");

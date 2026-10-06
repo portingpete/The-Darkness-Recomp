@@ -82,6 +82,7 @@ void DeveloperToolsWindow::toggle() { if (window_) close(); else open(); }
 
 bool DeveloperToolsWindow::open() {
     if (window_) return true;
+    setDeveloperToolsVisible(false);
     if (!IsWindow(owner_)) return false;
     mouse_.release();
     nativeInput().setSettingsOpen(true);
@@ -118,6 +119,7 @@ bool DeveloperToolsWindow::open() {
         std::fputs("[DeveloperTools] Cannot create panel window.\n", stderr);
         return false;
     }
+    setDeveloperToolsVisible(true);
     refresh();
     SetTimer(window_, kRefreshTimer, 250, nullptr);
     ShowWindow(window_, SW_SHOW);
@@ -127,6 +129,7 @@ bool DeveloperToolsWindow::open() {
 }
 
 void DeveloperToolsWindow::close() {
+    setDeveloperToolsVisible(false);
     if (window_ && IsWindow(window_)) DestroyWindow(window_);
     else releaseInputGate();
 }
@@ -279,7 +282,9 @@ LRESULT DeveloperToolsWindow::message(UINT message, WPARAM key, LPARAM detail) {
         return 0;
     }
     if (message == WM_CLOSE) { close(); return 0; }
+    if (message == WM_DESTROY) { setDeveloperToolsVisible(false); return 0; }
     if (message == WM_NCDESTROY) {
+        setDeveloperToolsVisible(false);
         const HWND closed = window_;
         const HWND foreground = GetForegroundWindow();
         const bool restoreFocus = foreground == closed || foreground == owner_;

@@ -1,3 +1,4 @@
+#include "stall_profiler.h"
 #include "menu_pointer.h"
 #include "input.h"
 #include "keyboard_menu_guest.h"
@@ -217,6 +218,7 @@ bool guestMenuPointerActive() noexcept {
 
 extern "C" PPC_FUNC(__imp__sub_8244D760);
 PPC_FUNC(sub_8244D760) {
+    DarkRecomp::Native::StallProfiler::Scope stallProfile(DarkRecomp::Native::StallProfiler::Section::Guest, __func__, 0x8244D760u, uint32_t(ctx.lr));
     const uint32_t root = ctx.r3.u32;
     __imp__sub_8244D760(ctx, base);
     processPointer(ctx, base, root);
@@ -224,6 +226,7 @@ PPC_FUNC(sub_8244D760) {
 
 extern "C" PPC_FUNC(__imp__sub_8239C988);
 PPC_FUNC(sub_8239C988) {
+    DarkRecomp::Native::StallProfiler::Scope stallProfile(DarkRecomp::Native::StallProfiler::Section::Guest, __func__, 0x8239C988u, uint32_t(ctx.lr));
     const uint32_t root = ctx.r3.u32;
     __imp__sub_8239C988(ctx, base);
     processPointer(ctx, base, root);
@@ -231,6 +234,7 @@ PPC_FUNC(sub_8239C988) {
 
 extern "C" PPC_FUNC(__imp__sub_82452D48);
 PPC_FUNC(sub_82452D48) {
+    DarkRecomp::Native::StallProfiler::Scope stallProfile(DarkRecomp::Native::StallProfiler::Section::Guest, __func__, 0x82452D48u, uint32_t(ctx.lr));
     struct ModalScope {
         ModalScope() { modalDepth.fetch_add(1, std::memory_order_acq_rel); }
         ~ModalScope() { modalDepth.fetch_sub(1, std::memory_order_acq_rel); }
@@ -242,6 +246,7 @@ PPC_FUNC(sub_82452D48) {
 // parameters belong to this render invocation, not a previous/covered menu.
 extern "C" PPC_FUNC(__imp__sub_82359428);
 PPC_FUNC(sub_82359428) {
+    DarkRecomp::Native::StallProfiler::Scope stallProfile(DarkRecomp::Native::StallProfiler::Section::Guest, __func__, 0x82359428u, uint32_t(ctx.lr));
     CubeRenderScope capture;
     const uint32_t cube = ctx.r3.u32;
     if (DarkRecomp::Native::memory && base == DarkRecomp::Native::memory->base() && cube >= 1072) {
@@ -261,6 +266,7 @@ PPC_FUNC(sub_82359428) {
 
 extern "C" PPC_FUNC(__imp__sub_82354DE0);
 PPC_FUNC(sub_82354DE0) {
+    DarkRecomp::Native::StallProfiler::Scope stallProfile(DarkRecomp::Native::StallProfiler::Section::Guest, __func__, 0x82354DE0u, uint32_t(ctx.lr));
     using namespace DarkRecomp::Native;
     const auto* scope = cubeRenderScope;
     const uint32_t params = ctx.r4.u32, caller = uint32_t(ctx.lr);
@@ -354,6 +360,7 @@ PPC_FUNC(sub_82354DE0) {
 // gameplay input epoch or dispatch while a render caller still uses the menu.
 extern "C" PPC_FUNC(__imp__sub_8236C880);
 PPC_FUNC(sub_8236C880) {
+    DarkRecomp::Native::StallProfiler::Scope stallProfile(DarkRecomp::Native::StallProfiler::Section::Guest, __func__, 0x8236C880u, uint32_t(ctx.lr));
     const uint32_t frontend = ctx.r3.u32;
     __imp__sub_8236C880(ctx, base);
     observeFrontend(base, frontend);
@@ -364,6 +371,7 @@ PPC_FUNC(sub_8236C880) {
 // the session baseline or replay a click into a covered menu.
 extern "C" PPC_FUNC(__imp__sub_8236C508);
 PPC_FUNC(sub_8236C508) {
+    DarkRecomp::Native::StallProfiler::Scope stallProfile(DarkRecomp::Native::StallProfiler::Section::Guest, __func__, 0x8236C508u, uint32_t(ctx.lr));
     const uint32_t frontend = ctx.r3.u32;
     __imp__sub_8236C508(ctx, base);
     DarkRecomp::Native::updateKeyboardMenuGuest(ctx, base, frontend);
@@ -373,6 +381,7 @@ PPC_FUNC(sub_8236C508) {
 
 extern "C" PPC_FUNC(__imp__sub_82452798);
 PPC_FUNC(sub_82452798) {
+    DarkRecomp::Native::StallProfiler::Scope stallProfile(DarkRecomp::Native::StallProfiler::Section::Guest, __func__, 0x82452798u, uint32_t(ctx.lr));
     const uint32_t window = ctx.r3.u32, message = ctx.r4.u32;
     const bool report = probeEnabled() && PPC_LOAD_U32(message) == 3;
     if (report) {
@@ -389,6 +398,7 @@ PPC_FUNC(sub_82452798) {
 
 extern "C" PPC_FUNC(__imp__sub_82452650);
 PPC_FUNC(sub_82452650) {
+    DarkRecomp::Native::StallProfiler::Scope stallProfile(DarkRecomp::Native::StallProfiler::Section::Guest, __func__, 0x82452650u, uint32_t(ctx.lr));
     const uint32_t window = ctx.r3.u32, message = ctx.r4.u32;
     if (probeEnabled() && PPC_LOAD_U32(message) == 3) {
         static std::atomic<unsigned> reports{0};

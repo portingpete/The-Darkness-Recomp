@@ -12,6 +12,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include "runtime/native/stall_profiler.h"
 
 namespace DarkRecomp::ShaderBytecodeCache {
 inline uint64_t hashBytes(const void* data,size_t size,uint64_t hash=14695981039346656037ull) noexcept {
@@ -42,6 +43,8 @@ inline uint64_t contentKey(uint64_t compiler,std::string_view source,std::string
 // change: cached data is compiler DXBC, checked by Create*Shader on each device.
 inline std::optional<uint64_t> compilerIdentity() {
     static const auto identity=[]()->std::optional<uint64_t> {
+        Native::StallProfiler::Scope stallIo(Native::StallProfiler::Section::FileIO,
+                                            "ShaderBytecodeCache compiler DLL read");
         try {
             const auto module=GetModuleHandleW(D3DCOMPILER_DLL_W);
             if(!module)return {};
@@ -80,6 +83,8 @@ public:
         char name[64]{};std::snprintf(name,sizeof(name),"native_v2_%016llX.cso",key);return directory_/name;
     }
     bool load(uint64_t key,Microsoft::WRL::ComPtr<ID3DBlob>& result) const noexcept {
+        Native::StallProfiler::Scope stallIo(Native::StallProfiler::Section::FileIO,
+                                            "ShaderBytecodeCache::load", 0, 0, key, "shader cache key");
         try {
             if(directory_.empty())return false;
             const auto target=path(key);std::error_code status;
@@ -96,6 +101,8 @@ public:
         } catch(...) {return false;}
     }
     bool save(uint64_t key,ID3DBlob* code) const noexcept {
+        Native::StallProfiler::Scope stallIo(Native::StallProfiler::Section::FileIO,
+                                            "ShaderBytecodeCache::save", 0, 0, key, "shader cache key");
         if(directory_.empty() || !code || !code->GetBufferSize() || code->GetBufferSize()>limit)return false;
         try {
             std::error_code status;std::filesystem::create_directories(directory_,status);if(status)return false;

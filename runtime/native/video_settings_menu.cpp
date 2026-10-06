@@ -1,3 +1,4 @@
+#include "stall_profiler.h"
 #include "graphics_settings.h"
 #include "fov_settings.h"
 #include "language_settings.h"
@@ -159,6 +160,7 @@ void refreshLabel(PPCContext& ctx, uint8_t* base, uint32_t button) {
 // in charge. ALWAYSPAINT makes the engine refresh the row's current value.
 extern "C" PPC_FUNC(__imp__sub_823980A8);
 PPC_FUNC(sub_823980A8) {
+    DarkRecomp::Native::StallProfiler::Scope stallProfile(DarkRecomp::Native::StallProfiler::Section::Guest, __func__, 0x823980A8u, uint32_t(ctx.lr));
     refreshLabel(ctx, base, ctx.r3.u32);
     __imp__sub_823980A8(ctx, base);
 }
@@ -167,6 +169,7 @@ PPC_FUNC(sub_823980A8) {
 // Its original ALWAYSPAINT path clears that whole rectangle before repainting.
 extern "C" PPC_FUNC(__imp__sub_8239A4E8);
 PPC_FUNC(sub_8239A4E8) {
+    DarkRecomp::Native::StallProfiler::Scope stallProfile(DarkRecomp::Native::StallProfiler::Section::Guest, __func__, 0x8239A4E8u, uint32_t(ctx.lr));
     const auto window = ctx.r3.u32;
     if (PPC_LOAD_U32(window) == 0x82074100 &&
         byteString(base, window + 168) == "DARKRECOMP_KEYBOARD_STATUS") {
@@ -179,6 +182,7 @@ PPC_FUNC(sub_8239A4E8) {
 // Original pressed callback covers both confirm and mouse activation.
 extern "C" PPC_FUNC(__imp__sub_823981D8);
 PPC_FUNC(sub_823981D8) {
+    DarkRecomp::Native::StallProfiler::Scope stallProfile(DarkRecomp::Native::StallProfiler::Section::Guest, __func__, 0x823981D8u, uint32_t(ctx.lr));
     const auto action = actionForButton(base, ctx.r3.u32);
     if (DarkRecomp::Native::activateKeyboardMenu(ctx, base, ctx.r3.u32, action) ||
         DarkRecomp::Native::activateNativeMenuAction(action) || DarkRecomp::Native::changeVideoSetting(action, 1)) {
@@ -190,6 +194,7 @@ PPC_FUNC(sub_823981D8) {
 
 extern "C" PPC_FUNC(__imp__sub_8239ECD8);
 PPC_FUNC(sub_8239ECD8) {
+    DarkRecomp::Native::StallProfiler::Scope stallProfile(DarkRecomp::Native::StallProfiler::Section::Guest, __func__, 0x8239ECD8u, uint32_t(ctx.lr));
     const uint32_t button = ctx.r3.u32, message = ctx.r4.u32;
     if (PPC_LOAD_U32(message) == 3 && (PPC_LOAD_U32(button + 84) & 9) == 1) {
         const auto key = PPC_LOAD_U32(message + 8);

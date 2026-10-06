@@ -4,7 +4,9 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <condition_variable>
 #include <mutex>
+#include <thread>
 #include "keyboard_bindings.h"
 
 namespace DarkRecomp::Native {
@@ -50,7 +52,9 @@ struct MenuCursorSnapshot {
 // field is serialized big endian.
 class NativeInput {
 public:
-    explicit NativeInput(ControllerApi api = {}) : api_(api) {}
+    // Injected APIs stay synchronous unless a test explicitly requests the
+    // production backend. The native singleton uses the background backend.
+    explicit NativeInput(ControllerApi api = {}, bool backgroundController = false);
     ~NativeInput();
     NativeInput(const NativeInput&) = delete;
     NativeInput& operator=(const NativeInput&) = delete;
@@ -97,12 +101,35 @@ private:
     void noteKeyboardActivityLocked(bool active);
     static bool controllerEdgeLocked(const XINPUT_GAMEPAD& current, const XINPUT_GAMEPAD& previous, bool haveBaseline);
     void updatePromptSourceLocked(uint32_t user, const XINPUT_GAMEPAD& physical, bool connected, bool keyboardMouseActive);
+    void controllerWorker();
+    void stopControllerWorker();
+    DWORD physicalState(uint32_t user, XINPUT_STATE& state, uint64_t& generation);
+    DWORD physicalCapabilities(uint32_t user, uint32_t flags, XINPUT_CAPABILITIES& caps);
+    DWORD physicalVibration(uint32_t user, XINPUT_VIBRATION vibration);
     ControllerApi api_;
+    struct PhysicalSlot {
+        XINPUT_STATE state{};
+        XINPUT_CAPABILITIES caps{};
+        DWORD status = ERROR_DEVICE_NOT_CONNECTED;
+        DWORD capsStatus = ERROR_DEVICE_NOT_CONNECTED;
+        uint64_t generation = 0;
+        uint64_t startedGeneration = 0;
+        XINPUT_VIBRATION vibration{};
+        uint64_t vibrationVersion = 0;
+    };
+    bool backgroundController_ = false;
+    std::mutex controllerMutex_;
+    std::condition_variable controllerChanged_;
+    std::array<PhysicalSlot, XUSER_MAX_COUNT> physicalSlots_{};
+    bool controllerStop_ = false, controllerCommand_ = false;
+    std::thread controllerThread_;
     std::mutex mutex_;
     HWND window_ = nullptr;
     bool focused_ = false;
     bool settingsOpen_ = false;
+    bool captureWasBlocked_ = false;
     std::array<bool, XUSER_MAX_COUNT> waitForControllerRelease_{};
+    std::array<uint64_t, XUSER_MAX_COUNT> controllerFreshAfter_{};
     bool leftMouse_ = false;
     bool rightMouse_ = false;
     bool middleMouse_ = false;

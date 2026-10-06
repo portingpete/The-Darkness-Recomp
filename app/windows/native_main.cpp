@@ -1,6 +1,7 @@
 #include <fstream>
 #include <intrin.h>
 #include "runtime/native/runtime.h"
+#include "runtime/native/stall_profiler.h"
 #include "runtime/native/audio_driver.h"
 #include "runtime/native/input.h"
 #include "native_mouse.h"
@@ -112,6 +113,10 @@ int wmain(int argc, wchar_t** argv) {
         setvbuf(stderr, nullptr, _IOFBF, 65536);
     }
     SetUnhandledExceptionFilter(DarkFlushLogsOnFatalException);
+    StallProfiler::initializeFromEnvironment();
+    struct StallProfilerLifetime {
+        ~StallProfilerLifetime() { StallProfiler::shutdown(); }
+    } stallProfilerLifetime;
 #if DARK_NATIVE_SSSE3
     int cpuFeatures[4]{};__cpuid(cpuFeatures,1);
     if(!(cpuFeatures[2]&(1<<9))) {
@@ -267,6 +272,7 @@ int wmain(int argc, wchar_t** argv) {
             printPreviewCounters();
             printContext(ctx);
             finishAudioEvidence();
+            StallProfiler::shutdown();
             fflush(nullptr);
             ExitProcess(5);
         }).detach();
@@ -414,7 +420,7 @@ int wmain(int argc, wchar_t** argv) {
             fprintf(stderr, "[STOP] Guest execution ended with status %d.\n", guestStatus);
             // Worker threads still own guest memory. A failed main entry must
             // use process teardown before the address space destructor runs.
-            if (guestStatus) { fflush(nullptr); ExitProcess(guestStatus); }
+            if (guestStatus) { StallProfiler::shutdown(); fflush(nullptr); ExitProcess(guestStatus); }
             PostMessageW(window, WM_CLOSE, 0, 0);
         });
 
@@ -436,6 +442,10 @@ int wmain(int argc, wchar_t** argv) {
             unsigned(sampleWorkers), unsigned(sampleRendererCpu), unsigned(!previewFrame.empty()));
         std::printf("[Performance] Native frame target=%u; engine frames are counted independently of presentation.\n", targetFps);
         std::puts("[PerformanceDefinition] version=3 frameTimestamp=Present-return frameCount=new-engine-frame-and-S_OK worldCount=accepted-world-frame presents=all-calls-presentOk-presentOccluded-presentFailed-presentOther rendered=all-rendered-frames renderedFPS=rendered-per-second renderCPUms=accepted-render-only intervals=completed-accepted-frame-returns-not-scanout lastAcceptedAgeMs=since-last-accepted-or-since-start intervalSamples=completed-interval-count haveAcceptedFrame=any-accepted-yet historicalFrameTimestamp=render-completion");
+        // Keep one root scope for the display run so message/input work and
+        // other loop logic appear in frame totals between the child scopes.
+        StallProfiler::Scope stallDisplay(StallProfiler::Section::Other, "native display loop");
+        StallProfiler::frameBoundary("display");
         while (message.message != WM_QUIT) {
             FrameMetrics::Clock::time_point loopTop{}, afterPump{}, takeEnd{}, renderEnd{}, postEnd{}, pacerEnd{};
             if (outlierOn) {
@@ -560,6 +570,7 @@ int wmain(int argc, wchar_t** argv) {
                 }
             } catch (const std::exception& resizeError) {
                 std::                fprintf(stderr, "[Display] Resize failed: %s\n", resizeError.what());
+                StallProfiler::shutdown();
                 fflush(nullptr);
                 ExitProcess(6); // Guest threads still own the address space.
             }
@@ -792,6 +803,7 @@ int wmain(int argc, wchar_t** argv) {
                     if (outlierOn) postEnd = FrameMetrics::now();
                 } catch (const std::exception& error) {
                     fprintf(stderr, "[EnginePreview] %s\n", error.what());
+                    StallProfiler::shutdown();
                     fflush(nullptr);
                     ExitProcess(6);
                 }
@@ -804,6 +816,7 @@ int wmain(int argc, wchar_t** argv) {
                     framePacer.wait();
                 } catch (const std::exception& timerError) {
                     fprintf(stderr, "[Frame] Native frame timer failed: %s\n", timerError.what());
+                    StallProfiler::shutdown();
                     fflush(nullptr);
                     ExitProcess(6);
                 }
@@ -818,6 +831,9 @@ int wmain(int argc, wchar_t** argv) {
             if(shouldPresent)displayReuse.presented(presentStatus);
             else if(preview && !preview->frameInProgress())++unchangedDisplaySkips;
             const auto presentEnd = FrameMetrics::now();
+            // A logical frame may span multiple queue polls and streamed parts.
+            // Include all of that time, pacing and the existing Present call.
+            if (frameRendered || !preview) StallProfiler::frameBoundary("display");
             if(shouldPresent)
                 performance.present(presentStatus, std::chrono::duration<double,std::milli>(presentEnd-presentStart).count());
             const bool isAccepted = shouldPresent && frameRendered && presentStatus == S_OK;
@@ -850,6 +866,7 @@ int wmain(int argc, wchar_t** argv) {
             }
             double measuredFps = 0;
             if (performance.report(measuredFps)) {
+                StallProfiler::Scope stallReport(StallProfiler::Section::Other, "native performance report");
                 // A live 150s run showed a metronomic ~73ms tail hitch on the
                 // first accepted frame after each 5s report. Time each step
                 // and log only hitch-sized totals; steady runs stay quiet.
@@ -893,6 +910,7 @@ int wmain(int argc, wchar_t** argv) {
                 fprintf(stderr, "[Frame] Native Present failed: 0x%08X\n", unsigned(presentStatus));
                 // The guest still owns live threads. Match the diagnostic
                 // deadline's process teardown rather than unwinding past them.
+                StallProfiler::shutdown();
                 fflush(nullptr);
                 ExitProcess(6);
             }
@@ -941,10 +959,12 @@ int wmain(int argc, wchar_t** argv) {
         // native window must also end an interactive run with no deadline,
         // without waiting forever for the original main loop to return.
         finishAudioEvidence();
+        StallProfiler::shutdown();
         fflush(nullptr);
         ExitProcess(0);
     } catch (const std::exception& error) {
         fprintf(stderr, "[ERROR] %s\n", error.what());
+        StallProfiler::shutdown();
         return 1;
     }
 }

@@ -1,4 +1,5 @@
 #include "engine_palette.h"
+#include "runtime/native/stall_profiler.h"
 #include "engine_performance.h"
 #include "render_trace.h"
 #include "simple_mesh.h"
@@ -95,6 +96,7 @@ void printEnginePaletteCounters() {
 }
 extern "C" PPC_FUNC(__imp__sub_8224AB18);
 PPC_FUNC(sub_8224AB18) {
+    DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::Section::Guest, "sub_8224AB18", 0x8224AB18, uint32_t(ctx.lr));
     DarkRecomp::Native::EngineCpuScope profile(DarkRecomp::Native::EnginePhase::palette);
     using namespace DarkRecomp::Native;
     EnginePaletteObservation observation;

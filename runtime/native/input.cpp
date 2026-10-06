@@ -1,8 +1,11 @@
 #include "input.h"
 #include "keyboard_menu.h"
 #include "runtime.h"
+#include "stall_profiler.h"
+#include "stall_profiler_lock.h"
 #include "renderer/engine/prompt_bindings.h"
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <cmath>
@@ -15,7 +18,13 @@ bool guestSpan(Memory& owner, uint32_t address, uint32_t length, bool writable) 
     while (cursor < end) {
         MEMORY_BASIC_INFORMATION info{};
         const auto* pointer = owner.base() + cursor;
-        if (!VirtualQuery(pointer, &info, sizeof(info)) || info.State != MEM_COMMIT ||
+        SIZE_T queried;
+        {
+            StallProfiler::Scope query(StallProfiler::Section::Other, "input guest-buffer VirtualQuery",
+                0, 0, cursor, "guest input buffer");
+            queried = VirtualQuery(pointer, &info, sizeof(info));
+        }
+        if (!queried || info.State != MEM_COMMIT ||
             (info.Protect & (PAGE_GUARD | PAGE_NOACCESS))) return false;
         DWORD protection = info.Protect & 0xff;
         bool canWrite = protection == PAGE_READWRITE || protection == PAGE_WRITECOPY ||
@@ -204,12 +213,192 @@ void NativeInput::updatePromptSourceLocked(uint32_t user, const XINPUT_GAMEPAD& 
 }
 
 NativeInput& nativeInput() {
-    static NativeInput input;
+    static NativeInput input({}, true);
     return input;
 }
+NativeInput::NativeInput(ControllerApi api, bool backgroundController)
+    : api_(api), backgroundController_(backgroundController) {
+    if (backgroundController_) {
+        try { controllerThread_ = std::thread(&NativeInput::controllerWorker, this); }
+        catch (...) {
+            std::fprintf(stderr, "[Input] Controller worker unavailable; physical controllers disabled, keyboard/mouse active.\n");
+        }
+    }
+}
 NativeInput::~NativeInput() {
-    std::lock_guard lock(mutex_);
-    stopVibrationLocked();
+    {
+        std::lock_guard lock(mutex_);
+        stopVibrationLocked();
+    }
+    stopControllerWorker();
+}
+void NativeInput::stopControllerWorker() {
+    {
+        std::lock_guard lock(controllerMutex_);
+        controllerStop_ = true;
+    }
+    controllerChanged_.notify_one();
+    if (controllerThread_.joinable()) controllerThread_.join();
+}
+DWORD NativeInput::physicalState(uint32_t user, XINPUT_STATE& state, uint64_t& generation) {
+    if (!backgroundController_) { generation = UINT64_MAX; return api_.state(user, &state); }
+    auto lock = StallProfiler::lock(controllerMutex_, "NativeInput::physicalState cache mutex");
+    state = physicalSlots_[user].state;
+    generation = physicalSlots_[user].generation;
+    return physicalSlots_[user].status;
+}
+DWORD NativeInput::physicalCapabilities(uint32_t user, uint32_t flags, XINPUT_CAPABILITIES& caps) {
+    if (!backgroundController_) return api_.capabilities(user, flags, &caps);
+    auto lock = StallProfiler::lock(controllerMutex_, "NativeInput::physicalCapabilities cache mutex");
+    const auto& physical = physicalSlots_[user];
+    caps = physical.caps;
+    // XINPUT_FLAG_GAMEPAD only filters Type; capability bytes are otherwise
+    // the same snapshot obtained by the unrestricted host query.
+    if (physical.capsStatus == ERROR_SUCCESS && flags == XINPUT_FLAG_GAMEPAD &&
+        caps.Type != XINPUT_DEVTYPE_GAMEPAD) return ERROR_DEVICE_NOT_CONNECTED;
+    return physical.capsStatus;
+}
+DWORD NativeInput::physicalVibration(uint32_t user, XINPUT_VIBRATION vibration) {
+    if (!backgroundController_) return api_.vibration(user, &vibration);
+    DWORD status;
+    {
+        auto lock = StallProfiler::lock(controllerMutex_, "NativeInput::physicalVibration cache mutex");
+        auto& physical = physicalSlots_[user];
+        status = physical.status;
+        if (status != ERROR_SUCCESS && (vibration.wLeftMotorSpeed || vibration.wRightMotorSpeed))
+            return status; // Never replay a rejected request on a later hotplug.
+        // Latest command wins, including a focus-loss zero replacing an
+        // unsent rumble request while a device probe is blocked in Windows.
+        physical.vibration = vibration;
+        ++physical.vibrationVersion;
+        controllerCommand_ = true;
+    }
+    controllerChanged_.notify_one();
+    return status;
+}
+void NativeInput::controllerWorker() {
+    using Clock = std::chrono::steady_clock;
+    constexpr auto connectedInterval = std::chrono::milliseconds(2);
+    constexpr auto discoveryInterval = std::chrono::milliseconds(500);
+    std::array<uint64_t, XUSER_MAX_COUNT> sent{};
+    std::array<XINPUT_VIBRATION, XUSER_MAX_COUNT> lastSent{};
+    std::array<Clock::time_point, XUSER_MAX_COUNT> nextCaps{};
+    auto nextDiscovery = Clock::time_point{};
+    uint32_t discoverySlot = 0;
+    const auto stopped = [&] {
+        std::lock_guard lock(controllerMutex_);
+        return controllerStop_;
+    };
+    std::array<DWORD, XUSER_MAX_COUNT> motorErrors{};
+    const auto drainMotors = [&] {
+        for (uint32_t user = 0; user < XUSER_MAX_COUNT && !stopped(); ++user) {
+            // A newer zero that arrived inside SetState is delivered directly
+            // afterward, before any other potentially blocking device probe.
+            for (unsigned attempt = 0; attempt < 2; ++attempt) {
+                XINPUT_VIBRATION vibration{};
+                uint64_t version;
+                {
+                    std::lock_guard lock(controllerMutex_);
+                    const auto& physical = physicalSlots_[user];
+                    version = physical.vibrationVersion;
+                    if (version == sent[user]) break;
+                    vibration = physical.vibration;
+                    if (attempt && (vibration.wLeftMotorSpeed || vibration.wRightMotorSpeed)) break;
+                }
+                DWORD result;
+                {
+                    StallProfiler::Scope profile(StallProfiler::Section::Other, "XInputSetState(background)",
+                        0, 0, user, "controller-user");
+                    result = api_.vibration(user, &vibration);
+                }
+                if (result == ERROR_SUCCESS) lastSent[user] = vibration;
+                else if (result != ERROR_DEVICE_NOT_CONNECTED && motorErrors[user] != result)
+                    std::fprintf(stderr, "[Input] Background vibration user=%u status=%lu\n", user, result);
+                motorErrors[user] = result;
+                sent[user] = version;
+            }
+        }
+    };
+    const auto refresh = [&](uint32_t user) {
+        if (stopped()) return;
+        XINPUT_STATE state{};
+        DWORD status;
+        uint64_t generation;
+        {
+            std::lock_guard lock(controllerMutex_);
+            generation = ++physicalSlots_[user].startedGeneration;
+        }
+        {
+            StallProfiler::Scope profile(StallProfiler::Section::Other, "XInputGetState(background)",
+                0, 0, user, "controller-user");
+            status = api_.state(user, &state);
+        }
+        bool needsCaps;
+        {
+            std::lock_guard lock(controllerMutex_);
+            auto& physical = physicalSlots_[user];
+            const bool newlyConnected = physical.status != ERROR_SUCCESS && status == ERROR_SUCCESS;
+            physical.status = status;
+            physical.generation = generation;
+            physical.state = status == ERROR_SUCCESS ? state : XINPUT_STATE{};
+            if (status != ERROR_SUCCESS) {
+                physical.caps = {};
+                physical.capsStatus = status;
+                // A pending command belongs to the device that accepted it,
+                // never a replacement pad plugged into the same user slot.
+                physical.vibration = {};
+                sent[user] = physical.vibrationVersion;
+            }
+            needsCaps = status == ERROR_SUCCESS &&
+                (newlyConnected || (physical.capsStatus != ERROR_SUCCESS && Clock::now() >= nextCaps[user]));
+        }
+        drainMotors();
+        if (needsCaps && !stopped()) {
+            XINPUT_CAPABILITIES caps{};
+            DWORD capsStatus;
+            {
+                StallProfiler::Scope profile(StallProfiler::Section::Other, "XInputGetCapabilities(background)",
+                    0, 0, user, "controller-user");
+                capsStatus = api_.capabilities(user, 0, &caps);
+            }
+            std::lock_guard lock(controllerMutex_);
+            physicalSlots_[user].caps = capsStatus == ERROR_SUCCESS ? caps : XINPUT_CAPABILITIES{};
+            physicalSlots_[user].capsStatus = capsStatus;
+            nextCaps[user] = Clock::now() + std::chrono::seconds(1);
+        }
+        drainMotors();
+    };
+    while (!stopped()) {
+        std::array<bool, XUSER_MAX_COUNT> connected{};
+        {
+            std::lock_guard lock(controllerMutex_);
+            controllerCommand_ = false;
+            for (uint32_t user = 0; user < connected.size(); ++user)
+                connected[user] = physicalSlots_[user].status == ERROR_SUCCESS;
+        }
+        drainMotors();
+        // Refresh live pads before one absent-slot probe. Do not issue a
+        // burst of four potentially slow Windows device-enumeration calls.
+        for (uint32_t user = 0; user < connected.size(); ++user)
+            if (connected[user]) refresh(user);
+        if (Clock::now() >= nextDiscovery) {
+            for (uint32_t count = 0; count < connected.size(); ++count) {
+                const uint32_t user = discoverySlot++ % XUSER_MAX_COUNT;
+                if (!connected[user]) { refresh(user); break; }
+            }
+            nextDiscovery = Clock::now() + discoveryInterval;
+        }
+        drainMotors();
+        std::unique_lock lock(controllerMutex_);
+        controllerChanged_.wait_for(lock, connectedInterval, [&] { return controllerStop_ || controllerCommand_; });
+    }
+    for (uint32_t user = 0; user < XUSER_MAX_COUNT; ++user)
+        if (lastSent[user].wLeftMotorSpeed || lastSent[user].wRightMotorSpeed) {
+            XINPUT_VIBRATION stop{};
+            StallProfiler::Scope profile(StallProfiler::Section::Other, "XInputSetState(shutdown)",
+                0, 0, user, "controller-user");
+            api_.vibration(user, &stop);
+        }
 }
 void NativeInput::clearKeysLocked() {
     ++menuEpoch_;
@@ -271,6 +460,12 @@ void NativeInput::suppressMenuActivationKeysLocked() {
     leftMouse_ = rightMouse_ = middleMouse_ = false;
     wheelPending_ = wheelRemainder_ = 0; wheelButton_ = 0;
     waitForControllerRelease_.fill(true);
+    if (backgroundController_) {
+        captureWasBlocked_ = true;
+        std::lock_guard physicalLock(controllerMutex_);
+        for (uint32_t user = 0; user < XUSER_MAX_COUNT; ++user)
+            controllerFreshAfter_[user] = physicalSlots_[user].startedGeneration + 1;
+    }
     if (held) ++menuEpoch_;
 }
 void NativeInput::suppressMenuActivationKeys() {
@@ -372,7 +567,7 @@ void NativeInput::stopVibrationLocked() {
     for (uint32_t user = 0; user < slots_.size(); ++user) {
         if (slots_[user].rumbling) {
             XINPUT_VIBRATION stop{};
-            api_.vibration(user, &stop);
+            physicalVibration(user, stop);
             slots_[user].rumbling = false;
         }
     }
@@ -386,6 +581,7 @@ void NativeInput::attachWindow(HWND window) {
     window_ = window;
     focused_ = false;
     settingsOpen_ = false;
+    captureWasBlocked_ = false;
     waitForControllerRelease_.fill(false);
 }
 void NativeInput::setSettingsOpen(bool open) {
@@ -398,17 +594,32 @@ void NativeInput::setSettingsOpen(bool open) {
     // Save/Cancel may be pressed on any controller. Do not deliver that
     // held button to the original menu when the panel releases ownership.
     waitForControllerRelease_.fill(true);
+    if (backgroundController_) {
+        std::lock_guard physicalLock(controllerMutex_);
+        for (uint32_t user = 0; user < XUSER_MAX_COUNT; ++user)
+            controllerFreshAfter_[user] = physicalSlots_[user].startedGeneration + 1;
+    }
 }
 bool NativeInput::windowMessage(HWND window, UINT message, WPARAM key, LPARAM detail) {
     std::lock_guard lock(mutex_);
     if (!window_ || window_ != window) return false;
     if (message == WM_ACTIVATEAPP || message == WM_SETFOCUS || message == WM_KILLFOCUS) {
+        const bool wasFocused = focused_;
         focused_ = message == WM_SETFOCUS || (message == WM_ACTIVATEAPP && key != 0);
         if (!focused_) {
             cancelKeyboardMenuCapture();
             clearKeysLocked();
             stopVibrationLocked();
             resetPromptLocked();
+            if (backgroundController_) {
+                std::lock_guard physicalLock(controllerMutex_);
+                for (uint32_t user = 0; user < XUSER_MAX_COUNT; ++user)
+                    controllerFreshAfter_[user] = physicalSlots_[user].startedGeneration + 1;
+            }
+        } else if (!wasFocused && backgroundController_) {
+            std::lock_guard physicalLock(controllerMutex_);
+            for (uint32_t user = 0; user < XUSER_MAX_COUNT; ++user)
+                controllerFreshAfter_[user] = physicalSlots_[user].startedGeneration + 1;
         }
     } else if (message == WM_NCDESTROY) {
         cancelKeyboardMenuCapture();
@@ -563,12 +774,26 @@ XINPUT_GAMEPAD NativeInput::keyboardLocked() {
 DWORD NativeInput::getState(Memory& owner, uint32_t user, uint32_t flags, uint32_t output) {
     if (user >= slots_.size() || flags != 0 || !guestSpan(owner, output, 16, true))
         return ERROR_INVALID_PARAMETER;
-    std::lock_guard lock(mutex_);
+    auto lock = StallProfiler::lock(mutex_, "NativeInput::getState input mutex");
     ++counters_.polls;
-    XINPUT_STATE state{};
-    DWORD status = api_.state(user, &state);
     const bool capturingKey = keyboardMenuInputBlocked();
     if (capturingKey) suppressMenuActivationKeysLocked();
+    else if (captureWasBlocked_) {
+        captureWasBlocked_ = false;
+        // A neutral poll started during capture cannot release suppression
+        // afterward. Require a poll started after this ownership transition.
+        std::lock_guard physicalLock(controllerMutex_);
+        for (uint32_t slot = 0; slot < XUSER_MAX_COUNT; ++slot)
+            controllerFreshAfter_[slot] = physicalSlots_[slot].startedGeneration + 1;
+    }
+    XINPUT_STATE state{};
+    uint64_t physicalGeneration = 0;
+    DWORD status = physicalState(user, state, physicalGeneration);
+    // Focus requires a poll started after the ownership change, rather than
+    // replaying a cached/in-flight sample. A fresh held button still reaches
+    // the game as it did with synchronous XInput, including a newly hotplugged
+    // pad. Neutral-release suppression remains specific to menus/settings.
+    if (physicalGeneration < controllerFreshAfter_[user]) state.Gamepad = {};
     bool keyboard = user == 0 && window_;
     auto& slot = slots_[user];
     if (status != ERROR_SUCCESS && !(status == ERROR_DEVICE_NOT_CONNECTED && keyboard)) {
@@ -587,7 +812,8 @@ DWORD NativeInput::getState(Memory& owner, uint32_t user, uint32_t flags, uint32
             std::abs(int(pad.sThumbLY)) <= XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE &&
             std::abs(int(pad.sThumbRX)) <= XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE &&
             std::abs(int(pad.sThumbRY)) <= XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE;
-        if (!settingsOpen_ && !capturingKey && neutral) waitForControllerRelease_[user] = false;
+        if (!settingsOpen_ && !capturingKey && (!window_ || focused_) && neutral &&
+            physicalGeneration >= controllerFreshAfter_[user]) waitForControllerRelease_[user] = false;
         state.Gamepad = {};
     }
     // Classify the raw physical pad before keyboard merge: merged guest bits
@@ -627,9 +853,9 @@ DWORD NativeInput::getState(Memory& owner, uint32_t user, uint32_t flags, uint32
 DWORD NativeInput::getCapabilities(Memory& owner, uint32_t user, uint32_t flags, uint32_t output) {
     if (user >= slots_.size() || (flags & ~XINPUT_FLAG_GAMEPAD) || !guestSpan(owner, output, 20, true))
         return ERROR_INVALID_PARAMETER;
-    std::lock_guard lock(mutex_);
+    auto lock = StallProfiler::lock(mutex_, "NativeInput::getCapabilities input mutex");
     XINPUT_CAPABILITIES caps{};
-    DWORD status = api_.capabilities(user, flags, &caps);
+    DWORD status = physicalCapabilities(user, flags, caps);
     bool keyboard = user == 0 && window_;
     if (status != ERROR_SUCCESS && !(status == ERROR_DEVICE_NOT_CONNECTED && keyboard)) {
         memset(owner.base() + output, 0, 20);
@@ -656,11 +882,11 @@ DWORD NativeInput::getCapabilities(Memory& owner, uint32_t user, uint32_t flags,
 DWORD NativeInput::setState(Memory& owner, uint32_t user, uint32_t flags, uint32_t input) {
     if (user >= slots_.size() || flags != 0 || !guestSpan(owner, input, 4, false))
         return ERROR_INVALID_PARAMETER;
-    std::lock_guard lock(mutex_);
+    auto lock = StallProfiler::lock(mutex_, "NativeInput::setState input mutex");
     XINPUT_VIBRATION vibration{read16(owner.base() + input), read16(owner.base() + input + 2)};
     bool requested = vibration.wLeftMotorSpeed || vibration.wRightMotorSpeed;
     if (settingsOpen_ || (window_ && !focused_)) vibration = {};
-    DWORD status = api_.vibration(user, &vibration);
+    DWORD status = physicalVibration(user, vibration);
     slots_[user].rumbling = status == ERROR_SUCCESS && (vibration.wLeftMotorSpeed || vibration.wRightMotorSpeed);
     if (status == ERROR_DEVICE_NOT_CONNECTED && user == 0 && window_)
         return requested ? ERROR_NOT_SUPPORTED : ERROR_SUCCESS;

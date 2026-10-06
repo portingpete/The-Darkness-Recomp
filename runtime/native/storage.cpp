@@ -1,3 +1,5 @@
+#include "stall_profiler_lock.h"
+#include "stall_profiler.h"
 #include "storage.h"
 #include "runtime.h"
 #include <algorithm>
@@ -155,6 +157,8 @@ std::filesystem::path ContentDir(const ContentInfo& content) {
 }
 
 bool WriteContentMeta(const std::filesystem::path& dir, const ContentInfo& content) {
+    StallProfiler::Scope profile(StallProfiler::Section::FileIO, "Storage::WriteContentMeta",
+        currentContext ? currentContext->lastFunction : 0, currentContext ? uint32_t(currentContext->lr) : 0);
     std::filesystem::path root;
     {
         std::lock_guard lock(mutex);
@@ -232,6 +236,8 @@ bool WriteContentMeta(const std::filesystem::path& dir, const ContentInfo& conte
 }
 
 bool ReadContentMeta(const std::filesystem::path& dir, ContentInfo& out) {
+    StallProfiler::Scope profile(StallProfiler::Section::FileIO, "Storage::ReadContentMeta",
+        currentContext ? currentContext->lastFunction : 0, currentContext ? uint32_t(currentContext->lr) : 0);
     std::filesystem::path root;
     {
         std::lock_guard lock(mutex);
@@ -272,6 +278,8 @@ bool ReadContentMeta(const std::filesystem::path& dir, ContentInfo& out) {
 }
 
 bool EnsureSaveRoot(std::error_code& ec) {
+    StallProfiler::Scope profile(StallProfiler::Section::FileIO, "Storage::EnsureSaveRoot",
+        currentContext ? currentContext->lastFunction : 0, currentContext ? uint32_t(currentContext->lr) : 0);
     std::filesystem::path root;
     {
         std::lock_guard lock(mutex);
@@ -288,6 +296,8 @@ bool EnsureSaveRoot(std::error_code& ec) {
 }
 
 uint32_t DeviceState(uint32_t deviceId) {
+    StallProfiler::Scope profile(StallProfiler::Section::FileIO, "Storage::DeviceState",
+        currentContext ? currentContext->lastFunction : 0, currentContext ? uint32_t(currentContext->lr) : 0);
     if (deviceId != kSaveDeviceId) return 0x48F;
     std::error_code ec;
     if (!EnsureSaveRoot(ec)) {
@@ -298,6 +308,8 @@ uint32_t DeviceState(uint32_t deviceId) {
 }
 
 uint32_t EnumerateChecked(uint32_t contentType, std::vector<ContentInfo>& out) {
+    StallProfiler::Scope profile(StallProfiler::Section::FileIO, "Storage::EnumerateChecked",
+        currentContext ? currentContext->lastFunction : 0, currentContext ? uint32_t(currentContext->lr) : 0);
     out.clear();
     if (contentType == 0) return 0x57;
     std::filesystem::path root;
@@ -359,6 +371,8 @@ uint32_t EnumerateChecked(uint32_t contentType, std::vector<ContentInfo>& out) {
 
 uint32_t CreateContent(std::string_view rootAlias, const ContentInfo& content, uint32_t flags,
                        uint32_t* outDisposition, std::filesystem::path* outPath) {
+    StallProfiler::Scope profile(StallProfiler::Section::FileIO, "Storage::CreateContent",
+        currentContext ? currentContext->lastFunction : 0, currentContext ? uint32_t(currentContext->lr) : 0);
     if (!ValidRootName(rootAlias) || !ValidFileName(content.fileName)) return 0x57;
     if (content.deviceId != 0 && content.deviceId != kSaveDeviceId) return 0x48F;
     if (content.contentType == 0) return 0x57;
@@ -367,7 +381,7 @@ uint32_t CreateContent(std::string_view rootAlias, const ContentInfo& content, u
     // Serialize the whole operation: the alias check, disk mutation, and mount
     // publication are atomic with respect to other content operations, so two
     // concurrent creates of one alias cannot both pass and silently replace.
-    std::lock_guard opLock(opMutex);
+    auto opLock = StallProfiler::lock(opMutex, "storage-operation-mutex");
     std::string alias = lowerOf(rootAlias);
     char prefix[16]{};
     snprintf(prefix, sizeof(prefix), "%08X_", content.contentType);
@@ -490,11 +504,13 @@ uint32_t CreateContent(std::string_view rootAlias, const ContentInfo& content, u
 }
 
 uint32_t OpenExisting(std::string_view rootAlias, const ContentInfo& content) {
+    StallProfiler::Scope profile(StallProfiler::Section::FileIO, "Storage::OpenExisting",
+        currentContext ? currentContext->lastFunction : 0, currentContext ? uint32_t(currentContext->lr) : 0);
     if (!ValidRootName(rootAlias) || !ValidFileName(content.fileName)) return 0x57;
     if (content.contentType == 0) return 0x57;
     // Same opMutex->mutex ordering as CreateContent: alias check, disk read,
     // and mount publication serialize with all other content mutations.
-    std::lock_guard opLock(opMutex);
+    auto opLock = StallProfiler::lock(opMutex, "storage-operation-mutex");
     std::string alias = lowerOf(rootAlias);
     char prefix[16]{};
     snprintf(prefix, sizeof(prefix), "%08X_", content.contentType);
@@ -534,17 +550,21 @@ uint32_t OpenExisting(std::string_view rootAlias, const ContentInfo& content) {
 }
 
 uint32_t CloseContent(std::string_view rootAlias) {
+    StallProfiler::Scope profile(StallProfiler::Section::FileIO, "Storage::CloseContent",
+        currentContext ? currentContext->lastFunction : 0, currentContext ? uint32_t(currentContext->lr) : 0);
     if (!ValidRootName(rootAlias)) return 0x57;
-    std::lock_guard opLock(opMutex);
+    auto opLock = StallProfiler::lock(opMutex, "storage-operation-mutex");
     std::lock_guard lock(mutex);
     mounts.erase(lowerOf(rootAlias));
     return 0;
 }
 
 uint32_t DeleteContent(const ContentInfo& content) {
+    StallProfiler::Scope profile(StallProfiler::Section::FileIO, "Storage::DeleteContent",
+        currentContext ? currentContext->lastFunction : 0, currentContext ? uint32_t(currentContext->lr) : 0);
     if (!ValidFileName(content.fileName)) return 0x57;
     if (content.contentType == 0) return 0x57;
-    std::lock_guard opLock(opMutex);
+    auto opLock = StallProfiler::lock(opMutex, "storage-operation-mutex");
     std::filesystem::path root;
     char prefix[16]{};
     snprintf(prefix, sizeof(prefix), "%08X_", content.contentType);

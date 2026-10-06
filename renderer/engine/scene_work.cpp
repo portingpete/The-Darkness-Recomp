@@ -1,4 +1,5 @@
 #include "scene_work.h"
+#include "runtime/native/stall_profiler.h"
 #include <windows.h>
 #include <algorithm>
 #include <bit>
@@ -64,11 +65,18 @@ void SceneWorkPool::worker() noexcept {
         Job* selected;
         {
             std::unique_lock lock(mutex_);
-            ready_.wait(lock,[&]{return stop_ || pending_;});
+            {
+                StallProfiler::Scope stallWait(StallProfiler::Section::Wait, "scene worker ready wait",
+                    0,0,reinterpret_cast<uint64_t>(&ready_),"scene ready condition variable");
+                ready_.wait(lock,[&]{return stop_ || pending_;});
+            }
             if(stop_)return;
             --pending_;selected=job_;
         }
-        consume(*selected,true);
+        {
+            StallProfiler::Scope stallWork(StallProfiler::Section::Rendering, "scene worker consume");
+            consume(*selected,true);
+        }
         {
             std::lock_guard lock(mutex_);
             if(--remaining_==0)done_.notify_one();
@@ -99,7 +107,11 @@ bool SceneWorkPool::dispatch(size_t count,size_t grain,void* context,Function fu
     consume(job,false);
     {
         std::unique_lock lock(mutex_);
-        done_.wait(lock,[&]{return remaining_==0;});
+        {
+            StallProfiler::Scope stallWait(StallProfiler::Section::Wait, "scene dispatch completion wait",
+                0,0,reinterpret_cast<uint64_t>(&done_),"scene done condition variable");
+            done_.wait(lock,[&]{return remaining_==0;});
+        }
         job_=nullptr;
     }
     _mm_setcsr(job.mxcsr|job.fpStatus.load(std::memory_order_relaxed));

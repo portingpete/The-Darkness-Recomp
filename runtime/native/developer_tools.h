@@ -13,6 +13,10 @@ struct DeveloperMission {
 };
 std::span<const DeveloperMission> developerMissions() noexcept;
 void initializeDeveloperTools() noexcept;
+// The update boundary may avoid guest inspection while the panel is closed
+// and no requests or player overrides need work. This reads one atomic flag.
+bool developerToolsNeedsUpdate() noexcept;
+void setDeveloperToolsVisible(bool visible);
 
 // Host UI exchanges values only. Guest objects are accessed on the engine
 // thread after the original application update has completed.

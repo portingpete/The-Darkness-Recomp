@@ -1,4 +1,5 @@
 #include "stored_geometry.h"
+#include "runtime/native/stall_profiler.h"
 #include "simple_mesh.h"
 #include <algorithm>
 #include <bit>
@@ -137,9 +138,16 @@ StoredDraw StoredDrawRequest::resolve(StoredGeometryCache& cache, uint8_t* base,
 }
 
 StoredUpload StoredGeometryCache::begin(uint8_t* base, uint32_t address) noexcept {
+    StallProfiler::Scope stallCache(StallProfiler::Section::Rendering, "StoredGeometryCache::begin",
+        0, 0, address, "guest geometry resource");
     StoredUpload upload;
     try {
-        std::lock_guard lock(mutex_);
+        std::unique_lock lock(mutex_, std::defer_lock);
+        {
+            StallProfiler::Scope stallWait(StallProfiler::Section::Wait, "StoredGeometryCache::begin mutex",
+                0, 0, reinterpret_cast<uint64_t>(&mutex_), "stored geometry cache mutex");
+            lock.lock();
+        }
         ++stats_.started;
         // Invalidate before calling the original provider, including address
         // reuse under a new ID and failed replacements. An old in-flight
@@ -169,6 +177,8 @@ StoredUpload StoredGeometryCache::begin(uint8_t* base, uint32_t address) noexcep
 
 void StoredGeometryCache::vertices(StoredUpload& upload, uint8_t* base, uint32_t descriptor,
     uint32_t destination, uint32_t formats, uint32_t constants, uint32_t mask) noexcept {
+    StallProfiler::Scope stallCache(StallProfiler::Section::Rendering, "StoredGeometryCache::vertices",
+        0, 0, destination, "guest converted vertices");
     if (!upload.geometry || upload.failed) return;
     try {
         auto& geometry = *upload.geometry;
@@ -211,6 +221,8 @@ void StoredGeometryCache::vertices(StoredUpload& upload, uint8_t* base, uint32_t
 
 void StoredGeometryCache::indices(StoredUpload& upload, uint8_t* base, uint32_t destination,
                                  uint32_t capacity, uint32_t produced) noexcept {
+    StallProfiler::Scope stallCache(StallProfiler::Section::Rendering, "StoredGeometryCache::indices",
+        0, 0, destination, "guest converted indices");
     if (!upload.geometry || upload.failed) return;
     try {
         auto& geometry = *upload.geometry;
@@ -232,8 +244,15 @@ void StoredGeometryCache::indices(StoredUpload& upload, uint8_t* base, uint32_t 
 }
 
 bool StoredGeometryCache::finish(StoredUpload&& upload, uint8_t* base) noexcept {
+    StallProfiler::Scope stallCache(StallProfiler::Section::Rendering, "StoredGeometryCache::finish",
+        0, 0, upload.geometry ? upload.geometry->address : 0, "guest geometry resource");
     try {
-        std::lock_guard lock(mutex_);
+        std::unique_lock lock(mutex_, std::defer_lock);
+        {
+            StallProfiler::Scope stallWait(StallProfiler::Section::Wait, "StoredGeometryCache::finish mutex",
+                0, 0, reinterpret_cast<uint64_t>(&mutex_), "stored geometry cache mutex");
+            lock.lock();
+        }
         auto& geometry = upload.geometry;
         if (upload.failed || !geometry || !geometry->id || geometry->id>=byId_.size() ||
             !geometry->bytes() || geometry->bytes() > byteLimit_ || !entryLimit_ ||
@@ -244,6 +263,7 @@ bool StoredGeometryCache::finish(StoredUpload&& upload, uint8_t* base) noexcept 
             ++stats_.rejectedUploads; return false;
         }
         while (!entries_.empty() && (entries_.size() >= entryLimit_ || stats_.cachedBytes + geometry->bytes() > byteLimit_)) {
+            StallProfiler::Scope stallEviction(StallProfiler::Section::Rendering, "StoredGeometryCache LRU eviction");
             auto oldest = std::min_element(entries_.begin(), entries_.end(),
                 [](const auto& a, const auto& b) { return a.second.used < b.second.used; });
             eraseEntry(oldest); ++stats_.evicted;

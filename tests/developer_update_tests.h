@@ -11,6 +11,13 @@ constexpr uint32_t applicationStepAddress = 0x820FF0B0;
 inline uint32_t application, manager;
 inline unsigned originalCalls;
 inline bool requireQueued;
+inline unsigned lookupRequests;
+
+static PPC_FUNC(requestDefaultsDuringLookup) {
+    ++lookupRequests;
+    check(requestDeveloperSpeed(1), "Concurrent cleanup request failed");
+    // The service lookup leaves its already-zero reference unchanged.
+}
 
 static PPC_FUNC(originalStep) {
     ++originalCalls;
@@ -67,6 +74,36 @@ static void testDeveloperUpdate(PPCContext& ctx) {
           "developer update wrapper differs from the shipped Mod update tables");
     auto input = ctx;
     input.r3.u64 = application;
+    setDeveloperToolsVisible(false);
+    resetDeveloperTools();
+    requireQueued = false;
+    // The original exits its general update before touching this client
+    // array. The idle native tail must also leave the guarded page alone.
+    const auto guarded = fixture + 0x7000;
+    memory->write32(application + 3668, guarded);
+    DWORD guardedProtection;
+    check(VirtualProtect(base + guarded, 4096, PAGE_NOACCESS, &guardedProtection),
+          "Idle developer fixture guard setup failed");
+    struct RestoreGuard {
+        uint8_t* page; DWORD protection;
+        ~RestoreGuard() { DWORD ignored; VirtualProtect(page, 4096, protection, &ignored); }
+    } restoreGuard{base + guarded, guardedProtection};
+    auto idleExpected = input;
+    originalCalls = 0;
+    __imp__sub_820C5D30(idleExpected, base);
+    const auto idleRevision = developerSnapshot().revision;
+    auto idleActual = input;
+    originalCalls = 0;
+    sub_820C5D30(idleActual, base);
+    check(originalCalls == 2 && std::memcmp(&idleActual, &idleExpected, sizeof(idleActual)) == 0 &&
+          developerSnapshot().revision == idleRevision && !developerToolsNeedsUpdate(),
+          "Closed idle developer wrapper inspected guarded clients or changed the original update");
+    memory->write32(application + 3668, 0xfffffffc);
+    originalCalls = 0; idleActual = input;
+    sub_820C5D30(idleActual, base);
+    check(originalCalls == 2 && developerSnapshot().revision == idleRevision,
+          "Closed idle developer wrapper inspected malformed client memory");
+    memory->write32(application + 3668, 0);
     resetDeveloperTools();
     check(requestDeveloperMission("NY1_Tunnel:ny1+layer1"), "update fixture mission request failed");
     requireQueued = true; originalCalls = 0;
@@ -125,5 +162,36 @@ static void testDeveloperUpdate(PPCContext& ctx) {
           !developerSnapshot().canLoadMission,
           "base application wrapper lost original context or bypassed frontend readiness");
     requireQueued = false;
+    // Returning to defaults needs one cleanup update even after closing the
+    // panel. Requests made while processing must survive that completion.
+    const auto client = fixture + 0x3000;
+    memory->write32(client, 0x820807E0);
+    memory->write32(client + 536, 1);
+    const auto oldToken = memory->read32(0x82A40308);
+    struct RestoreToken {
+        uint32_t value;
+        ~RestoreToken() { memory->write32(0x82A40308, value); }
+    } restoreToken{oldToken};
+    memory->write32(0x82A40308, 1);
+    PPC_LOOKUP_FUNC(base, noOpAddress) = requestDefaultsDuringLookup;
+    resetDeveloperTools();
+    check(requestDeveloperSpeed(2), "Active override gate fixture request failed");
+    lookupRequests = 0;
+    processDeveloperTools(input, base, client, false);
+    check(lookupRequests == 1 && developerSnapshot().playerSpeed == 1 && developerToolsNeedsUpdate(),
+          "A default-settings request arriving during processing lost its cleanup update");
+    processDeveloperTools(input, base, 0, false);
+    check(!developerToolsNeedsUpdate(), "Completed default-settings cleanup did not return closed tools to idle");
+    check(requestDeveloperSpeed(2), "Persistent override gate fixture request failed");
+    processDeveloperTools(input, base, 0, false);
+    setDeveloperToolsVisible(false);
+    check(developerToolsNeedsUpdate(), "Applied player override stopped updating when the panel closed");
+    requestDeveloperSpeed(1);
+    requestDeveloperInvincibility(false);
+    requestDeveloperNoclip(false);
+    check(developerToolsNeedsUpdate(), "Restoring defaults skipped the final player-hook cleanup update");
+    processDeveloperTools(input, base, 0, false);
+    check(!developerToolsNeedsUpdate(), "Restored default player settings kept closed developer tools active");
+    resetDeveloperTools();
     puts("Developer update: complete original Mod/base boundaries, returned contexts, retail application tables and no-client frontend guards passed.");
 }

@@ -1,4 +1,6 @@
+#include "stall_profiler_lock.h"
 #include "audio_driver.h"
+#include "stall_profiler.h"
 #include "audio_pcm_tap.h"
 #include "audio_resampler_trace.h"
 #include "audio_output_headroom.h"
@@ -206,7 +208,7 @@ HRESULT audioStartIfReady(AudioRenderDriver::Impl::Client* client, bool deadline
 // the first submitted PCM to play. Never leave that sparse prefill stopped.
 void CALLBACK audioStartupDeadline(PTP_CALLBACK_INSTANCE, void* context, PTP_TIMER) {
     auto* client = static_cast<AudioRenderDriver::Impl::Client*>(context);
-    std::lock_guard lock(gDriver.mutex);
+    auto lock = StallProfiler::lock(gDriver.mutex, "audio-driver-mutex");
     if (gDriver.active.get() != client || !client->active.load(std::memory_order_acquire) ||
         client->voiceError.load(std::memory_order_acquire) != S_OK ||
         client->playbackStarted.load(std::memory_order_acquire)) return;
@@ -303,7 +305,14 @@ DWORD WINAPI audioDriverWorkerMain(void* raw) {
     SetEvent(client->readyEvent);
     if (FAILED(client->readyStatus)) return 1;
     HANDLE startupHandles[] = {client->stopEvent, client->startEvent};
-    if (WaitForMultipleObjects(2, startupHandles, FALSE, INFINITE) != WAIT_OBJECT_0 + 1)
+    DWORD startupResult;
+    {
+        StallProfiler::Scope wait(StallProfiler::Section::Wait, "audio-worker-start",
+            client->guestCallback, uint32_t(client->workerCtx.lr),
+            reinterpret_cast<uintptr_t>(client->startEvent), "host-audio-start-event");
+        startupResult = WaitForMultipleObjects(2, startupHandles, FALSE, INFINITE);
+    }
+    if (startupResult != WAIT_OBJECT_0 + 1)
         return 0;
     AudioSchedulingScope scheduling;
     client->workerMmcss.store(scheduling.task != nullptr, std::memory_order_release);
@@ -316,6 +325,9 @@ DWORD WINAPI audioDriverWorkerMain(void* raw) {
         if (WaitForSingleObject(client->stopEvent, 0) == WAIT_OBJECT_0) break;
         if (client->voiceError.load(std::memory_order_acquire) != S_OK) {
             HANDLE handles[2] = {client->stopEvent, client->creditEvent};
+            StallProfiler::Scope wait(StallProfiler::Section::Wait, "audio-worker-error-wait",
+                client->guestCallback, uint32_t(client->workerCtx.lr),
+                reinterpret_cast<uintptr_t>(client->creditEvent), "host-audio-credit-event");
             WaitForMultipleObjects(2, handles, FALSE, INFINITE);
             continue;
         }
@@ -330,10 +342,13 @@ DWORD WINAPI audioDriverWorkerMain(void* raw) {
         if (!haveCredit) {
             client->startupCallbacksSpent.store(true, std::memory_order_release);
             {
-                std::lock_guard lock(gDriver.mutex);
+                auto lock = StallProfiler::lock(gDriver.mutex, "audio-driver-mutex");
                 if (client->active.load(std::memory_order_acquire)) audioStartIfReady(client.get());
             }
             HANDLE handles[2] = {client->stopEvent, client->creditEvent};
+            StallProfiler::Scope wait(StallProfiler::Section::Wait, "audio-worker-credit-wait",
+                client->guestCallback, uint32_t(client->workerCtx.lr),
+                reinterpret_cast<uintptr_t>(client->creditEvent), "host-audio-credit-event");
             WaitForMultipleObjects(2, handles, FALSE, INFINITE);
             continue;
         }
@@ -341,7 +356,11 @@ DWORD WINAPI audioDriverWorkerMain(void* raw) {
         LARGE_INTEGER begin{}, end{};
         const uint64_t submittedBefore = client->workerSubmissions;
         QueryPerformanceCounter(&begin);
-        try { audioInvokeGuest(client.get()); }
+        try {
+            StallProfiler::Scope profile(StallProfiler::Section::Audio, "audio-guest-callback",
+                client->guestCallback, uint32_t(client->workerCtx.lr));
+            audioInvokeGuest(client.get());
+        }
         catch (const DispatcherWaitCancelled&) { break; }
         QueryPerformanceCounter(&end);
         const uint64_t micros = uint64_t(end.QuadPart - begin.QuadPart) * 1000000 / frequency.QuadPart;
@@ -349,7 +368,7 @@ DWORD WINAPI audioDriverWorkerMain(void* raw) {
         if (client->startupCallbacks < kAudioPrefillBuffers &&
             ++client->startupCallbacks == kAudioPrefillBuffers) {
             client->startupCallbacksSpent.store(true, std::memory_order_release);
-            std::lock_guard lock(gDriver.mutex);
+            auto lock = StallProfiler::lock(gDriver.mutex, "audio-driver-mutex");
             if (client->active.load(std::memory_order_acquire) &&
                 client->voiceError.load(std::memory_order_acquire) == S_OK) audioStartIfReady(client.get());
         }
@@ -361,6 +380,9 @@ DWORD WINAPI audioDriverWorkerMain(void* raw) {
             gDriver.callbacksWithoutSubmit.fetch_add(1, std::memory_order_relaxed);
             // Ignore completion signals for this delay: they must not turn a
             // guest that keeps returning empty into a busy loop. Stop still wakes.
+            StallProfiler::Scope wait(StallProfiler::Section::Wait, "audio-worker-empty-callback-wait",
+                client->guestCallback, uint32_t(client->workerCtx.lr),
+                reinterpret_cast<uintptr_t>(client->stopEvent), "host-audio-stop-event");
             WaitForSingleObject(client->stopEvent, kNoSubmitRetryMs);
         }
     }
@@ -411,12 +433,24 @@ void audioJoinAndTeardown(const std::shared_ptr<AudioRenderDriver::Impl::Client>
     // rearm the timer. Join it before releasing the client/source voice.
     if (client->startupTimer) {
         SetThreadpoolTimer(client->startupTimer, nullptr, 0, 0);
-        WaitForThreadpoolTimerCallbacks(client->startupTimer, TRUE);
+        {
+            StallProfiler::Scope wait(StallProfiler::Section::Wait, "WaitForThreadpoolTimerCallbacks(audio)",
+                currentContext ? currentContext->lastFunction : 0,
+                currentContext ? uint32_t(currentContext->lr) : 0,
+                reinterpret_cast<uintptr_t>(client->startupTimer), "host-audio-startup-timer");
+            WaitForThreadpoolTimerCallbacks(client->startupTimer, TRUE);
+        }
         CloseThreadpoolTimer(client->startupTimer);
         client->startupTimer = nullptr;
     }
     if (client->thread) {
-        WaitForSingleObject(client->thread, INFINITE);
+        {
+            StallProfiler::Scope wait(StallProfiler::Section::Wait, "audio-worker-join",
+                currentContext ? currentContext->lastFunction : 0,
+                currentContext ? uint32_t(currentContext->lr) : 0,
+                reinterpret_cast<uintptr_t>(client->thread), "host-audio-worker-thread");
+            WaitForSingleObject(client->thread, INFINITE);
+        }
         CloseHandle(client->thread);
         client->thread = nullptr;
     }
@@ -475,7 +509,7 @@ AudioRenderDriver& AudioRenderDriver::instance() {
 }
 
 bool audioDriverPeekLastSubmitted(std::vector<float>& out) {
-    std::lock_guard lock(gDriver.mutex);
+    auto lock = StallProfiler::lock(gDriver.mutex, "audio-driver-mutex");
     if (!gDriver.active || !gDriver.active->hasLastSubmitted) return false;
     const auto& last = gDriver.active->lastSubmitted;
     out.assign(last.begin(), last.end());
@@ -483,7 +517,7 @@ bool audioDriverPeekLastSubmitted(std::vector<float>& out) {
 }
 
 uint32_t audioDriverInjectVoiceError(int32_t hr) {
-    std::lock_guard lock(gDriver.mutex);
+    auto lock = StallProfiler::lock(gDriver.mutex, "audio-driver-mutex");
     if (!gDriver.active) return kBadHandle;
     gDriver.active->voiceCb.OnVoiceError(nullptr, HRESULT(hr));
     return 0;
@@ -494,7 +528,7 @@ void audioDriverInjectStartupError(int32_t hr) {
 }
 
 uint32_t audioDriverVoiceCategoryVolumeChangeMask(uint32_t token, uint32_t outMask) {
-    std::lock_guard lock(gDriver.mutex);
+    auto lock = StallProfiler::lock(gDriver.mutex, "audio-driver-mutex");
     AudioRenderDriver::Impl::Client* client = gDriver.active.get();
     if (!client || !client->active.load(std::memory_order_acquire) || token != client->token)
         return kBadHandle;
@@ -505,7 +539,7 @@ uint32_t audioDriverVoiceCategoryVolumeChangeMask(uint32_t token, uint32_t outMa
 }
 
 bool AudioRenderDriver::setMuted(bool muted) {
-    std::lock_guard lock(gDriver.mutex);
+    auto lock = StallProfiler::lock(gDriver.mutex, "audio-driver-mutex");
     if (gDriver.master) {
         const HRESULT hr = gDriver.master->SetVolume(muted ? 0.0f : 1.0f);
         if (FAILED(hr)) { audioNoteError(hr); return false; }
@@ -516,11 +550,13 @@ bool AudioRenderDriver::setMuted(bool muted) {
 
 uint32_t AudioRenderDriver::registerClient(uint32_t guestCallback, uint32_t rawArgument,
                                            uint32_t driverOut) {
+    StallProfiler::Scope profile(StallProfiler::Section::Audio, "AudioRenderDriver::registerClient",
+        currentContext ? currentContext->lastFunction : 0, currentContext ? uint32_t(currentContext->lr) : 0);
     AudioComScope com;
     if (FAILED(com.hr)) { audioNoteError(com.hr); return uint32_t(com.hr); }
     Memory* owner = memory;
     if (!guestCallback || !owner || !audioGuestWritable(owner, driverOut, 4)) return kBadHandle;
-    std::unique_lock lock(gDriver.mutex);
+    auto lock = StallProfiler::lock(gDriver.mutex, "audio-driver-mutex");
     if (gDriver.active || gDriver.closing) return kBusyHresult;
     if (gDriver.nextGen > kTokenGenMask) return kNoMemory;
     std::shared_ptr<Impl::Client> client;
@@ -604,7 +640,14 @@ uint32_t AudioRenderDriver::registerClient(uint32_t guestCallback, uint32_t rawA
             return fail(HRESULT_FROM_WIN32(error));
         }
         // Keep lifecycle ownership while waiting: teardown cannot close readyEvent.
-        DWORD readyWait = WaitForSingleObject(client->readyEvent, 5000);
+        DWORD readyWait;
+        {
+            StallProfiler::Scope wait(StallProfiler::Section::Wait, "audio-worker-ready-wait",
+                currentContext ? currentContext->lastFunction : 0,
+                currentContext ? uint32_t(currentContext->lr) : 0,
+                reinterpret_cast<uintptr_t>(client->readyEvent), "host-audio-ready-event");
+            readyWait = WaitForSingleObject(client->readyEvent, 5000);
+        }
         if (readyWait != WAIT_OBJECT_0)
             return fail(HRESULT_FROM_WIN32(readyWait == WAIT_TIMEOUT ? ERROR_TIMEOUT : GetLastError()));
         if (FAILED(client->readyStatus)) return fail(client->readyStatus);
@@ -632,13 +675,15 @@ uint32_t AudioRenderDriver::registerClient(uint32_t guestCallback, uint32_t rawA
 }
 
 uint32_t AudioRenderDriver::submitFrame(uint32_t token, uint32_t samplesGuest) {
+    StallProfiler::Scope profile(StallProfiler::Section::Audio, "AudioRenderDriver::submitFrame",
+        currentContext ? currentContext->lastFunction : 0, currentContext ? uint32_t(currentContext->lr) : 0);
     AudioComScope com;
     HRESULT comHr = com.hr;
     if (FAILED(comHr)) {
         audioNoteError(comHr);
         return uint32_t(comHr);
     }
-    std::lock_guard lock(gDriver.mutex);
+    auto lock = StallProfiler::lock(gDriver.mutex, "audio-driver-mutex");
     Impl::Client* client = gDriver.active.get();
     if (!client || !client->active.load(std::memory_order_acquire) || token != client->token)
         return kBadHandle;
@@ -686,9 +731,11 @@ uint32_t AudioRenderDriver::submitFrame(uint32_t token, uint32_t samplesGuest) {
 }
 
 uint32_t AudioRenderDriver::unregisterClient(uint32_t token) {
+    StallProfiler::Scope profile(StallProfiler::Section::Audio, "AudioRenderDriver::unregisterClient",
+        currentContext ? currentContext->lastFunction : 0, currentContext ? uint32_t(currentContext->lr) : 0);
     std::shared_ptr<Impl::Client> gone;
     {
-        std::lock_guard lock(gDriver.mutex);
+        auto lock = StallProfiler::lock(gDriver.mutex, "audio-driver-mutex");
         if (!gDriver.active || token != gDriver.active->token) return kBadHandle;
         if (GetCurrentThreadId() == gDriver.active->workerThreadId) return kBusyHresult;
         gDriver.active->active.store(false, std::memory_order_release);
@@ -698,7 +745,7 @@ uint32_t AudioRenderDriver::unregisterClient(uint32_t token) {
     }
     audioJoinAndTeardown(gone);
     {
-        std::lock_guard lock(gDriver.mutex);
+        auto lock = StallProfiler::lock(gDriver.mutex, "audio-driver-mutex");
         if (gDriver.closing == gone) {
             gDriver.closing.reset();
             gDriver.closingDone.notify_all();
@@ -711,11 +758,13 @@ uint32_t AudioRenderDriver::unregisterClient(uint32_t token) {
 void AudioRenderDriver::shutdown() { shutdownForMemory(nullptr); }
 
 void AudioRenderDriver::shutdownForMemory(Memory* owner) {
+    StallProfiler::Scope profile(StallProfiler::Section::Audio, "AudioRenderDriver::shutdownForMemory",
+        currentContext ? currentContext->lastFunction : 0, currentContext ? uint32_t(currentContext->lr) : 0);
     // The engine's MTA cookie survives all callers. Cleanup must also work on an
     // STA caller, where CoInitializeEx(MTA) would fail with RPC_E_CHANGED_MODE.
     std::shared_ptr<Impl::Client> gone;
     {
-        std::unique_lock lock(gDriver.mutex);
+        auto lock = StallProfiler::lock(gDriver.mutex, "audio-driver-mutex");
         auto matches = [&](const std::shared_ptr<Impl::Client>& c) {
             return c && (!owner || c->owner == owner);
         };
@@ -730,11 +779,15 @@ void AudioRenderDriver::shutdownForMemory(Memory* owner) {
             auto closing = gDriver.closing;
             if (GetCurrentThreadId() == closing->workerThreadId)
                 audioFatalSelfTeardown("owner shutdown during unregister");
+            StallProfiler::Scope wait(StallProfiler::Section::Wait, "audio-driver-closing-wait",
+                currentContext ? currentContext->lastFunction : 0,
+                currentContext ? uint32_t(currentContext->lr) : 0,
+                reinterpret_cast<uintptr_t>(closing->thread), "host-audio-worker-thread");
             gDriver.closingDone.wait(lock, [&] { return gDriver.closing != closing; });
         }
     }
     audioJoinAndTeardown(gone);
-    std::lock_guard lock(gDriver.mutex);
+    auto lock = StallProfiler::lock(gDriver.mutex, "audio-driver-mutex");
     if (gone && gDriver.closing == gone) {
         gDriver.closing.reset();
         gDriver.closingDone.notify_all();
@@ -754,7 +807,7 @@ AudioDriverCounters AudioRenderDriver::counters() {
     out.starvationBytes = gDriver.starvationBytes.load();
     out.maxCallbackMicros = gDriver.maxCallbackMicros.load();
     out.callbacksWithoutSubmit = gDriver.callbacksWithoutSubmit.load();
-    std::lock_guard lock(gDriver.mutex);
+    auto lock = StallProfiler::lock(gDriver.mutex, "audio-driver-mutex");
     out.workerRunning = gDriver.active && gDriver.active->active.load();
     out.deviceReady = gDriver.engine != nullptr;
     if (gDriver.engine) {

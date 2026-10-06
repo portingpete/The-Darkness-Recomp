@@ -1,4 +1,6 @@
 #include "display_context_d3d11.h"
+#include "runtime/native/stall_profiler.h"
+#include "stall_profile_d3d11.h"
 #include <dxgi1_5.h>
 #include <iostream>
 #include <cstring>
@@ -257,7 +259,14 @@ void CDisplayContextD3D11::Clear(uint32_t flags, float r, float g, float b, floa
 }
 
 HRESULT CDisplayContextD3D11::Present(unsigned syncInterval) {
-    std::lock_guard lock(m_mutex);
+    Native::StallProfiler::Scope stallPresent(Native::StallProfiler::Section::Present,
+                                             "CDisplayContextD3D11::Present");
+    std::unique_lock lock(m_mutex, std::defer_lock);
+    {
+        Native::StallProfiler::Scope stallWait(Native::StallProfiler::Section::Wait,
+            "CDisplayContextD3D11::Present mutex", 0, 0, reinterpret_cast<uint64_t>(&m_mutex), "display mutex");
+        lock.lock();
+    }
     if (!m_swapChain) return E_UNEXPECTED;
     UINT flags = 0;
     if (!syncInterval && (m_swapChainFlags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING)) {
@@ -284,7 +293,12 @@ HRESULT CDisplayContextD3D11::Present(unsigned syncInterval) {
         std::fprintf(stderr, "[Presentation] syncInterval=%u presentFlags=0x%X\n", syncInterval, flags);
         m_lastSyncInterval = syncInterval; m_lastPresentFlags = flags;
     }
-    HRESULT status = m_swapChain->Present(syncInterval, flags);
+    HRESULT status;
+    {
+        Native::StallProfiler::Scope stallDxgi(Native::StallProfiler::Section::Present,
+            "IDXGISwapChain::Present", 0, 0, reinterpret_cast<uint64_t>(m_swapChain.Get()), "swapchain");
+        status = m_swapChain->Present(syncInterval, flags);
+    }
     ++m_presentCalls;
     if (flags != 0 && status == DXGI_ERROR_INVALID_CALL) {
         // Possibly entered exclusive mode since the cached query. Refresh and
@@ -298,7 +312,12 @@ HRESULT CDisplayContextD3D11::Present(unsigned syncInterval) {
                     std::fprintf(stderr, "[Presentation] syncInterval=%u presentFlags=0x0 (exclusive fallback)\n", syncInterval);
                     m_lastSyncInterval = syncInterval; m_lastPresentFlags = 0;
                 }
-                status = m_swapChain->Present(syncInterval, 0);
+                {
+                    Native::StallProfiler::Scope stallDxgi(Native::StallProfiler::Section::Present,
+                        "IDXGISwapChain::Present exclusive retry", 0, 0,
+                        reinterpret_cast<uint64_t>(m_swapChain.Get()), "swapchain");
+                    status = m_swapChain->Present(syncInterval, 0);
+                }
                 ++m_presentCalls;
             }
         } else {
@@ -332,7 +351,8 @@ bool CDisplayContextD3D11::ReadbackCenterPixel(uint32_t& rgba) {
     m_context->CopyResource(m_readback.Get(), backBuffer.Get());
     m_context->Flush();
     D3D11_MAPPED_SUBRESOURCE mapped{};
-    if (FAILED(m_context->Map(m_readback.Get(), 0, D3D11_MAP_READ, 0, &mapped))) return false;
+    if (FAILED(stallProfileMap(m_context.Get(), m_readback.Get(), 0, D3D11_MAP_READ, 0, &mapped,
+                              "CDisplayContextD3D11 readback Map"))) return false;
     const auto* pixel = static_cast<const uint8_t*>(mapped.pData) + (m_height / 2) * mapped.RowPitch + (m_width / 2) * 4;
     std::memcpy(&rgba, pixel, sizeof(rgba));
     m_context->Unmap(m_readback.Get(), 0);
