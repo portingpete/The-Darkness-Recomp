@@ -48,6 +48,7 @@ class ReleaseTests(unittest.TestCase):
             (deps / name).write_bytes(b'codec source')
         (self.root / 'tools').mkdir()
         (self.root / 'tools/build_xma_codec.py').write_bytes(b'build script')
+        (self.root / 'tools/update_release.ps1').write_bytes((ROOT / 'tools/update_release.ps1').read_bytes())
         (self.root / 'tools/add_steam_shortcut.py').write_bytes((ROOT / 'tools/add_steam_shortcut.py').read_bytes())
         for name in release.LINUX_SETUP_TOOLS:
             (self.root / 'tools' / name).write_bytes((ROOT / 'tools' / name).read_bytes())
@@ -82,6 +83,8 @@ class ReleaseTests(unittest.TestCase):
             self.assertIn('build_native/Release/vcruntime140_1.dll', names)
             self.assertIn('build_native/Release/DarkRecompSettings.exe', names)
             self.assertEqual(bundle.read('LaunchWithSettings.cmd'), (ROOT / 'LaunchWithSettings.cmd').read_bytes())
+            self.assertEqual(bundle.read('LaunchWithUpdates.cmd'), (ROOT / 'LaunchWithUpdates.cmd').read_bytes())
+            self.assertEqual(bundle.read('tools/update_release.ps1'), (ROOT / 'tools/update_release.ps1').read_bytes())
             self.assertEqual(bundle.read('LaunchStallProfiler.cmd'), (ROOT / 'LaunchStallProfiler.cmd').read_bytes())
             self.assertIn('Launch.sh', names)
             self.assertIn('SetupLinux.cmd', names)

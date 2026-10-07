@@ -756,6 +756,8 @@ void DarkRecomp::Native::traceOwnedWorldDraw(const WorldDraw& draw,unsigned insp
         }
         out<<']';
         out<<",\"depthRangeLEFloat\":";hex(draw.depthRange.data(),sizeof(draw.depthRange));
+        out<<",\"clipControl\":"<<draw.clipPlanes.control<<",\"clipMask\":"<<draw.clipPlanes.enabledMask();
+        out<<",\"clipPlanesLEFloat\":";hex(draw.clipPlanes.planes.data(),sizeof(draw.clipPlanes.planes));
         out<<",\"constantsLEFloat\":";hex(draw.constants.vectors.data(),sizeof(draw.constants.vectors));
         out<<",\"referencesLE32\":";hex(draw.constants.references.data(),sizeof(draw.constants.references));
         out<<",\"fragmentConstantsLEFloat\":";hex(draw.fragmentConstants.data(),sizeof(draw.fragmentConstants));
@@ -2182,5 +2184,24 @@ PPC_FUNC(sub_825DD950) {
             if(report)std::fputc('\n',stderr);
         }
     }
+    _mm_setcsr(returnedMode);
+}
+
+extern "C" PPC_FUNC(__imp__sub_827646F0);
+// CXR_Model_Flare's original callback normalizes this count by its query
+// patch area. Xbox GetData cannot measure the native depth buffer, so bracket
+// the original colorless patch and publish the last completed GPU result.
+// Keep the guest query lifecycle and register effects, including its fallback
+// while the first asynchronous native measurement is still unavailable.
+PPC_FUNC(sub_827646F0) {
+    const uint32_t id=ctx.r4.u32;
+    const auto originalMode=_mm_getcsr();
+    DarkRecomp::Native::previewBeginFlare(id);_mm_setcsr(originalMode);
+    __imp__sub_827646F0(ctx,base);
+    const auto returnedMode=_mm_getcsr();
+    DarkRecomp::Native::previewEndFlare();
+    uint64_t samples=0;
+    const bool measured=DarkRecomp::Native::previewReadFlare(id,samples);
+    if(measured)ctx.f1.f64=double(float(samples));
     _mm_setcsr(returnedMode);
 }

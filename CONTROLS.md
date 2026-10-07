@@ -19,6 +19,20 @@ Normal launchers record lightweight slow-frame timings in their runtime log.
 Automatic screenshots are disabled during normal play; use the preview executable's
 `--capture-frames` option when diagnostic BMP captures are specifically needed.
 
+Use `LaunchStallProfiler.cmd` to identify runtime hitches while playing with sound
+and your saved settings. Close the game after reproducing the hitch, then open the
+newest `build_native/run/desktop-*/runtime.log`. `[STALL]` lines report frames over
+16.67 ms, runtime/HLE calls over 2 ms, and the largest contributors to a slow
+frame. `[WAIT]` lines include duration, thread ID, guest PC/caller, function, and
+the waited object or fence when available. Sections cover guest code, rendering,
+audio, file I/O, waits, and Present. Profiling starts disabled; the launcher enables
+`DARKRECOMP_STALL_PROFILE=1` only for its run. Extra game arguments are accepted.
+Frame totals include normal pacing and VSync waits. Contributors use exclusive
+wall time and show the frame thread separately from workers; concurrent worker
+times can sum to more than the frame total. `pending=1` identifies a call still
+in progress at the frame boundary. `dropped` or `incomplete_thread_intervals`
+indicates that a bounded buffer or snapshot could not retain every observation.
+
 For a requested rendering-stutter diagnostic, use `Launch.cmd render-profile`.
 It records active render-thread instruction samples and their rendering phase in
 `build_native/run/render-profile-*.log`. Close the game to finish recording. This

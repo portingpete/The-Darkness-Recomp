@@ -946,7 +946,8 @@ static bool snapshotWorldDrawInto(uint8_t* base,const StoredDraw& geometry,World
         std::array<uint8_t,20> program; std::array<uint8_t,24> viewport;
         if (!copyRenderMemory(base,context+16896,result.attributes.data(),160) ||
             !copyRenderMemory(base,context+17152,viewport.data(),24) ||
-            !snapshotWorldTargets(base,geometry.vertexBindings->deviceAddress,result)) return fail(3);
+            !snapshotWorldTargets(base,geometry.vertexBindings->deviceAddress,result) ||
+            !snapshotWorldClipPlanes(base,geometry.vertexBindings->deviceAddress,result.clipPlanes)) return fail(3);
         for (unsigned i=0;i<4;++i) result.viewport[i]=word(viewport.data()+4*i);
         result.depthRange={std::bit_cast<float>(word(viewport.data()+16)),std::bit_cast<float>(word(viewport.data()+20)),0,0};
         if(!finite(result.depthRange) || result.depthRange[0]<0 || result.depthRange[0]>1 || result.depthRange[1]<0 || result.depthRange[1]>1) return fail(4);
@@ -1139,6 +1140,22 @@ WorldSampler decodeWorldSampler(const std::array<uint32_t,6>& words) noexcept {
     result.border=words[5]&3;
     if(result.border>1)return result;
     result.valid=true;return result;
+}
+bool snapshotWorldClipPlanes(uint8_t* base,uint32_t device,WorldClipPlanes& output) noexcept {
+    // 8285F428 updates the six user-plane enable bits in PA_CL_CLIP_CNTL;
+    // 8285FBD0 controls clip-disable. 82249250 writes the completed planes.
+    if(!device || uint64_t(device)+10568>0x100000000ull)return false;
+    std::array<uint8_t,4> control{};
+    if(!copyRenderMemory(base,device+10564,control.data(),control.size()))return false;
+    WorldClipPlanes result;result.control=word(control.data());
+    for(unsigned i=0;i<result.planes.size();++i)if(result.enabledMask()&(1u<<i)) {
+        std::array<uint8_t,16> plane{};
+        if(!copyRenderMemory(base,device+10272+i*16,plane.data(),plane.size()))return false;
+        for(unsigned lane=0;lane<4;++lane)
+            result.planes[i][lane]=std::bit_cast<float>(word(plane.data()+lane*4));
+        if(!finite(result.planes[i]))return false;
+    }
+    output=result;return true;
 }
 bool snapshotWorldTexture(uint8_t* base,uint32_t object,WorldTexture& output) noexcept {
     std::array<uint8_t,64> header;

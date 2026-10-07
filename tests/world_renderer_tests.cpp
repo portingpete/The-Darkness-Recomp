@@ -960,6 +960,7 @@ static void immediateCanonicalContract(WorldRendererD3D11& renderer) {
 #include "world_projected_texture_tests.h"
 #include "world_material_tests.h"
 #include "world_image_initialization_tests.h"
+#include "world_clip_plane_tests.h"
 #include "world_video_tests.h"
 #include "world_shadow_projection_tests.h"
 #include "world_shadow_bias_tests.h"
@@ -967,6 +968,8 @@ static void immediateCanonicalContract(WorldRendererD3D11& renderer) {
 #include "world_shadow_volume_tests.h"
 #include "world_shadow_capture_tests.h"
 #include "world_color_lookup_tests.h"
+#include "bloom_resolution_tests.h"
+#include "flare_visibility_tests.h"
 #include "world_resolve_fringe_tests.h"
 static void shadowExtrusionRasterPass(WorldRendererD3D11& renderer,const WorldDraw& seed,unsigned scale);
 static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
@@ -1542,6 +1545,7 @@ static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
     transparentMeshPass(renderer,1);
     projectedTexturePass(renderer,1);
     waterMaterialPass(renderer,1);
+    worldClipPlanePass(renderer,1);
     worldVideoPass(renderer,1);
     projectedMarkPass(renderer,1);
     shadowProjectionPass(renderer,histogramDraw,1);
@@ -1591,7 +1595,10 @@ static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
         require(matched,"Resolve/present lost native subpixel edge coverage");
         std::printf("PhysicalRaster%u: %u covered pixels, %u mixed logical edge blocks retained through resolve/present.\n",scale,physicalCoverage,mixedBlocks);
         alphaCoveragePass(scaled,histogramDraw,scale);
-        if(scale==2)transparentMeshPass(scaled,scale);
+        if(scale==2) {
+            transparentMeshPass(scaled,scale);
+            worldClipPlanePass(scaled,scale);
+        }
         projectedTexturePass(scaled,scale);
         waterMaterialPass(scaled,scale);
         worldVideoPass(scaled,scale);
@@ -1780,18 +1787,20 @@ static void worldRendererDebugContract(ID3D11Device* device) {
 int main(int argc,char** argv) {
     ComPtr<ID3D11Device> device;
     try {
-        bool warp=false,cpuOnly=false,colorGradeOnly=false,resolutionSwitchOnly=false,frontbufferOnly=false;
+        bool warp=false,cpuOnly=false,colorGradeOnly=false,resolutionSwitchOnly=false,frontbufferOnly=false,clipPlanesOnly=false,bloomOnly=false;
         for(int i=1;i<argc;++i) {
             if(std::strcmp(argv[i],"--warp")==0)warp=true;
             else if(std::strcmp(argv[i],"--cpu-only")==0)cpuOnly=true;
             else if(std::strcmp(argv[i],"--color-grade-only")==0)colorGradeOnly=true;
             else if(std::strcmp(argv[i],"--resolution-switch-only")==0)resolutionSwitchOnly=true;
             else if(std::strcmp(argv[i],"--frontbuffer-only")==0)frontbufferOnly=true;
-            else throw std::runtime_error("Unknown argument; expected --warp, --cpu-only, --color-grade-only, --resolution-switch-only or --frontbuffer-only");
+            else if(std::strcmp(argv[i],"--clip-planes-only")==0)clipPlanesOnly=true;
+            else if(std::strcmp(argv[i],"--bloom-only")==0)bloomOnly=true;
+            else throw std::runtime_error("Unknown argument; expected --warp, --cpu-only, --color-grade-only, --resolution-switch-only, --frontbuffer-only, --clip-planes-only or --bloom-only");
         }
-        require(unsigned(cpuOnly)+unsigned(colorGradeOnly)+unsigned(resolutionSwitchOnly)+unsigned(frontbufferOnly)<=1,
+        require(unsigned(cpuOnly)+unsigned(colorGradeOnly)+unsigned(resolutionSwitchOnly)+unsigned(frontbufferOnly)+unsigned(clipPlanesOnly)+unsigned(bloomOnly)<=1,
             "Focused contract modes are mutually exclusive");
-        if(!colorGradeOnly && !resolutionSwitchOnly && !frontbufferOnly) {
+        if(!colorGradeOnly && !resolutionSwitchOnly && !frontbufferOnly && !clipPlanesOnly && !bloomOnly) {
             constantCopyContract();lightingValidationContract();promptWorldContract();
             formats();paletteUsageContract();paletteArithmeticContract();worldPositionUsageContract();worldWaterUsageContract();worldShadowInputContract();
             worldVertexValidationContract();immediateIndexOwnershipContract();
@@ -1803,6 +1812,13 @@ int main(int argc,char** argv) {
         ComPtr<ID3D11DeviceContext> context;const D3D_FEATURE_LEVEL level=D3D_FEATURE_LEVEL_11_0;
         const auto deviceFlags=GetEnvironmentVariableA("DARK_D3D_DEBUG",nullptr,0)?D3D11_CREATE_DEVICE_DEBUG:0;
         check(D3D11CreateDevice(nullptr,warp?D3D_DRIVER_TYPE_WARP:D3D_DRIVER_TYPE_HARDWARE,nullptr,deviceFlags,&level,1,D3D11_SDK_VERSION,&device,nullptr,&context),"D3D device");
+        if(bloomOnly) {
+            bloomResolutionContract(device.Get(),context.Get());
+            flareVisibilityContract(device.Get(),context.Get());
+            worldRendererDebugContract(device.Get());context->ClearState();
+            std::printf("WorldBloomResolutionContract passed: %s.\n",warp?"WARP":"hardware");
+            return 0;
+        }
         if(colorGradeOnly) {
             colorGradeChainContract(device.Get(),context.Get());
             colorGradeChainContract(device.Get(),context.Get(),26,4);
@@ -1821,6 +1837,15 @@ int main(int argc,char** argv) {
             worldFrontbufferPrecisionContract(device.Get(),context.Get());
             worldRendererDebugContract(device.Get());context->ClearState();
             std::printf("WorldFrontbufferPrecisionContract passed: %s.\n",warp?"WARP":"hardware");
+            return 0;
+        }
+        if(clipPlanesOnly) {
+            for(unsigned scale:{1u,2u}) {
+                context->ClearState();WorldRendererD3D11 renderer(device.Get(),context.Get(),scale);
+                worldClipPlanePass(renderer,scale);
+            }
+            worldRendererDebugContract(device.Get());context->ClearState();
+            std::printf("WorldClipPlaneContract passed: %s.\n",warp?"WARP":"hardware");
             return 0;
         }
         std::vector<WorldVertex> vertices(7);
@@ -1977,6 +2002,8 @@ int main(int argc,char** argv) {
         colorGradeChainContract(device.Get(),context.Get());
         colorGradeChainContract(device.Get(),context.Get(),26,4);
         colorGradeEligibilityContract(device.Get(),context.Get());
+        bloomResolutionContract(device.Get(),context.Get());
+        flareVisibilityContract(device.Get(),context.Get());
         resolutionSwitchContract(device.Get(),context.Get());
         worldFrontbufferPrecisionContract(device.Get(),context.Get());
         budgetContract(device.Get(),context.Get());

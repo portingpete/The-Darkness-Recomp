@@ -25,6 +25,9 @@ The GitHub **Source code** downloads are for building the project yourself.
 3. Double-click **Launch.cmd** to play with sound.
 
 Use **LaunchWithSettings.cmd** to choose settings and language before playing.
+Use **LaunchWithUpdates.cmd** to check GitHub for a newer release before playing.
+It asks before installing an update and keeps your game files, saves, achievements,
+and settings. Windows PowerShell is included with Windows; no extra tools are needed.
 
 No compiler, Python, or separate audio setup is needed for the Windows release.
 Use 64-bit Windows 10/11 with a Direct3D 11-capable graphics device.
@@ -49,7 +52,7 @@ achievement list. Unlocks from gameplay are stored in
 **saves/achievements.dat** and persist between launches. The list uses your game
 dump's achievement text and selected language; multiplayer achievements require
 their original gameplay conditions. Xbox Live synchronization is unavailable.
-Use **Options > Controls > Keyboard bindings** to remap gameplay keys.
+Use **Options > Controls > Keyboard bindings** to remap gameplay keys and mouse buttons.
 The four-page game menu supports primary/secondary keys, clear, defaults, and Save/Cancel.
 **Exit Game** in the pause or main menu closes the game after confirmation.
 Press **F5** to open developer tools for mission selection, player speed,
@@ -145,6 +148,7 @@ The XMA audio build also requires MSYS2 at `C:\msys64` with MinGW64 GCC and
 |---|---|
 | `Launch.cmd` | Play with sound |
 | `LaunchWithSettings.cmd` | Choose settings and language, then play with sound |
+| `LaunchWithUpdates.cmd` | Check for updates, then play with sound |
 | `LaunchStallProfiler.cmd` | Play with sound and record runtime stalls in the runtime log |
 | `Launch.cmd mute` | Play muted |
 | `Launch.cmd preview` | Engine preview build (muted by default) |

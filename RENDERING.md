@@ -197,6 +197,29 @@ color mapping. Velocity generation, radial Darkness effects and the original
 shader assets remain intact. The original captured draw metadata is unchanged;
 the selected shader's reflected texture mask controls its actual bindings.
 
+At 1440p and 4K, bloom retains the original 720p sampling footprint. The
+sixteen-tap `XRUtil_ShrinkTexture8` filter and seventeen-tap
+`XREngine_GaussClamped` filter sample a cached logical-size floating-point
+view of resolved color data, averaging every 2x2 or 3x3 physical pixel block.
+Their output is evaluated at logical pixel centers, and Final5 filters its
+bloom input on that same grid. Original weights, offsets, atlas clamps,
+exposure and fetch exponents remain intact. This prevents gaps between taps
+from dropping small highlights or producing patterned halos. Each resolve
+invalidates the logical view; resolution changes discard it. Helper draws
+are excluded from exposure histogram queries. CPU images, point samplers,
+scene detail and the sharp component of the damage effect keep their existing
+sampling. Hardware and WARP bloom contracts cover fine-light phases and
+independent filter oracles at 720p, 1440p and 4K.
+
+Lamp coronas also use the original flare visibility callback. Its Xbox query
+fallback supplied a nearly zero count to the native game, suppressing the
+flare before bloom. The native renderer now measures the original colorless,
+depth-tested patch asynchronously and feeds completed logical pixel counts
+back to the callback. Flare IDs have separate result owners from exposure
+histograms; pending measurements retain the last completion, including zero.
+Tests verify visible, partial and hidden patches, unchanged scene color/depth,
+and ordered completion at every supported rendering scale.
+
 The FOV preference remains portable;
 `--fov` overrides it for the current run. Values are horizontal degrees at
 16:9, with zero preserving Original. The native player-camera query applies

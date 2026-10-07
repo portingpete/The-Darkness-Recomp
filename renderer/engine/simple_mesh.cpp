@@ -131,6 +131,11 @@ bool reservePreviewCommand(std::unique_lock<std::mutex>& lock) {
 }
 std::array<std::shared_ptr<WorldQueryResult>,8> histogramResults;
 thread_local std::shared_ptr<WorldQuery> activeHistogram;
+// Original flare instances carry a u16 query ID, including 0xFFFF. Their
+// completed visibility counts must not share the eight exposure bins.
+constexpr unsigned flareQueryMaximumId=65535;
+std::unordered_map<unsigned,std::shared_ptr<WorldQueryResult>> flareResults;
+thread_local std::shared_ptr<WorldQuery> activeFlare;
 // Task-59 bounded pre-capture failure diagnostics: profile-only (--profile-engine),
 // failures-only. Categories mirror previewObserveImmediateWorld bail stages:
 // 0 attr, 1 state, 2 stream, 3 geometry, 4 bindings, 5 device, 6 exception.
@@ -1284,7 +1289,7 @@ void setPreviewFrameBackpressure(bool enabled,bool streaming) {
     if(!enabled)frameConsumed.notify_all();
 }
 void previewBeginHistogram(unsigned bin) {
-    if(!active || !worldActive || bin>=histogramResults.size() || activeHistogram)return;
+    if(!active || !worldActive || bin>=histogramResults.size() || activeHistogram || activeFlare)return;
     std::unique_lock lock(queueMutex);
     if(liveStreaming())reservePreviewCommand(lock);
     auto& result=histogramResults[bin];if(!result)result=std::make_shared<WorldQueryResult>();
@@ -1302,6 +1307,31 @@ bool previewReadHistogram(unsigned bin,uint64_t& samples) {
     std::lock_guard lock(queueMutex);
     if(bin>=histogramResults.size() || !histogramResults[bin])return false;
     const auto value=histogramResults[bin]->samples.load(std::memory_order_acquire);
+    if(value==UINT64_MAX)return false;
+    samples=value;return true;
+}
+void previewBeginFlare(unsigned id) {
+    if(!active || !worldActive || id>flareQueryMaximumId || activeHistogram || activeFlare)return;
+    std::unique_lock lock(queueMutex);
+    if(liveStreaming())reservePreviewCommand(lock);
+    // The u16 key bounds this lazy map to at most 65536 result owners. Keep
+    // the previous completion while a newer GPU query is still pending.
+    auto& result=flareResults[id];if(!result)result=std::make_shared<WorldQueryResult>();
+    activeFlare=std::make_shared<WorldQuery>();activeFlare->result=result;
+    SimpleMesh command;command.worldQuery=activeFlare;command.worldQueryBegin=true;
+    pending.push_back(std::move(command));
+}
+void previewEndFlare() {
+    if(!activeFlare)return;
+    std::unique_lock lock(queueMutex);
+    if(liveStreaming())reservePreviewCommand(lock);
+    SimpleMesh command;command.worldQuery=std::move(activeFlare);pending.push_back(std::move(command));
+}
+bool previewReadFlare(unsigned id,uint64_t& samples) {
+    std::lock_guard lock(queueMutex);
+    const auto found=flareResults.find(id);
+    if(found==flareResults.end())return false;
+    const auto value=found->second->samples.load(std::memory_order_acquire);
     if(value==UINT64_MAX)return false;
     samples=value;return true;
 }

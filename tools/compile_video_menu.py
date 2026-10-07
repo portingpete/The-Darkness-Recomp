@@ -165,7 +165,8 @@ KEYBOARD_ACTIONS = ("MOVE FORWARD", "MOVE BACKWARD", "MOVE LEFT", "MOVE RIGHT", 
                     "REDIRECT DARKLING", "JOURNAL", "PAUSE")
 KEYBOARD_PRIMARY = ("W", "S", "A", "D", "I", "K", "J", "L", "SPACE", "E", "R", "CTRL", "SHIFT",
                     "X", "Z", "1", "2", "3", "4", "Q", "G", "F", "TAB", "ENTER")
-KEYBOARD_SECONDARY = tuple("C" if action == "CROUCH" else "UNBOUND" for action in KEYBOARD_ACTIONS)
+KEYBOARD_SECONDARY = tuple({"CROUCH": "C", "ZOOM": "MMB", "FIRE RIGHT WEAPON": "LMB",
+                            "FIRE LEFT WEAPON": "RMB"}.get(action, "UNBOUND") for action in KEYBOARD_ACTIONS)
 
 
 def replace_video_page(registry):

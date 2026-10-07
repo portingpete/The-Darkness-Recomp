@@ -411,6 +411,10 @@ static void testPreviewBridge(Memory& memory, PPCContext& threadContext, EngineP
     put32(base,attributes+108,0xFFFFFFFF); put32(base,attributes+116,0xFFFFFFFF);
     base[attributes+144]=2; base[attributes+145]=1;
     for(unsigned i=0;i<3;++i) put32(base,colors+i*4,0xFFFFFFFF);
+    uint64_t unavailableFlare=73;
+    previewBeginFlare(0);previewEndFlare();previewEndFlare();
+    require(!previewReadFlare(0,unavailableFlare) && unavailableFlare==73,
+            "Disabled preview fabricated a flare visibility count");
     enableEnginePreview();
     auto finish=[] {
         std::vector<SimpleMesh> frame;
@@ -420,6 +424,10 @@ static void testPreviewBridge(Memory& memory, PPCContext& threadContext, EngineP
         require(!takePreviewFrame(repeated),"Completed frame was delivered twice");
         return frame;
     };
+    // Engine preview alone cannot measure visibility before world capture.
+    previewBeginFlare(0);previewEndFlare();
+    require(finish().empty() && !previewReadFlare(0,unavailableFlare) && unavailableFlare==73,
+            "Flare query queued without an active world renderer");
     auto draw=[&] { previewObserveTriangles(base,indices,1); };
     auto count=[&](size_t expected,const char* why) { draw(); require(finish().size()==expected,why); };
     auto upload=[&](uint16_t endpoint) {
@@ -1291,6 +1299,55 @@ static void testPreviewBridge(Memory& memory, PPCContext& threadContext, EngineP
     require(previewReadHistogram(0,measured) && measured==1152,"New pending query erased the prior completed histogram");
     pendingQuery[0].worldQuery->result->samples.store(0);
     require(previewReadHistogram(0,measured) && measured==0,"Measured zero was mistaken for an unavailable histogram");
+    // Flare ID0 and exposure bin0 are separate completion owners. Preserve
+    // ordered begin/draw/end commands and the previous result until the GPU
+    // publishes a newer count, including a genuine fully occluded zero.
+    measured=91;require(!previewReadFlare(0,measured) && measured==91,
+        "Unavailable flare query fabricated a completed count");
+    previewBeginFlare(0);previewObserveWorld(base,world);previewEndFlare();auto flare=finish();
+    require(flare.size()==3 && flare[0].worldQueryBegin && flare[0].worldQuery && flare[1].world &&
+        flare[2].worldQuery==flare[0].worldQuery && !flare[2].worldQueryBegin &&
+        flare[0].worldQuery->result!=queried[0].worldQuery->result,
+        "Flare query lost draw ordering, ownership or histogram isolation");
+    flare[0].worldQuery->result->samples.store(64,std::memory_order_release);
+    require(previewReadFlare(0,measured) && measured==64,"Flare completion did not reach the producer");
+    require(previewReadHistogram(0,measured) && measured==0,"Flare completion replaced an exposure bin");
+    previewBeginFlare(0);previewEndFlare();auto nextFlare=finish();
+    require(nextFlare.size()==2 && nextFlare[0].worldQuery!=flare[0].worldQuery &&
+        nextFlare[0].worldQuery->result==flare[0].worldQuery->result &&
+        nextFlare[1].worldQuery==nextFlare[0].worldQuery && !nextFlare[1].worldQueryBegin &&
+        previewReadFlare(0,measured) && measured==64,
+        "Pending flare query erased a prior completion or reused its command owner");
+    nextFlare[0].worldQuery->result->samples.store(0,std::memory_order_release);
+    require(previewReadFlare(0,measured) && measured==0,"Measured zero was treated as an unavailable flare query");
+    std::weak_ptr<WorldQuery> retiredFlare=flare[0].worldQuery;
+    std::weak_ptr<WorldQueryResult> completedFlare=flare[0].worldQuery->result;
+    flare.clear();nextFlare.clear();
+    require(retiredFlare.expired() && !completedFlare.expired() && previewReadFlare(0,measured) && measured==0,
+        "Retiring query commands discarded the ID's latest completed visibility");
+    previewBeginFlare(1);previewEndFlare();auto otherFlare=finish();
+    require(otherFlare.size()==2 && otherFlare[0].worldQuery->result!=completedFlare.lock(),
+        "Distinct flare IDs shared a completion owner");
+    otherFlare[0].worldQuery->result->samples.store(27,std::memory_order_release);
+    require(previewReadFlare(1,measured) && measured==27 && previewReadFlare(0,measured) && measured==0,
+        "Distinct flare completion changed an older ID's visibility");
+    previewBeginFlare(65535);previewBeginFlare(2);previewBeginHistogram(1);
+    previewEndFlare();previewEndFlare();previewEndHistogram();auto lastFlare=finish();
+    require(lastFlare.size()==2 && lastFlare[0].worldQuery && lastFlare[0].worldQueryBegin &&
+        lastFlare[1].worldQuery==lastFlare[0].worldQuery && !lastFlare[1].worldQueryBegin,
+        "Valid maximum flare ID or nested/unmatched query handling changed");
+    lastFlare[0].worldQuery->result->samples.store(13,std::memory_order_release);
+    measured=88;require(!previewReadFlare(2,measured) && measured==88 && !previewReadHistogram(1,measured) && measured==88,
+        "Nested query request created a completion owner");
+    require(previewReadFlare(65535,measured) && measured==13,"Maximum u16 flare ID was rejected");
+    previewBeginHistogram(1);previewBeginFlare(2);previewEndFlare();previewEndHistogram();auto isolatedHistogram=finish();
+    require(isolatedHistogram.size()==2 && isolatedHistogram[0].worldQueryBegin &&
+        isolatedHistogram[1].worldQuery==isolatedHistogram[0].worldQuery && !isolatedHistogram[1].worldQueryBegin &&
+        !previewReadFlare(2,measured),"Flare query nested inside an exposure measurement");
+    previewBeginFlare(65536);previewEndFlare();measured=88;
+    require(finish().empty() && !previewReadFlare(65536,measured) && measured==88,
+        "Out-of-range flare ID escaped its bounded completion map");
+    std::puts("PreviewFlareQueries: ordered owned commands, distinct IDs, exposure isolation, prior completion, zero and bounded/no-active handling passed.");
     // A full logical frame exceeds the former 4096-command cap. Cross part
     // boundaries with depth/fixed draws, clears, resolves and a live query.
     const auto destination=device+15000;
