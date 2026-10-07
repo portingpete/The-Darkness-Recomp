@@ -75,6 +75,60 @@ void captureValidation() {
         check(!menu.action(malformed) && menu.label(malformed).empty() && menu.staged() == original,
               "malformed binding action accepted");
 }
+void mouseCapture() {
+    const auto original = defaultKeyboardBindings();
+    KeyboardMenuState menu;
+    check(!menu.keyEvent(VK_LBUTTON, true), "closed menu consumed activation click");
+    check(menu.begin(original) && menu.action(jump) && menu.label(jump) == "sc, [RELEASE ]",
+          "mouse activation click did not wait for release");
+    check(menu.keyEvent(VK_XBUTTON1, true) && menu.staged() == original &&
+          menu.keyEvent(VK_LBUTTON, false) && menu.label(jump) == "sc, [RELEASE ]",
+          "capture accepted a button before all activation inputs released");
+    check(menu.keyEvent(VK_XBUTTON1, false) && menu.label(jump) == "sc, [PRESSKEY]",
+          "mouse releases did not arm capture");
+    check(menu.label(status).find("MOUSE") != std::string::npos && menu.label(status).size() == 44,
+          "capture did not describe mouse input within the authored width");
+    check(menu.keyEvent(VK_XBUTTON1, true) && !menu.captureActive() &&
+          menu.staged().keys[size_t(KeyboardAction::Jump)][0] == VK_XBUTTON1 &&
+          menu.label(jump) == "sc, [   M4   ]", "fresh side button did not complete capture");
+    menu.keyEvent(VK_XBUTTON1, false);
+    bind(menu, use, VK_LBUTTON);
+    check(menu.staged().keys[size_t(KeyboardAction::Use)][0] == VK_LBUTTON &&
+          menu.staged().keys[size_t(KeyboardAction::FireRight)][1] == 'E',
+          "mouse conflict did not preserve the displaced keyboard action");
+    bind(menu, use, VK_XBUTTON1);
+    check(menu.staged().keys[size_t(KeyboardAction::Use)][0] == VK_XBUTTON1 &&
+          menu.staged().keys[size_t(KeyboardAction::Jump)][0] == VK_LBUTTON,
+          "side button conflict did not swap both actions");
+    for (const auto button : {VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2}) {
+        KeyboardMenuState each;
+        check(each.begin(original), "cannot begin mouse capture fixture");
+        bind(each, jump, button);
+        check(each.staged().keys[size_t(KeyboardAction::Jump)][0] == button &&
+              validKeyboardBindings(each.staged()) && each.label(jump).find('?') == std::string::npos,
+              "mouse button capture or label rejected");
+    }
+}
+void altCapture() {
+    const auto original = defaultKeyboardBindings();
+    KeyboardMenuState menu;
+    check(!menu.keyEvent(VK_MENU, true, false, true) && menu.begin(original) &&
+          menu.action(jump) && menu.label(jump) == "sc, [RELEASE ]",
+          "held Alt did not wait for release before capture");
+    check(menu.keyEvent(VK_MENU, true, true, true) && menu.staged() == original,
+          "held Alt repeat was captured");
+    check(menu.keyEvent(VK_MENU, false, false, true) && menu.label(jump) == "sc, [PRESSKEY]",
+          "Alt release did not arm capture");
+    check(menu.keyEvent(VK_MENU, true, false, true) && !menu.captureActive() &&
+          menu.staged().keys[size_t(KeyboardAction::Jump)][0] == VK_MENU &&
+          menu.label(jump) == "sc, [  ALT   ]", "bare Alt system edge did not complete capture");
+    menu.keyEvent(VK_MENU, false, false, true);
+    check(menu.action(use) && menu.keyEvent(VK_RETURN, true, false, true) && menu.captureActive() &&
+          menu.label(status).find("RESERVED") != std::string::npos,
+          "Alt+Enter shortcut was assigned as Enter");
+    menu.keyEvent(VK_RETURN, false, false, true);
+    menu.cancelCapture();
+}
 void saveCancelAndCompletion() {
     KeyboardMenuState menu;
     const auto original = defaultKeyboardBindings();
@@ -186,8 +240,8 @@ void labelsAndBridge() {
 }
 int main() {
     try {
-        activationRelease(); captureValidation(); saveCancelAndCompletion(); saveButtonFeedback(); labelsAndBridge();
-        std::puts("Keyboard menu: activation release, capture validation, staged edits, Save/Cancel and async completion passed.");
+        activationRelease(); captureValidation(); mouseCapture(); altCapture(); saveCancelAndCompletion(); saveButtonFeedback(); labelsAndBridge();
+        std::puts("Keyboard/mouse menu: activation release, capture validation, staged edits, Save/Cancel and async completion passed.");
         return 0;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "Keyboard menu: %s\n", error.what()); return 1;

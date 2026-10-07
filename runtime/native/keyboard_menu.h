@@ -19,8 +19,8 @@ public:
     void end() noexcept;
     bool action(std::string_view action) noexcept;
     std::string label(std::string_view action) const;
-    // Send all physical keyboard edges, including while this menu is closed.
-    // This lets capture wait for the key which activated its original button.
+    // Send all keyboard and mouse button edges, even while this menu is closed.
+    // Capture waits for the input which activated its original slot to release.
     bool keyEvent(unsigned key, bool down, bool repeat = false, bool alt = false) noexcept;
     void cancelCapture() noexcept;
     bool takeSaveRequest(KeyboardMenuSaveRequest& request) noexcept;

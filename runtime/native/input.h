@@ -60,7 +60,7 @@ public:
     NativeInput& operator=(const NativeInput&) = delete;
     void attachWindow(HWND window);
     void setSettingsOpen(bool open);
-    // True when native menu capture consumes a keyboard edge before shortcuts.
+    // True when native input consumes an edge before host shortcuts.
     bool windowMessage(HWND window, UINT message, WPARAM key, LPARAM detail);
     void setMouseLookEnabled(bool enabled);
     bool mouseLookEnabled();
@@ -130,9 +130,6 @@ private:
     bool captureWasBlocked_ = false;
     std::array<bool, XUSER_MAX_COUNT> waitForControllerRelease_{};
     std::array<uint64_t, XUSER_MAX_COUNT> controllerFreshAfter_{};
-    bool leftMouse_ = false;
-    bool rightMouse_ = false;
-    bool middleMouse_ = false;
     bool mouseLook_ = false, escapePauses_ = false, guestMenuActive_ = false;
     bool guestMenuContextKnown_ = false;
     float mouseSensitivity_ = 1;

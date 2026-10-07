@@ -4,6 +4,7 @@
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
+#include <utility>
 
 using namespace DarkRecomp;
 using namespace DarkRecomp::Native;
@@ -28,6 +29,26 @@ int main() {
         check(validKeyboardBindings(defaults) && loadKeyboardBindings(path) == defaults, "default selection invalid");
         check(defaults.keys[size_t(KeyboardAction::Crouch)] == std::array<uint16_t, 2>{VK_CONTROL, 'C'},
               "default crouch alternatives lost");
+        check(defaults.keys[size_t(KeyboardAction::FireRight)] == std::array<uint16_t, 2>{'X', VK_LBUTTON} &&
+              defaults.keys[size_t(KeyboardAction::FireLeft)] == std::array<uint16_t, 2>{'Z', VK_RBUTTON} &&
+              defaults.keys[size_t(KeyboardAction::Zoom)] == std::array<uint16_t, 2>{VK_SHIFT, VK_MBUTTON},
+              "default mouse alternatives lost");
+        const std::array<std::pair<unsigned, const char*>, 5> mouseKeys{{
+            {VK_LBUTTON, "LMB"}, {VK_RBUTTON, "RMB"}, {VK_MBUTTON, "MMB"},
+            {VK_XBUTTON1, "M4"}, {VK_XBUTTON2, "M5"}
+        }};
+        for (const auto [key, prompt] : mouseKeys) {
+            auto mouseBinding = defaults;
+            check(assignKeyboardKey(mouseBinding, KeyboardAction::Jump, 0, key) &&
+                  mouseBinding.keys[size_t(KeyboardAction::Jump)][0] == key &&
+                  validKeyboardBindings(mouseBinding), "mouse button assignment rejected");
+            check(!keyboardKeyName(key).empty() && keyboardKeyPrompt(key) == prompt,
+                  "mouse button label unavailable");
+        }
+        auto mouseConflict = defaults;
+        check(assignKeyboardKey(mouseConflict, KeyboardAction::Jump, 0, VK_LBUTTON) &&
+              mouseConflict.keys[size_t(KeyboardAction::FireRight)][1] == VK_SPACE,
+              "duplicate mouse button did not swap the displaced binding");
         auto selected = defaults;
         check(assignKeyboardKey(selected, KeyboardAction::MoveForward, 0, VK_UP), "arrow movement assignment rejected");
         check(assignKeyboardKey(selected, KeyboardAction::Jump, 0, 'E') &&
@@ -35,7 +56,14 @@ int main() {
               selected.keys[size_t(KeyboardAction::Jump)][0] == 'E', "duplicate action did not swap assignments");
         check(assignKeyboardKey(selected, KeyboardAction::Reload, 1, VK_OEM_1), "punctuation assignment rejected");
         check(assignKeyboardKey(selected, KeyboardAction::Crouch, 1, 0), "unbinding secondary rejected");
-        for (const auto key : {VK_ESCAPE,VK_F1,VK_F2,VK_F5,VK_F6,VK_F8,VK_MENU,VK_LWIN,VK_RWIN,VK_LBUTTON,256}) {
+        check(assignKeyboardKey(selected, KeyboardAction::Crouch, 1, VK_MENU) &&
+              keyboardKeyName(VK_MENU) == L"ALT" && keyboardKeyPrompt(VK_MENU) == "Alt",
+              "Alt assignment or labels rejected");
+        check(assignKeyboardKey(selected, KeyboardAction::Use, 1, VK_LBUTTON) &&
+              assignKeyboardKey(selected, KeyboardAction::LookUp, 1, VK_XBUTTON1) &&
+              assignKeyboardKey(selected, KeyboardAction::LookDown, 1, VK_XBUTTON2),
+              "mouse persistence selection rejected");
+        for (const auto key : {VK_ESCAPE,VK_F1,VK_F2,VK_F5,VK_F6,VK_F8,VK_LWIN,VK_RWIN,256}) {
             const auto before = selected;
             check(!assignKeyboardKey(selected, KeyboardAction::Jump, 0, unsigned(key)) && selected == before,
                   "reserved key assignment changed controls");
@@ -45,6 +73,8 @@ int main() {
         check(WritePrivateProfileStringW(L"Display", L"FieldOfView", L"93.125", path.c_str()) &&
               WritePrivateProfileStringW(L"Other", L"Preserve", L"yes", path.c_str()), "cannot seed unrelated settings");
         check(saveKeyboardBindings(path, selected) && loadKeyboardBindings(path) == selected, "keyboard round trip failed");
+        check(GetPrivateProfileIntW(L"Keyboard", L"BindingsVersion", 0, path.c_str()) == 2,
+              "saved bindings did not mark mouse-aware configuration");
         wchar_t text[32]{};
         GetPrivateProfileStringW(L"Display", L"FieldOfView", L"", text, 32, path.c_str());
         check(std::wstring_view(text) == L"93.125", "keyboard save changed display setting");
@@ -72,7 +102,38 @@ int main() {
         check(loadKeyboardBindings(path) == unbound, "explicit unbound key treated as missing");
         check(!keyboardKeyName(VK_UP).empty() && keyboardKeyPrompt('P') == "P" && keyboardKeyPrompt(VK_CONTROL) == "Ct",
               "key labels unavailable");
-        std::puts("Keyboard bindings: defaults, key validation, conflict swaps, atomic persistence and recovery passed.");
+        auto legacy = defaults;
+        legacy.keys[size_t(KeyboardAction::FireRight)][1] = 0;
+        legacy.keys[size_t(KeyboardAction::FireLeft)][1] = 0;
+        legacy.keys[size_t(KeyboardAction::Zoom)][1] = 0;
+        check(saveKeyboardBindings(path, legacy) && loadKeyboardBindings(path) == legacy,
+              "versioned explicit mouse unbinding was restored");
+        check(WritePrivateProfileStringW(L"Keyboard", L"BindingsVersion", nullptr, path.c_str()) &&
+              loadKeyboardBindings(path) == defaults, "legacy mouse controls were not restored");
+        auto legacyCustom = legacy;
+        check(assignKeyboardKey(legacyCustom, KeyboardAction::FireRight, 0, 'P') &&
+              assignKeyboardKey(legacyCustom, KeyboardAction::FireRight, 1, 'O') &&
+              assignKeyboardKey(legacyCustom, KeyboardAction::FireLeft, 0, 0) &&
+              assignKeyboardKey(legacyCustom, KeyboardAction::FireLeft, 1, 'Z') &&
+              saveKeyboardBindings(path, legacyCustom) &&
+              WritePrivateProfileStringW(L"Keyboard", L"BindingsVersion", nullptr, path.c_str()),
+              "cannot prepare legacy custom controls");
+        auto migratedCustom = legacyCustom;
+        migratedCustom.keys[size_t(KeyboardAction::FireLeft)][0] = VK_RBUTTON;
+        migratedCustom.keys[size_t(KeyboardAction::Zoom)][1] = VK_MBUTTON;
+        check(loadKeyboardBindings(path) == migratedCustom,
+              "legacy migration displaced custom keys or missed the primary vacancy");
+        auto legacyReassigned = legacy;
+        check(assignKeyboardKey(legacyReassigned, KeyboardAction::Use, 1, VK_LBUTTON) &&
+              saveKeyboardBindings(path, legacyReassigned) &&
+              WritePrivateProfileStringW(L"Keyboard", L"BindingsVersion", nullptr, path.c_str()),
+              "cannot prepare explicitly reassigned legacy mouse fixture");
+        auto migratedReassigned = legacyReassigned;
+        migratedReassigned.keys[size_t(KeyboardAction::FireLeft)][1] = VK_RBUTTON;
+        migratedReassigned.keys[size_t(KeyboardAction::Zoom)][1] = VK_MBUTTON;
+        check(loadKeyboardBindings(path) == migratedReassigned,
+              "legacy migration duplicated an explicitly reassigned mouse button");
+        std::puts("Keyboard bindings: keyboard/mouse controls, conflict swaps, atomic persistence and legacy migration passed.");
         return 0;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "Keyboard bindings: %s\n", error.what()); return 1;

@@ -25,17 +25,25 @@ KeyboardBindings defaultKeyboardBindings() noexcept {
         'X','Z','1','2','3','4','Q','G','F',VK_TAB,VK_RETURN};
     for (size_t i = 0; i < primary.size(); ++i) result.keys[i][0] = primary[i];
     result.keys[size_t(KeyboardAction::Crouch)][1] = 'C';
+    result.keys[size_t(KeyboardAction::FireRight)][1] = VK_LBUTTON;
+    result.keys[size_t(KeyboardAction::FireLeft)][1] = VK_RBUTTON;
+    result.keys[size_t(KeyboardAction::Zoom)][1] = VK_MBUTTON;
     return result;
+}
+bool isMouseBindingKey(unsigned key) noexcept {
+    return key == VK_LBUTTON || key == VK_RBUTTON || key == VK_MBUTTON ||
+           key == VK_XBUTTON1 || key == VK_XBUTTON2;
 }
 bool assignableKeyboardKey(unsigned key) noexcept {
     if (!key) return true; // Explicitly unbound.
+    if (isMouseBindingKey(key)) return true;
     if (key >= '0' && key <= '9') return true;
     if (key >= 'A' && key <= 'Z') return true;
     if (key >= VK_NUMPAD0 && key <= VK_DIVIDE) return true;
     if (key >= VK_F1 && key <= VK_F24)
         return key != VK_F1 && key != VK_F2 && key != VK_F5 && key != VK_F6 && key != VK_F8;
     switch (key) {
-    case VK_BACK: case VK_TAB: case VK_RETURN: case VK_SHIFT: case VK_CONTROL:
+    case VK_BACK: case VK_TAB: case VK_RETURN: case VK_SHIFT: case VK_CONTROL: case VK_MENU:
     case VK_SPACE: case VK_PRIOR: case VK_NEXT: case VK_END: case VK_HOME:
     case VK_LEFT: case VK_UP: case VK_RIGHT: case VK_DOWN: case VK_INSERT: case VK_DELETE:
     case VK_OEM_1: case VK_OEM_PLUS: case VK_OEM_COMMA: case VK_OEM_MINUS:
@@ -67,8 +75,17 @@ bool assignKeyboardKey(KeyboardBindings& bindings, KeyboardAction action, size_t
 }
 std::wstring keyboardKeyName(unsigned key) {
     if (!key) return L"UNBOUND";
+    switch (key) {
+    case VK_LBUTTON: return L"MOUSE LEFT";
+    case VK_RBUTTON: return L"MOUSE RIGHT";
+    case VK_MBUTTON: return L"MOUSE MIDDLE";
+    case VK_XBUTTON1: return L"MOUSE 4";
+    case VK_XBUTTON2: return L"MOUSE 5";
+    default: break;
+    }
     if (key == VK_CONTROL) return L"CTRL";
     if (key == VK_SHIFT) return L"SHIFT";
+    if (key == VK_MENU) return L"ALT";
     UINT scan = MapVirtualKeyW(key, MAPVK_VK_TO_VSC);
     switch (key) {
     case VK_PRIOR: case VK_NEXT: case VK_END: case VK_HOME: case VK_LEFT: case VK_UP:
@@ -88,8 +105,10 @@ std::string keyboardKeyPrompt(unsigned key) {
     if (key >= VK_F1 && key <= VK_F24) return "F" + std::to_string(key - VK_F1 + 1);
     if (key >= VK_NUMPAD0 && key <= VK_NUMPAD9) return "N" + std::to_string(key - VK_NUMPAD0);
     switch (key) {
+    case VK_LBUTTON: return "LMB"; case VK_RBUTTON: return "RMB"; case VK_MBUTTON: return "MMB";
+    case VK_XBUTTON1: return "M4"; case VK_XBUTTON2: return "M5";
     case VK_SPACE: return "Spc"; case VK_RETURN: return "Ent"; case VK_TAB: return "Tab";
-    case VK_CONTROL: return "Ct"; case VK_SHIFT: return "Sh"; case VK_BACK: return "Bk";
+    case VK_CONTROL: return "Ct"; case VK_SHIFT: return "Sh"; case VK_MENU: return "Alt"; case VK_BACK: return "Bk";
     case VK_LEFT: return "<"; case VK_RIGHT: return ">"; case VK_UP: return "^"; case VK_DOWN: return "v";
     case VK_HOME: return "Home"; case VK_END: return "End"; case VK_PRIOR: return "PgUp";
     case VK_NEXT: return "PgDn"; case VK_INSERT: return "Ins"; case VK_DELETE: return "Del";

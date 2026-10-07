@@ -12,6 +12,20 @@
 
 namespace DarkRecomp::Native {
 namespace {
+unsigned mouseMessageKey(UINT message, WPARAM parameter) {
+    switch (message) {
+    case WM_LBUTTONDOWN: case WM_LBUTTONUP: return VK_LBUTTON;
+    case WM_RBUTTONDOWN: case WM_RBUTTONUP: return VK_RBUTTON;
+    case WM_MBUTTONDOWN: case WM_MBUTTONUP: return VK_MBUTTON;
+    case WM_XBUTTONDOWN: case WM_XBUTTONUP:
+        switch (GET_XBUTTON_WPARAM(parameter)) {
+        case XBUTTON1: return VK_XBUTTON1;
+        case XBUTTON2: return VK_XBUTTON2;
+        default: return 0;
+        }
+    default: return 0;
+    }
+}
 bool guestSpan(Memory& owner, uint32_t address, uint32_t length, bool writable) {
     if (!address || uint64_t(address) + length > 0x100000000ull) return false;
     uint64_t cursor = address, end = cursor + length;
@@ -413,7 +427,14 @@ void NativeInput::clearKeysLocked() {
 }
 void NativeInput::clearMouseLocked() {
     ++mouseEpoch_;
-    leftMouse_ = rightMouse_ = middleMouse_ = false;
+    for (const unsigned key : {VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2}) {
+        if (keys_[key] && heldKeys_) --heldKeys_;
+        keys_[key] = false;
+        capturedKeys_[key] = false;
+        // Capture can be lost before Windows delivers the release in this
+        // window. The binding editor must not wait on that stale held button.
+        keyboardMenuKeyEvent(key, false);
+    }
     mouseX_ = mouseY_ = 0;
     mousePending_ = false;
     wheelPending_ = wheelRemainder_ = 0; wheelButton_ = 0; wheelNext_ = 0;
@@ -451,13 +472,12 @@ bool NativeInput::setMouseSensitivity(float sensitivity) {
     return true;
 }
 void NativeInput::suppressMenuActivationKeysLocked() {
-    const bool held = heldKeys_ || leftMouse_ || rightMouse_ || middleMouse_ || wheelPending_ || wheelButton_;
+    const bool held = heldKeys_ || wheelPending_ || wheelButton_;
     for (size_t key = 0; key < keys_.size(); ++key) {
         capturedKeys_[key] = capturedKeys_[key] || keys_[key];
         keys_[key] = false;
     }
     heldKeys_ = 0;
-    leftMouse_ = rightMouse_ = middleMouse_ = false;
     wheelPending_ = wheelRemainder_ = 0; wheelButton_ = 0;
     waitForControllerRelease_.fill(true);
     if (backgroundController_) {
@@ -483,6 +503,19 @@ bool NativeInput::setKeyboardBindings(const KeyboardBindings& bindings) {
         const auto& slots = bindings.keys[size_t(action)];
         return keyboardKeyPrompt(slots[0] ? slots[0] : slots[1]);
     };
+    const auto mouseOrKey = [&](KeyboardAction action) {
+        for (const auto assigned : bindings.keys[size_t(action)])
+            if (isMouseBindingKey(assigned)) return keyboardKeyPrompt(assigned);
+        return key(action);
+    };
+    const auto alternatives = [&](KeyboardAction action) {
+        std::string result;
+        for (const auto assigned : bindings.keys[size_t(action)]) if (assigned) {
+            if (!result.empty()) result += "/";
+            result += keyboardKeyPrompt(assigned);
+        }
+        return result.empty() ? std::string("-") : result;
+    };
     const auto withMenu = [](std::string configured, const char* menu) {
         return configured == menu ? configured : configured + "/" + menu;
     };
@@ -492,8 +525,10 @@ bool NativeInput::setKeyboardBindings(const KeyboardBindings& bindings) {
     labels[3] = withMenu(key(KeyboardAction::Jump), "Spc");
     labels[4] = key(KeyboardAction::ManifestDarkness);
     labels[5] = key(KeyboardAction::UseDarkness);
+    labels[6] = mouseOrKey(KeyboardAction::FireLeft);
+    labels[7] = mouseOrKey(KeyboardAction::FireRight);
     labels[8] = key(KeyboardAction::Crouch);
-    labels[9] = key(KeyboardAction::Zoom) + "/MMB";
+    labels[9] = alternatives(KeyboardAction::Zoom);
     labels[10] = withMenu(key(KeyboardAction::Pause), "Ent");
     labels[11] = withMenu(key(KeyboardAction::Journal), "Tab");
     labels[12] = key(KeyboardAction::PreviousPower) + "/^";
@@ -533,7 +568,7 @@ bool NativeInput::setKeyboardBindings(const KeyboardBindings& bindings) {
 MenuCursorSnapshot NativeInput::menuCursor() {
     std::lock_guard lock(mutex_);
     return {lastMenuX_, lastMenuY_, window_ && focused_ && !settingsOpen_ && !keyboardMenuInputBlocked() && !mouseLook_ && haveMenuPos_,
-            leftMouse_, menuMovement_, menuPresses_, menuEpoch_};
+            keys_[VK_LBUTTON], menuMovement_, menuPresses_, menuEpoch_};
 }
 bool NativeInput::guestMenuAllowsPointer() {
     std::lock_guard lock(mutex_);
@@ -634,13 +669,38 @@ bool NativeInput::windowMessage(HWND window, UINT message, WPARAM key, LPARAM de
         clearMouseLocked();
         resetPromptLocked();
     } else if (focused_ && !settingsOpen_) {
-        if (keyboardMenuInputBlocked() &&
-            (message == WM_LBUTTONDOWN || message == WM_LBUTTONUP ||
-             message == WM_RBUTTONDOWN || message == WM_RBUTTONUP ||
-             message == WM_MBUTTONDOWN || message == WM_MBUTTONUP || message == WM_MOUSEWHEEL)) {
-            leftMouse_ = rightMouse_ = middleMouse_ = false;
+        const unsigned mouseKey = mouseMessageKey(message, key);
+        if (mouseKey) {
+            const bool down = message == WM_LBUTTONDOWN || message == WM_RBUTTONDOWN ||
+                              message == WM_MBUTTONDOWN || message == WM_XBUTTONDOWN;
+            // Track the slot's activation click too, so capture waits for its
+            // release before assigning a new mouse button.
+            const bool consumed = keyboardMenuKeyEvent(mouseKey, down);
+            if (consumed || capturedKeys_[mouseKey]) {
+                capturedKeys_[mouseKey] = down;
+                if (keys_[mouseKey]) { keys_[mouseKey] = false; if (heldKeys_) --heldKeys_; }
+                return true; // Never replay an assigned or suppressed held click.
+            }
+            if (mouseKey == VK_LBUTTON) {
+                const int x = int(short(LOWORD(detail))), y = int(short(HIWORD(detail)));
+                if (!haveMenuPos_ || x != lastMenuX_ || y != lastMenuY_) ++menuMovement_;
+                lastMenuX_ = x; lastMenuY_ = y; haveMenuPos_ = true;
+                if (down && !keys_[mouseKey]) ++menuPresses_;
+            }
+            if (down != keys_[mouseKey]) {
+                keys_[mouseKey] = down;
+                if (down) ++heldKeys_;
+                else if (heldKeys_) --heldKeys_;
+            }
+            if (down) {
+                keyboardMouseEvent_ = true;
+                promptSource_.store(PromptInputSource::KeyboardMouse, std::memory_order_release);
+            }
+            return message == WM_XBUTTONDOWN || message == WM_XBUTTONUP;
+        }
+        if (keyboardMenuInputBlocked() && message == WM_MOUSEWHEEL) {
             wheelPending_ = wheelRemainder_ = 0; wheelButton_ = 0;
-            return true; // A click during capture must not be replayed later.
+            return true;
         }
         if ((message == WM_KEYDOWN || message == WM_SYSKEYDOWN ||
              message == WM_KEYUP || message == WM_SYSKEYUP) && key < keys_.size())
@@ -653,9 +713,15 @@ bool NativeInput::windowMessage(HWND window, UINT message, WPARAM key, LPARAM de
                 if (keys_[key]) { keys_[key] = false; if (heldKeys_) --heldKeys_; }
                 return true; // Never replay an assigned/cancelled held key.
             }
-            // Track Alt+Enter's physical edge for capture without turning the
-            // ordinary fullscreen shortcut into guest Start/confirm input.
-            if (down && key == VK_RETURN && (detail & (LPARAM(1) << 29))) return false;
+            // Host shortcuts still own their chord. If Alt is bound, retire
+            // its gameplay press until release while allowing the window
+            // procedure to handle fullscreen, closing and system menus.
+            if (down && (detail & (LPARAM(1) << 29)) &&
+                (key == VK_RETURN || key == VK_F4 || key == VK_SPACE || key == VK_TAB)) {
+                capturedKeys_[VK_MENU] = capturedKeys_[VK_MENU] || keys_[VK_MENU];
+                if (keys_[VK_MENU]) { keys_[VK_MENU] = false; if (heldKeys_) --heldKeys_; }
+                return false;
+            }
             if (down && !keys_[key] && (detail & (LPARAM(1) << 30))) return false;
             if (down != keys_[key]) {
                 if (key == VK_ESCAPE && down) escapePauses_ = mouseLook_ && !guestMenuActive_;
@@ -667,22 +733,10 @@ bool NativeInput::windowMessage(HWND window, UINT message, WPARAM key, LPARAM de
                 keyboardMouseEvent_ = true;
                 promptSource_.store(PromptInputSource::KeyboardMouse, std::memory_order_release);
             }
-        }
-        else if (message == WM_LBUTTONDOWN || message == WM_LBUTTONUP) {
-            const int x = int(short(LOWORD(detail))), y = int(short(HIWORD(detail)));
-            if (!haveMenuPos_ || x != lastMenuX_ || y != lastMenuY_) ++menuMovement_;
-            lastMenuX_ = x; lastMenuY_ = y; haveMenuPos_ = true;
-            if (message == WM_LBUTTONDOWN && !leftMouse_) ++menuPresses_;
-            leftMouse_ = message == WM_LBUTTONDOWN;
-            if (leftMouse_) promptSource_.store(PromptInputSource::KeyboardMouse, std::memory_order_release);
-        }
-        else if (message == WM_RBUTTONDOWN || message == WM_RBUTTONUP) {
-            rightMouse_ = message == WM_RBUTTONDOWN;
-            if (rightMouse_) promptSource_.store(PromptInputSource::KeyboardMouse, std::memory_order_release);
-        }
-        else if (message == WM_MBUTTONDOWN || message == WM_MBUTTONUP) {
-            middleMouse_ = message == WM_MBUTTONDOWN;
-            if (middleMouse_) promptSource_.store(PromptInputSource::KeyboardMouse, std::memory_order_release);
+            // DefWindowProc opens the host system menu on Alt release. Bound
+            // Alt belongs to gameplay, so consume both of its physical edges.
+            if (key == VK_MENU && std::any_of(bindings_.keys.begin(), bindings_.keys.end(),
+                [](const auto& slots) { return slots[0] == VK_MENU || slots[1] == VK_MENU; })) return true;
         }
         else if (message == WM_MOUSEWHEEL && (mouseLook_ || guestMenuActive_ || !guestMenuContextKnown_)) {
             promptSource_.store(PromptInputSource::KeyboardMouse, std::memory_order_release);
@@ -715,7 +769,8 @@ XINPUT_GAMEPAD NativeInput::keyboardLocked() {
     const auto down = [&](KeyboardAction action) {
         const auto& binding = bindings_.keys[size_t(action)];
         const auto pressed = [&](unsigned key) {
-            return key && keys_[key] && !(menuContext && fixedMenuKey(key));
+            return key && keys_[key] && !(menuContext && fixedMenuKey(key)) &&
+                   !(isMouseBindingKey(key) && (!mouseLook_ || guestMenuActive_));
         };
         return pressed(binding[0]) || pressed(binding[1]);
     };
@@ -751,11 +806,8 @@ XINPUT_GAMEPAD NativeInput::keyboardLocked() {
     pad.sThumbLY = axis(KeyboardAction::MoveBackward, KeyboardAction::MoveForward);
     pad.sThumbRX = axis(KeyboardAction::LookLeft, KeyboardAction::LookRight);
     pad.sThumbRY = axis(KeyboardAction::LookDown, KeyboardAction::LookUp);
-    pad.bLeftTrigger = ((mouseLook_ && rightMouse_) || down(KeyboardAction::FireLeft)) ? 255 : 0;
-    pad.bRightTrigger = ((mouseLook_ && leftMouse_) || down(KeyboardAction::FireRight)) ? 255 : 0;
-    if (mouseLook_) {
-        if (middleMouse_) pad.wButtons |= XINPUT_GAMEPAD_RIGHT_THUMB;
-    }
+    pad.bLeftTrigger = down(KeyboardAction::FireLeft) ? 255 : 0;
+    pad.bRightTrigger = down(KeyboardAction::FireRight) ? 255 : 0;
     const auto now = api_.ticks();
     if (now >= wheelNext_) {
         if (wheelButton_) { wheelButton_ = 0; wheelNext_ = now + 20; }
@@ -824,8 +876,7 @@ DWORD NativeInput::getState(Memory& owner, uint32_t user, uint32_t flags, uint32
     } else {
         bool keyboardMouseActive = false;
         if (user == 0 && window_) {
-            keyboardMouseActive = heldKeys_ != 0 || keyboardMouseEvent_ || leftMouse_ || rightMouse_ ||
-                middleMouse_ || mousePending_ || wheelPending_ != 0 ||
+            keyboardMouseActive = heldKeys_ != 0 || keyboardMouseEvent_ || mousePending_ || wheelPending_ != 0 ||
                 wheelButton_ != 0 || wheelRemainder_ != 0;
         }
         updatePromptSourceLocked(user, state.Gamepad, status == ERROR_SUCCESS, keyboardMouseActive);

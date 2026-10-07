@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <mutex>
 #include <xmmintrin.h>
 
@@ -105,6 +106,33 @@ void probePointerState(uint8_t* base, uint32_t root, const char* reason,
             nativeInput().mouseLookEnabled());
 }
 
+uint32_t listMenuPointerOwner(uint8_t* base, uint32_t root, uint32_t hit) {
+    if (!root || uint64_t(root) + 4348 > PPC_MEMORY_SIZE) return 0;
+    const uint32_t table = PPC_LOAD_U32(root);
+    if (!table || uint64_t(table) + 280 > PPC_MEMORY_SIZE ||
+        PPC_LOAD_U32(table + 276) != 0x823A8A68) return 0;
+    // Original CubeMenu_Chooser and other list menus keep visible Button
+    // windows at +4320. Their scripts belong to the menu, not the Button's
+    // SCRIPT_PRESSED. Match the exact row before routing to that owner.
+    const uint32_t array = PPC_LOAD_U32(root + 4320);
+    if (!array || uint64_t(array) + 28 > PPC_MEMORY_SIZE) return 0;
+    const uint32_t count = PPC_LOAD_U32(array + 4), items = PPC_LOAD_U32(array + 24);
+    if (!count || count > 1024 || !items ||
+        uint64_t(items) + uint64_t(count) * 4 > PPC_MEMORY_SIZE) return 0;
+    for (uint32_t row = 0; row < count; ++row) {
+        if (PPC_LOAD_U32(items + row * 4) != hit) continue;
+        const int32_t firstRow = int32_t(PPC_LOAD_U32(root + 4344));
+        if (firstRow < 0 || uint64_t(firstRow) + row > uint64_t(std::numeric_limits<int32_t>::max()))
+            return 0;
+        // Mirror sub_8239C988's focused-row bookkeeping immediately. Its
+        // next tick is too late for a click that also changes focus, and
+        // paginated lists add the first visible logical row at +4344.
+        PPC_STORE_U32(root + 4340, uint32_t(firstRow) + row);
+        return root;
+    }
+    return 0;
+}
+
 // Calls run only from a live original window method on the guest UI thread.
 // Its native callbacks, focus, disabled flags and SCRIPT_PRESSED remain owners.
 void processPointer(PPCContext& ctx, uint8_t* base, uint32_t root) {
@@ -181,6 +209,7 @@ uint32_t dispatchMenuPointer(PPCContext& ctx, uint8_t* base, uint32_t root,
         std::fprintf(stderr, "[MenuPointerDispatch] base=%p hit=%08X vtable=%08X focus=%08X style=%08X flags=%08X->%08X focusResult=%08X\n",
             base, hit, table, focus, PPC_LOAD_U32(hit + 80), flagsBefore,
             PPC_LOAD_U32(hit + 84), call.r3.u32);
+    const uint32_t listOwner = listMenuPointerOwner(base, root, hit);
     if (!activate) return hit;
     // Use the original confirm message for the newly hit window. This is the
     // title's normal button/menu callback route, including option buttons,
@@ -192,16 +221,18 @@ uint32_t dispatchMenuPointer(PPCContext& ctx, uint8_t* base, uint32_t root,
     PPC_STORE_U32(message + 8, 228);       // interface confirm
     PPC_STORE_U32(message + 16, 160);      // original XInput A source before interface mapping
     PPC_STORE_U32(message + 24, 0x437F0000); // original pressed digital value (255f)
-    // The original mouse method delivers to the hit window's +276 handler.
+    // Ordinary buttons receive their own +276 handler. Chooser/list rows
+    // receive the owner's +276, which invokes its original choice callback.
     // Root +272 gives authored keyboard bindings priority: modal roots can
     // consume confirm to move focus instead of pressing the clicked button.
-    call.r3.u64 = hit; call.r4.u64 = message;
-    const uint32_t handler = PPC_LOAD_U32(PPC_LOAD_U32(hit) + 276);
+    const uint32_t target = listOwner ? listOwner : hit;
+    call.r3.u64 = target; call.r4.u64 = message;
+    const uint32_t handler = PPC_LOAD_U32(PPC_LOAD_U32(target) + 276);
     call.lr = 0;
     PPCSafeIndirect(call, base, handler);
     if (probeEnabled())
-        std::fprintf(stderr, "[MenuPointerDispatch] hit=%08X handler=%08X result=%08X flags=%08X closed=%u\n",
-            hit, handler, call.r3.u32, PPC_LOAD_U32(hit + 84), PPC_LOAD_U8(root + 88));
+        std::fprintf(stderr, "[MenuPointerDispatch] hit=%08X target=%08X handler=%08X result=%08X flags=%08X closed=%u\n",
+            hit, target, handler, call.r3.u32, PPC_LOAD_U32(hit + 84), PPC_LOAD_U8(root + 88));
     return hit;
 }
 void initializeMenuPointer() noexcept {}

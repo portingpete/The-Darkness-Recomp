@@ -7,6 +7,82 @@
 #include <string_view>
 #include <vector>
 
+namespace DeveloperDarknessFixture {
+constexpr uint32_t grantAddress = 0x8218B4C0;
+constexpr std::array<uint32_t, 2> ancientNames{0x82062D00, 0x82062D14};
+inline uint32_t actor, state, inventory, itemArray, itemData;
+inline std::array<uint32_t, 2> weapons;
+inline unsigned grants;
+inline uint32_t failName;
+
+// Substitute the game world's item-creation boundary, since the full registry,
+// animation and replication services are not started in NativeTests. The actual
+// retail inventory lookup, category traversal and CStr comparison still run.
+static PPC_FUNC(grant) {
+    check(ctx.r3.u32 == actor && ctx.r4.u32 == 0 && ctx.r5.u32 == 0 &&
+          ctx.r7.s64 == int16_t(PPC_LOAD_U16(actor + 368)) && ctx.r8.u32 == 0 && ctx.r9.u32 == 0,
+          "Darkness gun grant changed the original giveall item-helper ABI");
+    check(ctx.r6.u32 == ancientNames[0] || ctx.r6.u32 == ancientNames[1],
+          "Darkness unlock attempted to grant another weapon, story item or Darkling");
+    ++grants;
+    // A nonzero helper return does not prove an inventory item was created.
+    if (ctx.r6.u32 == failName) { ctx.r3.u64 = 1; return; }
+    const auto weapon = weapons[ctx.r6.u32 == ancientNames[1]];
+    const auto count = memory->read32(itemArray + 4);
+    check(count < 4, "Darkness unlock redundantly invoked the original item helper");
+    memory->write32(itemData + count * 4, weapon);
+    memory->write32(itemArray + 4, count + 1);
+    memory->write32(state + 7076, memory->read32(state + 7076) | 0x20000000);
+    ctx.r3.u64 = 0; ctx.r31.u64 = 0xFEEDFACE;
+}
+
+struct Inventory {
+    uint8_t* base;
+    uint32_t unrelated;
+    PPCFunc* original;
+    explicit Inventory(const DeveloperPlayerLookupFixture::Fixture& player)
+        : base(player.base), unrelated(player.block + 0x1B000), original(PPC_LOOKUP_FUNC(base, grantAddress)) {
+        actor = player.actor; state = player.state; inventory = player.block + 0x19000;
+        itemArray = player.block + 0x1A500; itemData = player.block + 0x1A600;
+        weapons = {player.block + 0x1B400, player.block + 0x1B800};
+        const auto categories = player.block + 0x19300, categoryData = player.block + 0x19380;
+        memory->write32(actor + 656, inventory);
+        memory->write32(inventory + 16, player.server);
+        memory->write32(inventory + 24, categories);
+        memory->write32(categories + 4, 4); memory->write32(categories + 24, categoryData);
+        for (unsigned i = 0; i < 4; ++i) {
+            const auto category = player.block + 0x19400 + i * 0x100;
+            memory->write32(categoryData + i * 4, category);
+            if (!i) memory->write32(category + 24, itemArray);
+        }
+        memory->write32(itemArray + 24, itemData);
+        const auto name = [&](uint32_t item, uint32_t backing, const char* value, uint32_t type) {
+            memory->write32(item + 8, 0x82065568); memory->write32(item + 12, backing);
+            PPC_STORE_U16(backing, 0x4001);
+            std::strcpy(reinterpret_cast<char*>(base + backing + 2), value);
+            memory->write32(item + 320, type);
+        };
+        name(unrelated, player.block + 0x1C000, "weapon_fixture_ordinary", 1);
+        for (unsigned i = 0; i < weapons.size(); ++i)
+            name(weapons[i], player.block + 0x1C100 + i * 0x100,
+                 reinterpret_cast<char*>(base + ancientNames[i]), 7);
+        PPC_LOOKUP_FUNC(base, grantAddress) = grant;
+        reset();
+    }
+    void reset() const {
+        grants = 0; failName = 0;
+        memory->write32(itemArray + 4, 1); memory->write32(itemData, unrelated);
+        for (const auto item : weapons) memory->write32(item + 580, 0);
+    }
+    uint32_t lookup(PPCContext& ctx, uint32_t name) const {
+        auto call = ctx; call.r3.u64 = inventory; call.r4.u64 = name;
+        sub_823241C0(call, base);
+        return call.r3.u32;
+    }
+    ~Inventory() { PPC_LOOKUP_FUNC(base, grantAddress) = original; }
+};
+}
+
 static void testDeveloperDarkness(PPCContext& ctx) {
     using namespace DarkRecomp::Native;
     DeveloperPlayerLookupFixture::Fixture fixture;
@@ -15,6 +91,7 @@ static void testDeveloperDarkness(PPCContext& ctx) {
     const auto player = resolveDeveloperPlayer(ctx, base, fixture.client);
     check(player.actor == fixture.actor && player.state == state, "Darkness fixture must resolve the original local player");
     const auto originalContext = ctx;
+    DeveloperDarknessFixture::Inventory guns(fixture);
     const auto snapshot = [&] { return std::vector<uint8_t>(base + state, base + state + 10244); };
     const auto npcBefore = std::vector<uint8_t>(base + fixture.cameraState, base + fixture.cameraState + 10244);
 
@@ -27,6 +104,19 @@ static void testDeveloperDarkness(PPCContext& ctx) {
         check(std::string_view(reinterpret_cast<char*>(base + name)) == names[i],
               "Darkness grant bits must match the original retail power-name table");
     }
+    for (unsigned i = 0; i < DeveloperDarknessFixture::ancientNames.size(); ++i)
+        check(std::string_view(reinterpret_cast<char*>(base + DeveloperDarknessFixture::ancientNames[i])) ==
+              (i ? "weapon_Ancient_2" : "weapon_Ancient_1"),
+              "Ancient weapon grant must use the original giveall's concrete template names");
+    // Both weapons share inventory type7. The retail name oracle must still
+    // distinguish them and ignore an item carrying its original removed flag.
+    memory->write32(DeveloperDarknessFixture::itemArray + 4, 2);
+    memory->write32(DeveloperDarknessFixture::itemData + 4, DeveloperDarknessFixture::weapons[0]);
+    check(guns.lookup(ctx, 0x82062D00) == DeveloperDarknessFixture::weapons[0] &&
+          !guns.lookup(ctx, 0x82062D14), "Original inventory name lookup confused the two Ancient weapons");
+    memory->write32(DeveloperDarknessFixture::weapons[0] + 580, 0x80000);
+    check(!guns.lookup(ctx, 0x82062D00), "Original inventory name lookup accepted a removed Ancient weapon");
+    guns.reset();
     const auto getLevel = [&] {
         auto call = ctx;
         call.r3.u64 = state + 7668;
@@ -52,6 +142,7 @@ static void testDeveloperDarkness(PPCContext& ctx) {
     check(PPC_LOAD_U16(state + 7672) == 180 && getLevel() == 4, "Retail Darkness levels clamp at displayed level5");
 
     const auto prepare = [&] {
+        guns.reset();
         std::memset(base + state, 0xA5, 10244);
         memory->write32(state + 7076, 0x80000201);
         PPC_STORE_U8(state + 7656, 17);
@@ -81,7 +172,11 @@ static void testDeveloperDarkness(PPCContext& ctx) {
           "Unlock must grant all six usable/unlocked powers and retain each field's unrelated high bits");
     check(PPC_LOAD_U16(state + 7672) == 14 && PPC_LOAD_U8(state + 7656) == 17 && PPC_LOAD_U8(state + 8553) == 20,
           "Power unlock must not also grant a Darkness level or energy");
-    check(memory->read32(state + 7076) == 0x80000301, "Power grant must preserve original dirty flags and add the power-update flag");
+    check(memory->read32(state + 7076) == 0xA0000301, "Power grant must retain the original inventory helper's dirty flags and add the power-update flag");
+    check(DeveloperDarknessFixture::grants == 2 && guns.lookup(ctx, 0x82062D00) && guns.lookup(ctx, 0x82062D14) &&
+          memory->read32(DeveloperDarknessFixture::itemArray + 4) == 3 &&
+          memory->read32(DeveloperDarknessFixture::itemData) == guns.unrelated,
+          "Power unlock must grant both Ancient templates exactly once and preserve ordinary inventory");
     onlyChanged(before, true, false);
 
     prepare(); before = snapshot();
@@ -92,6 +187,7 @@ static void testDeveloperDarkness(PPCContext& ctx) {
           "Maximum Darkness grant must match original level5 capacity/current energy");
     check(PPC_LOAD_U8(state + 7659) == 0x40 && PPC_LOAD_U8(state + 7660) == 0x80,
           "Maximum Darkness level must not also unlock powers");
+    check(!DeveloperDarknessFixture::grants, "Maximum Darkness level must not invoke an inventory grant");
     check(memory->read32(state + 7076) == 0x80004301, "Level grant must add both original energy and capacity dirty flags");
     onlyChanged(before, false, true);
 
@@ -115,8 +211,30 @@ static void testDeveloperDarkness(PPCContext& ctx) {
     check(applyDeveloperDarkness(ctx, base, player, true, true).applied, "Both queued Darkness actions must compose in one update");
     onlyChanged(before, true, true);
     before = snapshot();
-    check(applyDeveloperDarkness(ctx, base, player, true, true).applied && before == snapshot(),
+    check(applyDeveloperDarkness(ctx, base, player, true, true).applied && before == snapshot() &&
+          DeveloperDarknessFixture::grants == 2,
           "Repeated grants must be idempotent rather than incrementing hearts or compounding flags");
+
+    prepare();
+    memory->write32(DeveloperDarknessFixture::itemArray + 4, 2);
+    memory->write32(DeveloperDarknessFixture::itemData + 4, DeveloperDarknessFixture::weapons[0]);
+    check(applyDeveloperDarkness(ctx, base, player, true, false).applied && DeveloperDarknessFixture::grants == 1 &&
+          guns.lookup(ctx, 0x82062D00) && guns.lookup(ctx, 0x82062D14),
+          "Unlock must repair only a missing Ancient partner, even though both use item type7");
+
+    prepare(); before = snapshot();
+    DeveloperDarknessFixture::failName = 0x82062D14;
+    const auto incomplete = applyDeveloperDarkness(ctx, base, player, true, true);
+    check(!incomplete.applied && incomplete.status.find("incomplete") != std::string::npos &&
+          guns.lookup(ctx, 0x82062D00) && !guns.lookup(ctx, 0x82062D14) &&
+          PPC_LOAD_U8(state + 7660) == 0x80 && PPC_LOAD_U8(state + 7659) == 0x40 &&
+          PPC_LOAD_U16(state + 7672) == 14 && PPC_LOAD_U8(state + 8553) == 20 &&
+          memory->read32(state + 7076) == 0xA0000201,
+          "Failed partner creation must preserve helper updates without reporting full success or changing powers/level");
+    onlyChanged(before, false, false);
+    DeveloperDarknessFixture::failName = 0;
+    check(applyDeveloperDarkness(ctx, base, player, true, true).applied && DeveloperDarknessFixture::grants == 3,
+          "Retry must retain the successful gun and request only the previously failed partner");
 
     PPC_STORE_U16(state + 7672, 300);
     PPC_STORE_U8(state + 8553, 120); PPC_STORE_U8(state + 7656, 130);
@@ -134,6 +252,18 @@ static void testDeveloperDarkness(PPCContext& ctx) {
     stale = player; stale.server = fixture.client; rejected(stale, base);
     stale = player; stale.state = 0xFFFFF000; rejected(stale, base);
     stale = player; stale.actor += 1; rejected(stale, base);
+    memory->write32(fixture.actor + 656, 0); rejected(player, base);
+    memory->write32(fixture.actor + 656, DeveloperDarknessFixture::inventory);
+    memory->write32(DeveloperDarknessFixture::itemArray + 4, 0xFFFFFFFF); rejected(player, base);
+    memory->write32(DeveloperDarknessFixture::itemArray + 4, 3);
+    memory->write32(DeveloperDarknessFixture::itemArray + 24, 0xFFFFFFFC); rejected(player, base);
+    memory->write32(DeveloperDarknessFixture::itemArray + 24, DeveloperDarknessFixture::itemData);
+    const auto backing = memory->read32(guns.unrelated + 12);
+    memory->write32(guns.unrelated + 12, 0xFFFFFFFF); rejected(player, base);
+    memory->write32(guns.unrelated + 12, backing);
+    auto noStack = ctx; noStack.r1.u64 = 0;
+    check(!applyDeveloperDarkness(noStack, base, player, true, true).applied && before == snapshot(),
+          "Missing guest stack must reject an inventory grant before any progression writes");
     DWORD previous = 0;
     check(VirtualProtect(base + state, 0x3000, PAGE_READONLY, &previous), "Darkness fixture read-only protection");
     rejected(player, base);
@@ -204,5 +334,5 @@ static void testDeveloperDarkness(PPCContext& ctx) {
     check(before == snapshot(), "A preloading rejection must not retarget a queued grant after a transition");
     check(std::memcmp(base + fixture.cameraState, npcBefore.data(), npcBefore.size()) == 0,
           "Request-queue processing modified the camera NPC");
-    puts("Developer Darkness: original thresholds/save roundtrip, six powers, player isolation and memory guards, one-shot queue/reset/mission/unavailable/preload consumption passed.");
+    puts("Developer Darkness: original thresholds/save/name lookup, Ancient helper ABI/dirty flags/partial repair/idempotence, six powers, memory guards and one-shot request consumption passed.");
 }

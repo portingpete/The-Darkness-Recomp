@@ -11,6 +11,7 @@ std::array<XINPUT_CAPABILITIES, 4> inputCaps{};
 XINPUT_VIBRATION inputLastVibration{};
 DWORD inputLastUser = 4;
 unsigned inputVibrationCalls = 0;
+unsigned inputSystemMenuCalls = 0;
 ULONGLONG inputTicks = 1000;
 ULONGLONG WINAPI fixtureInputTicks() noexcept { return inputTicks; }
 DWORD WINAPI fixtureInputState(DWORD user, XINPUT_STATE* state) noexcept {
@@ -31,8 +32,13 @@ DWORD WINAPI fixtureInputVibration(DWORD user, XINPUT_VIBRATION* vibration) noex
     return inputStatus[user];
 }
 LRESULT CALLBACK inputTestWindowProc(HWND window, UINT message, WPARAM key, LPARAM detail) {
+    if (message == WM_SYSCOMMAND && (key & 0xfff0) == SC_KEYMENU) {
+        ++inputSystemMenuCalls;
+        return 0;
+    }
     auto* input = reinterpret_cast<NativeInput*>(GetWindowLongPtrW(window, GWLP_USERDATA));
-    if (input) input->windowMessage(window, message, key, detail);
+    if (input && input->windowMessage(window, message, key, detail))
+        return message == WM_XBUTTONDOWN || message == WM_XBUTTONUP ? TRUE : 0;
     return DefWindowProcW(window, message, key, detail);
 }
 }
@@ -287,6 +293,99 @@ static void testInputContract(PPCContext& ctx) {
     check(PPC_LOAD_U16(output+4)==XINPUT_GAMEPAD_A,"Guest menu with capture delivered conflicting gameplay action");
     check(input.setKeyboardBindings(defaultKeyboardBindings()),"Cannot restore keyboard controls after menu conflict test");
     input.setGuestMenuActive(false);
+
+    // Mouse assignments must replace the fixed fire/zoom mappings and support
+    // side buttons through the same Win32 -> guest ABI as keyboard controls.
+    auto mouseBindings = defaultKeyboardBindings();
+    check(assignKeyboardKey(mouseBindings, KeyboardAction::Jump, 1, VK_LBUTTON) &&
+          assignKeyboardKey(mouseBindings, KeyboardAction::Reload, 1, VK_RBUTTON) &&
+          assignKeyboardKey(mouseBindings, KeyboardAction::Use, 1, VK_MBUTTON) &&
+          assignKeyboardKey(mouseBindings, KeyboardAction::Crouch, 1, VK_XBUTTON1) &&
+          assignKeyboardKey(mouseBindings, KeyboardAction::MoveForward, 1, VK_XBUTTON2) &&
+          input.setKeyboardBindings(mouseBindings), "Cannot configure five mouse buttons");
+    check((*DarkRecomp::Prompts::bindingLabels(true))[6] == "Z" &&
+          (*DarkRecomp::Prompts::bindingLabels(true))[7] == "X" &&
+          (*DarkRecomp::Prompts::bindingLabels(true))[9] == "Sh",
+          "Remapped fire/zoom prompts retained the former mouse buttons");
+    input.setMouseLookEnabled(true);
+    const struct { UINT press, release; WPARAM parameter; WORD button; SHORT forward; } mouseActions[] = {
+        {WM_LBUTTONDOWN, WM_LBUTTONUP, MK_LBUTTON, XINPUT_GAMEPAD_Y, 0},
+        {WM_RBUTTONDOWN, WM_RBUTTONUP, MK_RBUTTON, XINPUT_GAMEPAD_B, 0},
+        {WM_MBUTTONDOWN, WM_MBUTTONUP, MK_MBUTTON, XINPUT_GAMEPAD_A, 0},
+        {WM_XBUTTONDOWN, WM_XBUTTONUP, MAKEWPARAM(MK_XBUTTON1, XBUTTON1), XINPUT_GAMEPAD_LEFT_THUMB, 0},
+        {WM_XBUTTONDOWN, WM_XBUTTONUP, MAKEWPARAM(MK_XBUTTON2, XBUTTON2), 0, 32767}
+    };
+    for (const auto& action : mouseActions) {
+        SendMessageW(window, action.press, action.parameter, 0); state();
+        check(PPC_LOAD_U16(output + 4) == action.button && int16_t(PPC_LOAD_U16(output + 10)) == action.forward &&
+              base[output + 6] == 0 && base[output + 7] == 0,
+              "Remapped mouse action also fired or zoomed through its old mapping");
+        SendMessageW(window, action.release, action.parameter, 0); state();
+        check(zero(output + 4, 12), "Mouse binding release retained the action");
+    }
+    input.setGuestMenuActive(true);
+    const auto beforeMouseMenu = input.menuCursor();
+    SendMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(125, 110)); state();
+    check(zero(output + 4, 12) && input.menuCursor().presses == beforeMouseMenu.presses + 1,
+          "Menu click activated a remapped gameplay action or lost pointer selection");
+    SendMessageW(window, WM_XBUTTONDOWN, MAKEWPARAM(MK_XBUTTON1, XBUTTON1), 0); state();
+    check(zero(output + 4, 12), "Captured guest menu delivered a mouse gameplay binding");
+    SendMessageW(window, WM_LBUTTONUP, 0, 0);
+    SendMessageW(window, WM_XBUTTONUP, MAKEWPARAM(0, XBUTTON1), 0);
+    input.setGuestMenuActive(false);
+    SendMessageW(window, WM_XBUTTONDOWN, MAKEWPARAM(MK_XBUTTON2, XBUTTON2), 0);
+    SendMessageW(window, WM_CAPTURECHANGED, 0, 0); state();
+    input.setMouseLookEnabled(true); state();
+    check(zero(output + 4, 12), "Recapture replayed a held side button");
+    SendMessageW(window, WM_XBUTTONDOWN, MAKEWPARAM(MK_XBUTTON1, XBUTTON1), 0);
+    SendMessageW(window, WM_KILLFOCUS, 0, 0);
+    SendMessageW(window, WM_SETFOCUS, 0, 0);
+    input.setMouseLookEnabled(true); state();
+    check(zero(output + 4, 12), "Focus regain replayed a held side button");
+    SendMessageW(window, WM_XBUTTONUP, MAKEWPARAM(0, XBUTTON1), 0);
+    check(input.setKeyboardBindings(KeyboardBindings{}), "Cannot clear mouse controls");
+    input.setMouseLookEnabled(true);
+    for (const auto& action : mouseActions) {
+        SendMessageW(window, action.press, action.parameter, 0); state();
+        check(zero(output + 4, 12), "Explicitly unbound mouse button retained a fixed action");
+        SendMessageW(window, action.release, action.parameter, 0);
+    }
+    check(input.setKeyboardBindings(defaultKeyboardBindings()), "Cannot restore mouse defaults");
+
+    auto altBindings = defaultKeyboardBindings();
+    check(assignKeyboardKey(altBindings, KeyboardAction::Jump, 1, VK_MENU) &&
+          input.setKeyboardBindings(altBindings), "Cannot configure Alt gameplay binding");
+    input.setMouseLookEnabled(true);
+    const auto beforeAltMenu = inputSystemMenuCalls;
+    constexpr LPARAM altContext = LPARAM(1) << 29;
+    SendMessageW(window, WM_SYSKEYDOWN, VK_MENU, altContext); state();
+    check(PPC_LOAD_U16(output + 4) == XINPUT_GAMEPAD_Y,
+          "Bare Alt system key did not deliver the configured action");
+    SendMessageW(window, WM_SYSKEYDOWN, 'W', altContext); state();
+    check(PPC_LOAD_U16(output + 4) == XINPUT_GAMEPAD_Y && int16_t(PPC_LOAD_U16(output + 10)) == 32767,
+          "Holding Alt prevented ordinary gameplay movement");
+    SendMessageW(window, WM_SYSKEYUP, 'W', altContext);
+    SendMessageW(window, WM_SYSKEYUP, VK_MENU, altContext); state();
+    check(zero(output + 4, 12) && inputSystemMenuCalls == beforeAltMenu,
+          "Bound Alt release stuck the action or activated the host system menu");
+    for (const auto shortcut : {VK_RETURN, VK_F4, VK_SPACE, VK_TAB}) {
+        SendMessageW(window, WM_SYSKEYDOWN, VK_MENU, altContext);
+        check(!input.windowMessage(window, WM_SYSKEYDOWN, shortcut, altContext),
+              "Alt binding consumed a reserved host shortcut");
+        state();
+        check(zero(output + 4, 12), "Host shortcut retained the bound Alt or chord action");
+        input.windowMessage(window, WM_SYSKEYUP, shortcut, altContext);
+        SendMessageW(window, WM_SYSKEYDOWN, VK_MENU, altContext | (LPARAM(1) << 30)); state();
+        check(zero(output + 4, 12), "Alt repeat replayed its action after a host shortcut");
+        SendMessageW(window, WM_SYSKEYUP, VK_MENU, altContext); state();
+    }
+    SendMessageW(window, WM_SYSKEYDOWN, VK_MENU, altContext);
+    SendMessageW(window, WM_KILLFOCUS, 0, 0);
+    SendMessageW(window, WM_SETFOCUS, 0, 0);
+    input.setMouseLookEnabled(true); state();
+    check(zero(output + 4, 12), "Focus regain replayed a held Alt binding");
+    SendMessageW(window, WM_SYSKEYUP, VK_MENU, altContext);
+    check(input.setKeyboardBindings(defaultKeyboardBindings()), "Cannot restore defaults after Alt checks");
 
     auto rx=[&] {return int16_t(PPC_LOAD_U16(output+12));};
     auto ry=[&] {return int16_t(PPC_LOAD_U16(output+14));};
@@ -667,6 +766,12 @@ static void testInputContract(PPCContext& ctx) {
     SendMessageW(window, WM_SETFOCUS, 0, 0);
     input.setMouseLookEnabled(false); input.setGuestMenuActive(true);
     input.setKeyboardBindings(defaultKeyboardBindings());
+    SendMessageW(window, WM_XBUTTONDOWN, MAKEWPARAM(MK_XBUTTON1, XBUTTON1), 0);
+    SendMessageW(window, WM_CAPTURECHANGED, 0, 0);
+    check(beginKeyboardMenu(input.keyboardBindings()) && keyboardMenuAction("darkrecomp.keyboard.bind.8.0") &&
+          keyboardMenuLabel("darkrecomp.keyboard.bind.8.0").find("PRESSKEY") != std::string::npos,
+          "Capture loss left a stale mouse button blocking the binding editor");
+    cancelKeyboardMenuCapture(); endKeyboardMenu();
     SendMessageW(window, WM_SYSKEYDOWN, VK_RETURN, LPARAM(1) << 29);
     check(state() == ERROR_SUCCESS && zero(output + 4, 12), "Alt+Enter fullscreen shortcut leaked guest Start");
     SendMessageW(window, WM_SYSKEYUP, VK_RETURN, LPARAM(1) << 29);
@@ -682,18 +787,57 @@ static void testInputContract(PPCContext& ctx) {
     check(state() == ERROR_SUCCESS && zero(output + 4, 12), "Activation key leaked during capture");
     SendMessageW(window, WM_KEYUP, 'E', 0);
     const auto beforeCaptureClick = input.menuCursor();
-    SendMessageW(window, WM_LBUTTONDOWN, 0, MAKELPARAM(100,100));
-    SendMessageW(window, WM_LBUTTONUP, 0, MAKELPARAM(100,100));
     SendMessageW(window, WM_MOUSEWHEEL, MAKEWPARAM(0,WHEEL_DELTA), 0);
     SendMessageW(window, WM_KEYDOWN, 'T', 0);
     check(!keyboardMenuCaptureActive() && keyboardMenuLabel("darkrecomp.keyboard.bind.10.0").find('T') != std::string::npos,
           "Fresh raw key was not staged by the game menu");
     check(state() == ERROR_SUCCESS && zero(output + 4, 12) &&
           input.menuCursor().presses == beforeCaptureClick.presses,
-          "Capture replayed a quick mouse click, wheel detent or assigned key");
+          "Capture replayed a wheel detent or assigned key");
     SendMessageW(window, WM_KEYDOWN, 'T', LPARAM(1) << 30);
     check(state() == ERROR_SUCCESS && zero(output + 4, 12), "Assigned-key repeat escaped capture suppression");
     SendMessageW(window, WM_KEYUP, 'T', 0);
+    const struct { UINT press, release; WPARAM parameter; unsigned key; } mouseCapture[] = {
+        {WM_LBUTTONDOWN, WM_LBUTTONUP, MK_LBUTTON, VK_LBUTTON},
+        {WM_RBUTTONDOWN, WM_RBUTTONUP, MK_RBUTTON, VK_RBUTTON},
+        {WM_MBUTTONDOWN, WM_MBUTTONUP, MK_MBUTTON, VK_MBUTTON},
+        {WM_XBUTTONDOWN, WM_XBUTTONUP, MAKEWPARAM(MK_XBUTTON1, XBUTTON1), VK_XBUTTON1},
+        {WM_XBUTTONDOWN, WM_XBUTTONUP, MAKEWPARAM(MK_XBUTTON2, XBUTTON2), VK_XBUTTON2}
+    };
+    for (const auto& button : mouseCapture) {
+        SendMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, 0);
+        check(keyboardMenuAction("darkrecomp.keyboard.bind.8.0") &&
+              keyboardMenuLabel("darkrecomp.keyboard.bind.8.0").find("RELEASE") != std::string::npos,
+              "Slot activation click did not wait for release");
+        SendMessageW(window, WM_LBUTTONUP, 0, 0);
+        const auto beforeMouseCapture = input.menuCursor();
+        SendMessageW(window, WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), 0);
+        SendMessageW(window, button.press, button.parameter, 0);
+        KeyboardMenuSaveRequest mouseSave;
+        check(!keyboardMenuCaptureActive() && keyboardMenuAction("darkrecomp.keyboard.save") &&
+              takeKeyboardMenuSaveRequest(mouseSave) && mouseSave.bindings.keys[size_t(KeyboardAction::Jump)][0] == button.key,
+              "Native mouse edge did not stage the selected binding");
+        reportKeyboardMenuSave(mouseSave.id, false);
+        check(state() == ERROR_SUCCESS && zero(output + 4, 12) &&
+              input.menuCursor().presses == beforeMouseCapture.presses,
+              "Assigned held mouse button or wheel replayed into the menu");
+        SendMessageW(window, button.press, button.parameter, 0); state();
+        check(zero(output + 4, 12) && input.menuCursor().presses == beforeMouseCapture.presses,
+              "Held assigned mouse button escaped suppression");
+        SendMessageW(window, button.release, button.parameter, 0);
+    }
+    for (const LPARAM context : {altContext, altContext | (LPARAM(1) << 24)}) {
+        check(keyboardMenuAction("darkrecomp.keyboard.bind.8.0"), "Cannot start native Alt capture");
+        SendMessageW(window, WM_SYSKEYDOWN, VK_MENU, context);
+        KeyboardMenuSaveRequest altSave;
+        check(!keyboardMenuCaptureActive() && keyboardMenuAction("darkrecomp.keyboard.save") &&
+              takeKeyboardMenuSaveRequest(altSave) && altSave.bindings.keys[size_t(KeyboardAction::Jump)][0] == VK_MENU,
+              "Left/right Alt system message did not stage the binding");
+        reportKeyboardMenuSave(altSave.id, false); state();
+        check(zero(output + 4, 12), "Captured Alt leaked its gameplay action into the menu");
+        SendMessageW(window, WM_SYSKEYUP, VK_MENU, context); state();
+        check(zero(output + 4, 12), "Captured Alt release leaked into the menu");
+    }
     check(keyboardMenuAction("darkrecomp.keyboard.bind.11.0"), "Second capture did not start");
     inputStatus[0] = ERROR_SUCCESS; inputStates[0].Gamepad.wButtons = XINPUT_GAMEPAD_A;
     check(state() == ERROR_SUCCESS && zero(output + 4, 12), "Physical controller navigated while capturing");

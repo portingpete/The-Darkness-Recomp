@@ -22,7 +22,8 @@ struct KeyboardBindings {
 struct KeyboardActionInfo { const wchar_t* title; const wchar_t* setting; };
 const std::array<KeyboardActionInfo, kKeyboardActionCount>& keyboardActions() noexcept;
 KeyboardBindings defaultKeyboardBindings() noexcept;
-// Only keyboard keys delivered by the game window are assignable. Escape,
+bool isMouseBindingKey(unsigned key) noexcept;
+// Keyboard keys and mouse buttons delivered by the game window are assignable. Escape,
 // system shortcuts, and the runtime's own function keys stay available.
 bool assignableKeyboardKey(unsigned key) noexcept;
 bool validKeyboardBindings(const KeyboardBindings& bindings) noexcept;

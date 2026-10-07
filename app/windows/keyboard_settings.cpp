@@ -1,6 +1,7 @@
 #include "keyboard_settings.h"
 #include <cstdio>
 #include <optional>
+#include <utility>
 
 namespace DarkRecomp {
 using namespace Native;
@@ -36,6 +37,26 @@ KeyboardBindings loadKeyboardBindings(const std::filesystem::path& path) noexcep
             std::fputs("[Keyboard] Conflicting saved keys; using defaults.\n", stderr);
             return defaults;
         }
+        // Older files saved keyboard-only slots; the three mouse actions were
+        // always active outside that configuration. Restore them into vacant
+        // slots without displacing custom keys. Versioned files can explicitly
+        // clear or reassign mouse buttons and must keep that choice.
+        if (GetPrivateProfileIntW(L"Keyboard", L"BindingsVersion", 0, path.c_str()) < 2) {
+            constexpr std::array<std::pair<KeyboardAction, uint16_t>, 3> mouseDefaults{{
+                {KeyboardAction::FireRight, VK_LBUTTON},
+                {KeyboardAction::FireLeft, VK_RBUTTON},
+                {KeyboardAction::Zoom, VK_MBUTTON}
+            }};
+            for (const auto [action, key] : mouseDefaults) {
+                bool assigned = false;
+                for (const auto& slots : loaded.keys)
+                    for (const auto existing : slots) assigned = assigned || existing == key;
+                if (assigned) continue;
+                auto& slots = loaded.keys[size_t(action)];
+                if (!slots[1]) slots[1] = key;
+                else if (!slots[0]) slots[0] = key;
+            }
+        }
         return loaded;
     } catch (...) { return defaults; }
 }
@@ -48,6 +69,7 @@ bool saveKeyboardBindings(const std::filesystem::path& path, const KeyboardBindi
         if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES) {
             if (!CopyFileW(path.c_str(), temporary, FALSE)) return false;
         } else if (GetLastError() != ERROR_FILE_NOT_FOUND) return false;
+        if (!WritePrivateProfileStringW(L"Keyboard", L"BindingsVersion", L"2", temporary)) return false;
         for (size_t action = 0; action < kKeyboardActionCount; ++action)
             for (size_t slot = 0; slot < kKeyboardBindingSlots; ++slot) {
                 const auto text = std::to_wstring(bindings.keys[action][slot]);

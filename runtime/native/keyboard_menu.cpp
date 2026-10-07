@@ -29,6 +29,7 @@ std::string keyLabel(unsigned key) {
     case VK_SHIFT: return "SHIFT";
     case VK_LSHIFT: return "LSHIFT";
     case VK_RSHIFT: return "RSHIFT";
+    case VK_MENU: return "ALT";
     case VK_SPACE: return "SPACE";
     case VK_RETURN: return "ENTER";
     case VK_BACK: return "BACKSP";
@@ -128,14 +129,14 @@ std::string KeyboardMenuState::label(std::string_view action) const {
     const char* text = "SAVE APPLIES CHANGES. CANCEL DISCARDS.";
     switch (status_) {
     case Status::Ready: break;
-    case Status::Release: text = "RELEASE HELD KEYS, THEN PRESS A NEW KEY."; break;
-    case Status::Capture: text = "PRESS A KEY. ESC CANCELS; DELETE CLEARS."; break;
+    case Status::Release: text = "RELEASE HELD KEYS/BUTTONS, THEN PRESS."; break;
+    case Status::Capture: text = "PRESS A KEY/MOUSE; ESC CANCEL, DEL CLEAR"; break;
     case Status::Reserved: text = "RESERVED KEY. TRY AGAIN; ESC CANCELS."; break;
     case Status::Updated: text = "BINDING UPDATED. SAVE TO APPLY."; break;
     case Status::Defaults: text = "DEFAULTS STAGED. SAVE TO APPLY."; break;
-    case Status::Saving: text = "SAVING KEYBOARD BINDINGS..."; break;
+    case Status::Saving: text = "SAVING KEYBOARD/MOUSE BINDINGS..."; break;
     case Status::Failed: text = "SAVE FAILED. TRY AGAIN OR CANCEL."; break;
-    case Status::Saved: text = "KEYBOARD BINDINGS SAVED."; break;
+    case Status::Saved: text = "KEYBOARD/MOUSE BINDINGS SAVED."; break;
     }
     return padded(text, 40);
 }
@@ -156,7 +157,9 @@ bool KeyboardMenuState::keyEvent(unsigned key, bool down, bool repeat, bool alt)
         return true;
     }
     if (!down || repeat || wasDown) return true;
-    if (alt || !assignableKeyboardKey(key)) { status_ = Status::Reserved; return true; }
+    // Alt itself arrives as a system key with the Alt context bit set. Other
+    // keys pressed with Alt remain reserved shortcut combinations.
+    if ((alt && key != VK_MENU) || !assignableKeyboardKey(key)) { status_ = Status::Reserved; return true; }
     const unsigned selectedKey = key == VK_DELETE ? 0 : key;
     assignKeyboardKey(staged_, KeyboardAction(captureAction_), captureSlot_, selectedKey);
     captureAction_ = kKeyboardActionCount; status_ = Status::Updated;

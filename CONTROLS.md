@@ -129,9 +129,12 @@ also release it. Click again after returning to the game.
 - **Keyboard alternatives:** I / J / K / L to look, Z / X to fire left / right.
 
 These are the default bindings. Open **Options > Controls > Keyboard bindings**
-to change gameplay keys inside the original game menu. **Previous** and **Next**
+to change gameplay keys and mouse buttons inside the original game menu. **Previous** and **Next**
 switch between four pages of actions. Select a primary or secondary slot, then
-press the new key; **Escape** cancels capture and **Delete** clears the slot.
+press the new key or mouse button; **Escape** cancels capture and **Delete** clears the slot.
+Left, right, middle, and the two side buttons (**M4 / M5**) can be assigned,
+along with **Alt**. Release the click used to select a slot before pressing
+the button to bind. **Alt+Enter** and other host shortcuts stay available.
 **Defaults** stages the original selection. **Save** applies the changes
 and writes the `[Keyboard]` section of `DarkRecomp.settings.ini`.
 **Cancel** or Back discards unsaved edits. Menu navigation stays available outside

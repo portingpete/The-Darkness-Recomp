@@ -48,8 +48,9 @@ will not add support.
 CONTROLS
 Click inside the game to use the mouse. Press F1 for the controls guide.
 F2 toggles mouse capture. Escape pauses and releases the mouse.
-Click menu choices with the released cursor. Remap gameplay keys in
-Options > Controls > Keyboard bindings. Exit Game is in the main/pause menu.
+Click menu choices with the released cursor. Remap gameplay keys, Alt and
+mouse buttons (including M4/M5) in Options > Controls > Keyboard bindings.
+Exit Game is in the main/pause menu.
 Alt+Enter switches fullscreen/windowed. Controllers are supported.
 Change graphics options and language in Options > Video Settings, or use
 LaunchWithSettings.cmd before starting the game. Both save to the same settings

@@ -72,7 +72,8 @@ static void printAudioHealth() {
         audio.starvationBytes,audio.engineGlitches,audio.maxCallbackMicros,unsigned(audio.workerMmcss),audio.deviceErrors);
 }
 static LRESULT CALLBACK NativeWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
-    if (nativeInput().windowMessage(window, message, wParam, lParam)) return 0;
+    if (nativeInput().windowMessage(window, message, wParam, lParam))
+        return message == WM_XBUTTONDOWN || message == WM_XBUTTONUP ? TRUE : 0;
     if (resolutionShortcut.handle(message, wParam, lParam)) return 0;
     if (message == WM_GETMINMAXINFO) {
         RECT minimum{0, 0, 320, 180};
