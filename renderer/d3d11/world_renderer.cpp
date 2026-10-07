@@ -1,6 +1,7 @@
 #include "world_renderer.h"
 #include "stall_profile_d3d11.h"
 #include "world_render_state.h"
+#include "world_darkness_bloom.h"
 #include "shader_bytecode_cache.h"
 #include "runtime/native/graphics_settings.h"
 #include "renderer/engine/prompt_icons.h"
@@ -1831,10 +1832,14 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
             updateConstants(context_.Get(),alphaTestConstants_.Get(),&alpha,sizeof(alpha));
             std::memcpy(uploadedAlpha_.data(),&alpha,sizeof(alpha));
         }
-        if(!pixelConstantsUploaded_ || std::memcmp(uploadedFragment_.data(),draw.fragmentConstants.data(),sizeof(draw.fragmentConstants))) {
+        const auto materialColor=darknessArmBloomColor(draw,bloom_);
+        if(!pixelConstantsUploaded_ || std::memcmp(&uploadedFragment_[0],&materialColor,sizeof(materialColor)) ||
+           std::memcmp(uploadedFragment_.data()+1,draw.fragmentConstants.data()+1,
+               sizeof(draw.fragmentConstants)-sizeof(materialColor))) {
             // Captured decals can supply more than16 fragment vectors. The remaining
             // bank is permanently zero; don't rebuild/compare it every draw.
             std::copy(draw.fragmentConstants.begin(),draw.fragmentConstants.end(),uploadedFragment_.begin());
+            uploadedFragment_[0]=materialColor;
             updateConstants(context_.Get(),fragmentConstants_.Get(),uploadedFragment_.data(),sizeof(uploadedFragment_));
         }
         if(!pixelConstantsUploaded_ || std::memcmp(uploadedScales_.data(),scales.data(),sizeof(scales))) {
