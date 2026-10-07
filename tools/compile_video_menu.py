@@ -172,16 +172,25 @@ def replace_video_page(registry):
     r = registry
     page, = [n for n in r.roots if r.decode(n) == ("WINDOW", "options_video")]
     # Preserve the original calibration page class, properties and navigation.
-    # Its Gamma controls use the original option_update/save dispatch.
+    # Its Gamma and color profile controls use the original option_update/save
+    # dispatch, including the profile list and selected-value localization.
     properties = [c for c in page.children if r.decode(c)[0] != "WINDOW"]
     original_controls = [(n, dict(r.decode(c) for c in n.children))
                          for n in page.children if r.decode(n)[0] == "WINDOW"]
     gamma_label, = [n for n, p in original_controls if p.get("TEXT") == "sc, §LMENU_GAMMA"]
     gamma_controls = [n for n, p in original_controls if p.get("GROUP") == "gamma"]
     assert len(gamma_controls) == 2
-    def relocated(original, region):
+    profile_label, = [n for n, p in original_controls if p.get("TEXT") == "sc, §LMENU_VIDEO_CABLEPROFILE"]
+    profile_controls = [n for n, p in original_controls if p.get("GROUP") == "cableprofile"]
+    assert len(profile_controls) == 2
+    def relocated(original, region, *, hidden_focus=False):
         children = [r.make("RGN", region) if r.decode(c)[0] == "RGN" else c
                     for c in original.children]
+        if hidden_focus:
+            # The grouped value text paints the selection highlight. Suppress
+            # the blank button's inherited normal-font rectangle, which is
+            # twice as wide; HIDDENFOCUS retains keyboard and pointer focus.
+            children.append(r.make("STYLE", "HIDDENFOCUS"))
         return r.make("WINDOW", r.decode(original)[1], children)
     def window(cls, text, region, script=None):
         children = [r.make("CLASSNAME", cls), r.make("TEXT", text)]
@@ -193,14 +202,18 @@ def replace_video_page(registry):
         return r.make("WINDOW", "", children)
     properties.append(window("CubeText", "nc, §LMENU_VIDEO_HEADING", "0,2,20,2"))
     for row, (key, name, initial) in enumerate(zip(SETTINGS, SETTING_NAMES, INITIAL_VALUES)):
-        y = 4 + row + (row > 0)
+        y = 4 + row + 3 * (row > 0)
         properties.append(window("CubeText", "sc, " + name, f"1,{y},10,1"))
         properties.append(window("CubeButton", "sc, < " + initial.center(12) + " >", f"11,{y},8,1", "darkrecomp." + key))
         if row == 0:
             properties.append(relocated(gamma_label, "1,5,10,1"))
             properties.extend(relocated(n, "11,5,8,1") for n in gamma_controls)
-    properties.append(window("CubeText", "sc, BRIGHTNESS: 100% IS NEUTRAL", "0,16,20,1"))
-    properties.append(window("CubeText", "sc, GAMMA: ORIGINAL GAME CALIBRATION", "0,17,20,1"))
+            # Keep the original two-row profile layout wide enough for its
+            # localized label and selected value. The button and value text
+            # intentionally share a region, like the Gamma button and meter.
+            properties.append(relocated(profile_label, "1,6,18,1"))
+            properties.extend(relocated(n, "1,7,18,1", hidden_focus=p["CLASSNAME"] == "CubeOptionButton")
+                              for n, p in original_controls if p.get("GROUP") == "cableprofile")
     properties.append(window("CubeText", "sc, RESOLUTION/LANGUAGE: RESTART TO APPLY", "0,18,20,1"))
     properties.append(window("CubeText", "sc, LEFT/RIGHT: CHANGE; CONFIRM: NEXT", "0,19,20,1"))
     r.set_children(page, properties)

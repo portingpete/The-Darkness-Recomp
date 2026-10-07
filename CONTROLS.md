@@ -57,6 +57,9 @@ Open **Options > Video Settings** for the game's native graphics rows:
 - **Brightness:** 50% to 200%, with 100% neutral.
 - **Gamma:** the original 12-step calibration control, with the middle position
   as default. Use Left/Right to adjust and choose Yes when leaving Options to save.
+- **Color correction profile:** the original seven presets, from **Profile 0 (None)**
+  through **Profile 6**. Use Left/Right to change and choose Yes when leaving
+  Options to save.
 - **Field of view:** Original or **60�120 horizontal degrees at 16:9**;
   ultrawide displays show more at the sides.
 - **Bloom:** on by default; toggle the final-composite glow.
