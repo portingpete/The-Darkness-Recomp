@@ -2,6 +2,8 @@
 [CmdletBinding()]
 param()
 $ErrorActionPreference = 'Stop'
+# Pin the native module when a build parent supplies PowerShell 7 module paths.
+Import-Module (Join-Path $PSHOME 'Modules/Microsoft.PowerShell.Utility/Microsoft.PowerShell.Utility.psd1') -Force
 . (Join-Path (Split-Path -Parent $PSScriptRoot) 'tools/update_release.ps1') -LibraryOnly
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
