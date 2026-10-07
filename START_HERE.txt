@@ -63,7 +63,7 @@ Use LaunchWithUpdates.cmd to check GitHub before playing. It asks before
 installing a newer release, including prereleases, verifies the download,
 and keeps your game files, saves, achievements and settings. Close the game
 before updating. If the network is unavailable, you can still play.
-Recovery copies of replaced program files are kept in build_native/updates.
+The updater prints the recovery folder containing replaced program files.
 
 Close the game. Extract the new Windows ZIP into your existing game folder
 and replace the included program files. Keep your Darkness folder, saves

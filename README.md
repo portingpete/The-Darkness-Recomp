@@ -178,6 +178,13 @@ toggle capture, **Esc** release).
 
 ## Updating a downloaded release
 
+Run **LaunchWithUpdates.cmd** to check for a newer GitHub release, including
+prereleases. Approve the update when prompted, or decline to play your installed
+version. Downloads and installed files are checked against SHA-256 hashes.
+Close the game first. Recovery copies are kept in the folder printed by the
+updater. Network failures still let you play the installed version.
+The updater works with extracted releases; update source checkouts with Git.
+
 Close the game, extract the new Windows ZIP into your existing game folder,
 and replace the included program files. Keep **Darkness/**, **saves/**, and
 **DarkRecomp.settings.ini** to preserve your game files, progress, and settings.
@@ -237,3 +244,5 @@ ctest --test-dir build_native -C Release --output-on-failure
 GPLv3 — see [COPYING](COPYING), matching the upstream
 [UnleashedRecomp](https://github.com/hedge-dev/UnleashedRecomp) /
 [XenonRecomp](https://github.com/hedge-dev/XenonRecomp) toolchain this port builds on.
+
+Development includes assistance from OpenAI Codex.

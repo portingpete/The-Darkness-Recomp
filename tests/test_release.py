@@ -103,6 +103,28 @@ class ReleaseTests(unittest.TestCase):
             for name, expected in manifest['sha256'].items():
                 self.assertEqual(hashlib.sha256(bundle.read(name)).hexdigest(), expected)
         self.assertIn(hashlib.sha256(path.read_bytes()).hexdigest(), path.with_suffix('.zip.sha256').read_text())
+        if os.name == 'nt':
+            # Exercise the real PowerShell reader against the Python packager,
+            # including generated notices and Launch.sh's Unix file mode.
+            stage = self.root / 'update-stage'
+            stage.mkdir()
+            def ps_quote(value):
+                return "'" + str(value).replace("'", "''") + "'"
+            command = (
+                "$ErrorActionPreference = 'Stop'; "
+                f". {ps_quote(ROOT / 'tools/update_release.ps1')} -LibraryOnly; "
+                f"Expand-VerifiedRelease {ps_quote(path)} "
+                f"{ps_quote(path.with_suffix('.zip.sha256'))} "
+                f"{ps_quote(stage)} 'v0.1.1' | Out-Null"
+            )
+            result = subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy',
+                                     'Bypass', '-Command', command], capture_output=True,
+                                    text=True, timeout=30,
+                                    creationflags=subprocess.CREATE_NO_WINDOW)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual((stage / 'LaunchWithUpdates.cmd').read_bytes(),
+                             (ROOT / 'LaunchWithUpdates.cmd').read_bytes())
+            self.assertFalse((stage / 'Darkness').exists())
 
     def test_incomplete_package_is_rejected(self):
         (self.bin / 'avcodec-darkxma-62.dll').unlink()
