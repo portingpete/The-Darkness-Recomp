@@ -5,6 +5,7 @@
 #include "runtime/native/audio_driver.h"
 #include "runtime/native/input.h"
 #include "native_mouse.h"
+#include "native_shutdown.h"
 #include "developer_tools_window.h"
 #include "achievements_window.h"
 #include "developer_resolution_shortcut.h"
@@ -57,7 +58,7 @@ static LONG WINAPI DarkFlushLogsOnFatalException(PEXCEPTION_POINTERS) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 static void finishAudioEvidence() {
-    // ExitProcess bypasses object destruction. For an opt-in recording, use
+    // Process termination bypasses object destruction. For an opt-in recording, use
     // the driver's existing cancellation/join path before exiting so the tap
     // and trace writers persist partial captures as well as completed ones.
     if (GetEnvironmentVariableW(L"DARKRECOMP_AUDIO_TAP", nullptr, 0) ||
@@ -274,7 +275,7 @@ int wmain(int argc, wchar_t** argv) {
             finishAudioEvidence();
             StallProfiler::shutdown();
             fflush(nullptr);
-            ExitProcess(5);
+            terminateNativeProcess(5);
         }).detach();
 
         SetProcessDPIAware();
@@ -420,7 +421,7 @@ int wmain(int argc, wchar_t** argv) {
             fprintf(stderr, "[STOP] Guest execution ended with status %d.\n", guestStatus);
             // Worker threads still own guest memory. A failed main entry must
             // use process teardown before the address space destructor runs.
-            if (guestStatus) { StallProfiler::shutdown(); fflush(nullptr); ExitProcess(guestStatus); }
+            if (guestStatus) { StallProfiler::shutdown(); fflush(nullptr); terminateNativeProcess(guestStatus); }
             PostMessageW(window, WM_CLOSE, 0, 0);
         });
 
@@ -452,7 +453,7 @@ int wmain(int argc, wchar_t** argv) {
                 loopTop = FrameMetrics::now();
                 outlier.onLoopTop(loopTop);
             }
-            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+            while (takeNativeMessage(message)) {
                 if (keyboardMenuInputBlocked() && message.hwnd == window &&
                     (message.message == WM_KEYDOWN || message.message == WM_KEYUP ||
                      message.message == WM_SYSKEYDOWN || message.message == WM_SYSKEYUP)) {
@@ -572,7 +573,7 @@ int wmain(int argc, wchar_t** argv) {
                 std::                fprintf(stderr, "[Display] Resize failed: %s\n", resizeError.what());
                 StallProfiler::shutdown();
                 fflush(nullptr);
-                ExitProcess(6); // Guest threads still own the address space.
+                terminateNativeProcess(6); // Guest threads still own the address space.
             }
             // Opt-in integration input enters the same native input adapter
             // exercised by InputContract. It sends no input to another process.
@@ -805,7 +806,7 @@ int wmain(int argc, wchar_t** argv) {
                     fprintf(stderr, "[EnginePreview] %s\n", error.what());
                     StallProfiler::shutdown();
                     fflush(nullptr);
-                    ExitProcess(6);
+                    terminateNativeProcess(6);
                 }
             }
             // Missing an engine frame must not consume another capped frame
@@ -818,7 +819,7 @@ int wmain(int argc, wchar_t** argv) {
                     fprintf(stderr, "[Frame] Native frame timer failed: %s\n", timerError.what());
                     StallProfiler::shutdown();
                     fflush(nullptr);
-                    ExitProcess(6);
+                    terminateNativeProcess(6);
                 }
             }
             if (outlierOn) pacerEnd = FrameMetrics::now();
@@ -912,7 +913,7 @@ int wmain(int argc, wchar_t** argv) {
                 // deadline's process teardown rather than unwinding past them.
                 StallProfiler::shutdown();
                 fflush(nullptr);
-                ExitProcess(6);
+                terminateNativeProcess(6);
             }
             if(preview && !preview->frameInProgress()) {
                 // Upload immutable authored images while the engine is still
@@ -961,7 +962,7 @@ int wmain(int argc, wchar_t** argv) {
         finishAudioEvidence();
         StallProfiler::shutdown();
         fflush(nullptr);
-        ExitProcess(0);
+        terminateNativeProcess(0);
     } catch (const std::exception& error) {
         fprintf(stderr, "[ERROR] %s\n", error.what());
         StallProfiler::shutdown();
