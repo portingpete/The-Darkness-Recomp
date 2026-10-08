@@ -334,22 +334,29 @@ float2 nativeColorLookupUv(float2 uv, uint slot) {
 }
 '''
     if uses_pcf4x4:
-        # The guest's four-by-four taps are spaced in logical shadow texels.
-        # env[9] retains that pitch while the native depth map grows by 2x/3x.
+        # FPInclude_Xenon TEXPCF4X42D compares sixteen point depths, then
+        # applies getWeights2D's fractional outer weights. The weight sum is
+        # nine, not sixteen. Anchor taps to the logical atlas grid so a native
+        # 2x/3x depth map cannot move them independently of those weights.
         # FPInclude_Xenon ShadowMapStep is step(reference, sampledDepth):
         # reversed-depth occluders return one; a cleared zero texel returns
         # zero. The projector emits this as shadow coverage in red and 1-red
         # in alpha, so reversing the comparison darkens the empty atlas area.
         source += '''float nativeShadow4x4(float4 position) {
+    float2 pixel = position.xy / env[9].xy - 0.5;
+    float2 base = floor(pixel);
+    float2 fraction = frac(pixel);
+    float4 weightX = float4(1 - fraction.x, 1, 1, fraction.x);
+    float4 weightY = float4(1 - fraction.y, 1, 1, fraction.y);
     float total = 0;
     [unroll] for (int y = 0; y < 4; ++y) {
         [unroll] for (int x = 0; x < 4; ++x) {
-            float2 uv = position.xy + env[9].xy * float2(x - 1.5, y - 1.5);
+            float2 uv = (base + float2(x - 1, y - 1) + 0.5) * env[9].xy;
             float depth = texture0.SampleLevel(sampler0, uv, 0).r * sampleScale[0].x;
-            total += depth >= position.z ? 1.0 : 0.0;
+            total += (depth >= position.z ? 1.0 : 0.0) * weightX[x] * weightY[y];
         }
     }
-    return total * (1.0 / 16.0);
+    return saturate(total * (1.0 / 9.0));
 }
 '''
     source += 'struct Fragment { float4 position : SV_Position; float4 tex[8] : TEXCOORD0; float4 color : COLOR0; };\n'

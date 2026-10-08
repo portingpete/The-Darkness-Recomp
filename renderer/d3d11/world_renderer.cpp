@@ -1406,6 +1406,13 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
         lastFragment_ = frag; lastFragmentFound_ = fragFound; lastFragmentValid_ = true;
     }
     if(draw.material!=Native::WorldMaterial::depth && !fragFound) return rejected(1);
+    const bool shadowProjector=std::strcmp(effectiveName,"XREngine_ShadowProj")==0 && fragmentFlags==8;
+    if(shadowProjector) {
+        // Fractional PCF coordinates require a valid logical texel pitch.
+        for(unsigned axis=0;axis<2;++axis)
+            if(!std::isfinite(draw.fragmentConstants[9][axis]) || draw.fragmentConstants[9][axis]<=0)
+                return rejected(11);
+    }
     if(fragFound)captureTextureMask=frag->textures;
     std::array<ID3D11ShaderResourceView*,16> views{};std::array<ID3D11SamplerState*,16> samplers{};
     uint16_t promptSlots = 0;
@@ -1568,6 +1575,18 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
             samplers[slot]=sampler(fallback);
         } else samplers[slot]=(cube || draw.material==Native::WorldMaterial::post ||
             draw.material==Native::WorldMaterial::fixed)?cubeSampler_.Get():wrapSampler_.Get();
+        if(shadowProjector && slot==0) {
+            // Xenon's tfetch2D reads point depths; getWeights2D interpolates
+            // their comparison results. Filtering depths before comparing
+            // creates hard edges and false occluders. Preserve the effective
+            // sampler's addressing, border and LOD, including fallback state.
+            D3D11_SAMPLER_DESC desc{};samplers[slot]->GetDesc(&desc);
+            desc.Filter=D3D11_FILTER_MIN_MAG_MIP_POINT;desc.MaxAnisotropy=1;
+            if(samplerStates_.size()>512)samplerStates_.clear();
+            auto& state=samplerStates_.entry(desc);
+            if(!state)check(device_->CreateSamplerState(&desc,&state),"shadow point sampler");
+            samplers[slot]=state.Get();
+        }
         // Fetch scaling belongs to the binding, including CPU-owned images.
         scales[slot].fill(std::exp2(float(texture.exponent)));
         retainedViews[slot]=views[slot];retainedSamplers[slot]=samplers[slot];
