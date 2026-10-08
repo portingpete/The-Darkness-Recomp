@@ -43,6 +43,19 @@ resolved-texture sampling and exposure histogram normalization.
 new edge coverage inside logical pixels and retains it through resolve/present.
 Startup captures at 3440x1440 and 3840x2160 also exercise the original game.
 
+Shadow projectors retain the original Xenon fractional comparison filter: sixteen
+point depth comparisons receive separable outer texel weights and normalize by
+nine. Logical atlas coordinates keep the same filter footprint at each native
+scale. Depths are compared before their results are blended, preserving smooth
+shadow transitions, reversed depth, texture addressing and border depths. GPU
+contracts sweep fractional vertical, horizontal, diagonal and corner edges at
+scales one, two and three on hardware and WARP.
+
+A 2560x1440 in-game Jackie monologue capture exercises this projector. The
+pre-fix shader produced coverage quantized to 1/16; the corrected shader produces
+fractional coverage. The pre-fix shader fails the new PCF regression, while the
+corrected shader passes the renderer, shader and bloom contracts.
+
 The original selected display mode retains its logical resolution identifiers
 while its allocation extents change before buffer creation. The engine then
 uses those dimensions for both the perspective projection and CPU visibility

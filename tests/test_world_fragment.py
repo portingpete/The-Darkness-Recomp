@@ -222,7 +222,12 @@ END''')
         code, metadata = compile_source(select_template(source, 8))
         self.assertEqual(VARIANTS['XREngine_ShadowProj'], [8])
         self.assertEqual(metadata['textures'], {0: '2D', 1: '2D'})
-        self.assertIn('position.xy + env[9].xy * float2(x - 1.5, y - 1.5)', code)
+        self.assertIn('position.xy / env[9].xy - 0.5', code)
+        self.assertIn('(base + float2(x - 1, y - 1) + 0.5) * env[9].xy', code)
+        self.assertIn('float4(1 - fraction.x, 1, 1, fraction.x)', code)
+        self.assertIn('float4(1 - fraction.y, 1, 1, fraction.y)', code)
+        self.assertIn('* weightX[x] * weightY[y]', code)
+        self.assertIn('return saturate(total * (1.0 / 9.0))', code)
         self.assertIn('texture0.SampleLevel(sampler0, uv, 0)', code)
         # Original ShadowMapStep is step(receiver, sampledDepth). Its result
         # is shadow coverage: cleared reversed depth (zero) must remain lit.
