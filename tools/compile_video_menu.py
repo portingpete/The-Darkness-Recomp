@@ -110,8 +110,8 @@ class Registry:
 
     def set_children(self, node, children):
         node.children = list(children)
-        # Preserve authored child order; the hash table is parallel to the
-        # child array (not sorted). Use the original case-insensitive hash.
+        # The hash table is parallel to the child array. Preserve authored
+        # order; Cube text registration depends on TEXT preceding RGN.
         def hash_name(name):
             h = 5381
             for c in name.lower().encode("latin1"):
@@ -183,14 +183,17 @@ def replace_video_page(registry):
     profile_label, = [n for n, p in original_controls if p.get("TEXT") == "sc, §LMENU_VIDEO_CABLEPROFILE"]
     profile_controls = [n for n, p in original_controls if p.get("GROUP") == "cableprofile"]
     assert len(profile_controls) == 2
-    def relocated(original, region, *, hidden_focus=False):
-        children = [r.make("RGN", region) if r.decode(c)[0] == "RGN" else c
+    def relocated(original, region, *, hidden_focus=False, group=None):
+        children = [r.make("RGN", region) if r.decode(c)[0] == "RGN" else
+                    r.make("GROUP", group) if group is not None and r.decode(c)[0] == "GROUP" else c
                     for c in original.children]
         if hidden_focus:
             # The grouped value text paints the selection highlight. Suppress
-            # the blank button's inherited normal-font rectangle, which is
-            # twice as wide; HIDDENFOCUS retains keyboard and pointer focus.
-            children.append(r.make("STYLE", "HIDDENFOCUS"))
+            # the blank button's wider rectangle without shrinking its hit
+            # area. Geometry loading looks up STYLE by sorted name hash, so
+            # insert it before OPTION instead of appending it to the list.
+            option_index = next(i for i, c in enumerate(children) if r.decode(c)[0] == "OPTION")
+            children.insert(option_index, r.make("STYLE", "HIDDENFOCUS"))
         return r.make("WINDOW", r.decode(original)[1], children)
     def window(cls, text, region, script=None):
         children = [r.make("CLASSNAME", cls), r.make("TEXT", text)]
@@ -211,8 +214,12 @@ def replace_video_page(registry):
             # Keep the original two-row profile layout wide enough for its
             # localized label and selected value. The button and value text
             # intentionally share a region, like the Gamma button and meter.
+            # A separate focus group avoids the retail cableprofile arrow
+            # painter, which assumes the original calibration-page layout.
+            # The original option bindings still handle selection and saving.
             properties.append(relocated(profile_label, "1,6,18,1"))
-            properties.extend(relocated(n, "1,7,18,1", hidden_focus=p["CLASSNAME"] == "CubeOptionButton")
+            properties.extend(relocated(n, "1,7,18,1", hidden_focus=p["CLASSNAME"] == "CubeOptionButton",
+                                        group="colorprofile")
                               for n, p in original_controls if p.get("GROUP") == "cableprofile")
     properties.append(window("CubeText", "sc, RESOLUTION/LANGUAGE: RESTART TO APPLY", "0,18,20,1"))
     properties.append(window("CubeText", "sc, LEFT/RIGHT: CHANGE; CONFIRM: NEXT", "0,19,20,1"))

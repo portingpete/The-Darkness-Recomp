@@ -275,26 +275,33 @@ class VideoMenu(unittest.TestCase):
             self.assertEqual(profiles[0], 5)
             self.assertEqual(struct.unpack(after.endian + "I", profiles[1])[0], 7)
 
-            def profile_nodes(registry, parent):
+            def profile_nodes(registry, parent, group):
                 return [n for n in parent.children if registry.decode(n)[0] == "WINDOW"
-                        and dict(registry.decode(c) for c in n.children).get("GROUP") == "cableprofile"]
+                        and dict(registry.decode(c) for c in n.children).get("GROUP") == group]
 
-            original_controls, controls = profile_nodes(before, source), profile_nodes(after, page)
+            original_controls = profile_nodes(before, source, "cableprofile")
+            controls = profile_nodes(after, page, "colorprofile")
             self.assertEqual(len(controls), 2)
             self.assertEqual([dict(after.decode(c) for c in n.children)["CLASSNAME"] for n in controls],
                              ["CubeOptionButton", "CubeText"])
             for old, new in zip(original_controls, controls):
                 fields = [after.decode(c) for c in new.children]
                 props = dict(fields)
-                allowed_changes = {"RGN"}
+                allowed_changes = {"RGN", "GROUP"}
+                self.assertEqual(props["GROUP"], "colorprofile")
                 if props["CLASSNAME"] == "CubeOptionButton":
                     self.assertEqual(props["STYLE"], "HIDDENFOCUS")
                     self.assertNotIn("TEXT", props)
                     order = [name for name, _ in fields]
                     self.assertEqual(order.count("STYLE"), 1)
+                    # Geometry loading uses a name-hash lookup, unlike the
+                    # sequential registry-property parser. STYLE must remain
+                    # reachable in the original sorted property hash list.
+                    hashes = list(struct.unpack("<" + "H" * len(fields), new.hashes[:len(fields) * 2]))
+                    self.assertEqual(hashes, sorted(hashes))
                     allowed_changes.add("STYLE")
                 self.assertEqual([field for field in fields if field[0] not in allowed_changes],
-                                 [before.decode(c) for c in old.children if before.decode(c)[0] != "RGN"])
+                                 [before.decode(c) for c in old.children if before.decode(c)[0] not in ("RGN", "GROUP")])
                 self.assertEqual(props["RGN"], "1,7,18,1")
                 self.assertNotIn("SCRIPT_PRESSED", props)
             button, selected = [dict(after.decode(c) for c in n.children) for n in controls]
@@ -359,7 +366,7 @@ class VideoMenu(unittest.TestCase):
                     self.assertTrue(props["TEXT"].startswith("sc, < ") and props["TEXT"].endswith(" >"))
                 # Retail option values paint inside their option button's region.
                 overlay = props["CLASSNAME"] == "CubeOptionMeter" or (
-                    props["CLASSNAME"] == "CubeText" and props.get("GROUP") == "cableprofile")
+                    props["CLASSNAME"] == "CubeText" and props.get("GROUP") == "colorprofile")
                 if not overlay:
                     rows.setdefault(y, []).append((x, x + width))
             for y, intervals in rows.items():
@@ -422,7 +429,7 @@ class VideoMenu(unittest.TestCase):
         self.assertEqual(scripts, ["darkrecomp." + key for key in SETTINGS])
         profiles = [dict(registry.decode(prop) for prop in child.children)
                     for child in page.children if registry.decode(child)[0] == "WINDOW"
-                    and dict(registry.decode(prop) for prop in child.children).get("GROUP") == "cableprofile"]
+                    and dict(registry.decode(prop) for prop in child.children).get("GROUP") == "colorprofile"]
         self.assertEqual([p["CLASSNAME"] for p in profiles], ["CubeOptionButton", "CubeText"])
         self.assertEqual(profiles[0]["OPTION"], "OPTG\\VIDEO_CABLEPROFILE")
         self.assertEqual(profiles[1]["TEXT"], "sc, §ROPTG\\VIDEO_CABLEPROFILESELECTED")
