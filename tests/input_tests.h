@@ -45,8 +45,104 @@ LRESULT CALLBACK inputTestWindowProc(HWND window, UINT message, WPARAM key, LPAR
 
 #include "input_backend_tests.h"
 
+static void testSinglePlayerInputRouting(PPCContext& ctx) {
+    const uint32_t fixture = memory->allocate(4096), output = fixture + 1;
+    const uint32_t vibration = fixture + 64, xuid = fixture + 80;
+    check(fixture != 0, "Single-player input fixture allocation failed");
+    auto* base = memory->base();
+    const auto zero = [&](uint32_t address, unsigned length) {
+        return std::all_of(base + address, base + address + length, [](uint8_t value) { return value == 0; });
+    };
+    // Windows device indices are transport details. Every supported host slot
+    // must drive the one guest user that owns the local profile and saves.
+    for (uint32_t host = 0; host < XUSER_MAX_COUNT; ++host) {
+        inputStatus.fill(ERROR_DEVICE_NOT_CONNECTED); inputStates = {}; inputCaps = {};
+        inputStatus[host] = ERROR_SUCCESS;
+        inputStates[host].Gamepad.wButtons = XINPUT_GAMEPAD_START;
+        inputCaps[host] = {XINPUT_DEVTYPE_GAMEPAD, XINPUT_DEVSUBTYPE_GAMEPAD, XINPUT_CAPS_FFB_SUPPORTED,
+            {0xf3ff, 255, 255, -1, -1, -1, -1}, {WORD(0x1200 + host), WORD(0xab00 + host)}};
+        NativeInput input({fixtureInputState, fixtureInputCapabilities, fixtureInputVibration, fixtureInputTicks});
+        PPC_STORE_U16(vibration, 0x1234); PPC_STORE_U16(vibration + 2, 0xabcd);
+        // Capabilities and vibration may be queried before the first state.
+        if (host == 2)
+            check(input.getCapabilities(*memory, 0, XINPUT_FLAG_GAMEPAD, output) == ERROR_SUCCESS &&
+                  PPC_LOAD_U16(output + 16) == 0x1200 + host, "Capabilities-first routing chose the wrong host pad");
+        if (host == 3)
+            check(input.setState(*memory, 0, 0, vibration) == ERROR_SUCCESS && inputLastUser == host,
+                  "Vibration-first routing chose the wrong host pad");
+        check(input.getState(*memory, 0, 0, output) == ERROR_SUCCESS &&
+              PPC_LOAD_U16(output + 4) == XINPUT_GAMEPAD_START,
+              "Host controller Start did not reach guest user zero");
+        check(input.promptSource() == PromptInputSource::Controller,
+              "Routed host controller did not select controller prompts");
+        ctx.r3.u64 = 0; __imp__XamUserGetSigninState(ctx, base);
+        check(ctx.r3.u32 == 1, "Routed input user did not own the signed-in local profile");
+        ctx.r3.u64 = 0; ctx.r4.u64 = 7; ctx.r5.u64 = xuid;
+        __imp__XamUserGetXUID(ctx, base);
+        check(ctx.r3.u32 == 0 && memory->read32(xuid) == 0xe0000000u && memory->read32(xuid + 4) == 1,
+              "Routed input user did not own the stable local XUID");
+        check(input.getCapabilities(*memory, 0, XINPUT_FLAG_GAMEPAD, output) == ERROR_SUCCESS &&
+              PPC_LOAD_U16(output + 16) == 0x1200 + host && PPC_LOAD_U16(output + 18) == 0xab00 + host,
+              "Routed guest capabilities belong to another host pad");
+        check(input.setState(*memory, 0, 0, vibration) == ERROR_SUCCESS && inputLastUser == host &&
+              inputLastVibration.wLeftMotorSpeed == 0x1234 && inputLastVibration.wRightMotorSpeed == 0xabcd,
+              "Guest user zero rumble did not reach the selected host pad");
+        for (uint32_t guest = 1; guest < XUSER_MAX_COUNT; ++guest) {
+            memset(base + output, 0xa5, 20);
+            check(input.getState(*memory, guest, 0, output) == ERROR_DEVICE_NOT_CONNECTED && zero(output, 16),
+                  "A host pad exposed a guest user without a local profile");
+            memset(base + output, 0xa5, 20);
+            check(input.getCapabilities(*memory, guest, 0, output) == ERROR_DEVICE_NOT_CONNECTED && zero(output, 20),
+                  "Secondary guest capabilities exposed an unsigned-in device");
+            const unsigned calls = inputVibrationCalls;
+            check(input.setState(*memory, guest, 0, vibration) == ERROR_DEVICE_NOT_CONNECTED &&
+                  inputVibrationCalls == calls, "Secondary guest rumble reached a host pad");
+            ctx.r3.u64 = guest; __imp__XamUserGetSigninState(ctx, base);
+            check(ctx.r3.u32 == 0, "Secondary guest user unexpectedly signed in");
+            ctx.r3.u64 = guest; ctx.r4.u64 = 7; ctx.r5.u64 = xuid;
+            __imp__XamUserGetXUID(ctx, base);
+            check(ctx.r3.u32 == 0x80070525u && zero(xuid, 8), "Secondary guest user unexpectedly owned a XUID");
+        }
+    }
+    {
+        inputStatus.fill(ERROR_DEVICE_NOT_CONNECTED); inputStates = {}; inputCaps = {};
+        inputStatus[2] = ERROR_SUCCESS;
+        inputStates[2].Gamepad.wButtons = XINPUT_GAMEPAD_START;
+        inputCaps[2].Type = XINPUT_DEVTYPE_GAMEPAD; inputCaps[2].Vibration.wLeftMotorSpeed = 0x2222;
+        NativeInput input({fixtureInputState, fixtureInputCapabilities, fixtureInputVibration, fixtureInputTicks});
+        check(input.getState(*memory, 0, 0, output) == ERROR_SUCCESS, "Initial routed pad was not discovered");
+        const uint32_t packet = memory->read32(output);
+        inputStatus[0] = inputStatus[3] = ERROR_SUCCESS;
+        inputStates[0].Gamepad.wButtons = XINPUT_GAMEPAD_B;
+        inputStates[3].Gamepad.wButtons = XINPUT_GAMEPAD_Y;
+        inputCaps[0].Type = XINPUT_DEVTYPE_GAMEPAD; inputCaps[0].Vibration.wLeftMotorSpeed = 0x1111;
+        check(input.getState(*memory, 0, 0, output) == ERROR_SUCCESS && memory->read32(output) == packet &&
+              PPC_LOAD_U16(output + 4) == XINPUT_GAMEPAD_START,
+              "An additional host pad stole the current guest controller");
+        check(input.getCapabilities(*memory, 0, 0, output) == ERROR_SUCCESS && PPC_LOAD_U16(output + 16) == 0x2222,
+              "Additional host pad changed the selected capabilities");
+        check(input.setState(*memory, 0, 0, vibration) == ERROR_SUCCESS && inputLastUser == 2,
+              "Additional host pad changed the rumble destination");
+        inputStatus[2] = ERROR_GEN_FAILURE;
+        check(input.getState(*memory, 0, 0, output) == ERROR_GEN_FAILURE && zero(output, 16),
+              "A transient host error silently rebound the guest controller");
+        inputStatus[2] = ERROR_DEVICE_NOT_CONNECTED;
+        check(input.getState(*memory, 0, 0, output) == ERROR_SUCCESS && memory->read32(output) > packet &&
+              PPC_LOAD_U16(output + 4) == XINPUT_GAMEPAD_B,
+              "Selected host disconnect did not route the next connected pad");
+        check(inputLastUser == 2 && inputLastVibration.wLeftMotorSpeed == 0 && inputLastVibration.wRightMotorSpeed == 0,
+              "Controller replacement did not stop the previous host rumble");
+        check(input.getCapabilities(*memory, 0, 0, output) == ERROR_SUCCESS && PPC_LOAD_U16(output + 16) == 0x1111 &&
+              input.setState(*memory, 0, 0, vibration) == ERROR_SUCCESS && inputLastUser == 0,
+              "Replacement state, capabilities and rumble did not share one host route");
+    }
+    memory->release(fixture);
+    puts("Single-player input: host slots zero through three, profile identity, capabilities, rumble and stable replacement passed.");
+}
+
 static void testInputContract(PPCContext& ctx) {
     testBackgroundInputContract();
+    testSinglePlayerInputRouting(ctx);
     inputStatus.fill(ERROR_DEVICE_NOT_CONNECTED);
     inputStates = {}; inputCaps = {};
     inputVibrationCalls = 0;
@@ -493,22 +589,22 @@ static void testInputContract(PPCContext& ctx) {
 
     inputStatus[1] = ERROR_SUCCESS;
     inputStates[1].Gamepad = {XINPUT_GAMEPAD_Y, 0, 0, 0, 0, -32768, 32767};
-    check(state(1) == ERROR_SUCCESS && PPC_LOAD_U16(output + 4) == XINPUT_GAMEPAD_Y,
-          "Additional native controller did not retain its player index");
+    check(state() == ERROR_SUCCESS && PPC_LOAD_U16(output + 4) == XINPUT_GAMEPAD_Y,
+          "Nonzero host controller did not drive the local guest user");
     memcpy(base + vibration, motors, 4);
-    check(input.setState(*memory, 1, 0, vibration) == ERROR_SUCCESS && inputLastUser == 1, "Wrong controller vibrated");
+    check(input.setState(*memory, 0, 0, vibration) == ERROR_SUCCESS && inputLastUser == 1, "Wrong host controller vibrated");
     unsigned calls = inputVibrationCalls;
     SendMessageW(window, WM_ACTIVATEAPP, FALSE, 0);
     check(inputVibrationCalls == calls + 1 && inputLastUser == 1 &&
           inputLastVibration.wLeftMotorSpeed == 0 && inputLastVibration.wRightMotorSpeed == 0,
           "Losing focus did not stop native vibration");
-    check(state(1) == ERROR_SUCCESS && zero(output + 4, 12), "Controller was not neutral while unfocused");
-    check(input.setState(*memory, 1, 0, vibration) == ERROR_SUCCESS && inputLastVibration.wLeftMotorSpeed == 0,
+    check(state() == ERROR_SUCCESS && zero(output + 4, 12), "Routed controller was not neutral while unfocused");
+    check(input.setState(*memory, 0, 0, vibration) == ERROR_SUCCESS && inputLastVibration.wLeftMotorSpeed == 0,
           "Background guest restarted rumble");
     SendMessageW(window, WM_ACTIVATEAPP, TRUE, 0);
-    check(state(1) == ERROR_SUCCESS && PPC_LOAD_U16(output + 4) == XINPUT_GAMEPAD_Y,
+    check(state() == ERROR_SUCCESS && PPC_LOAD_U16(output + 4) == XINPUT_GAMEPAD_Y,
           "Native controller did not resume on focus");
-    check(input.setState(*memory, 1, 0, vibration) == ERROR_SUCCESS, "Native vibration could not resume");
+    check(input.setState(*memory, 0, 0, vibration) == ERROR_SUCCESS, "Routed native vibration could not resume");
     input.setSettingsOpen(true);
     check(inputLastVibration.wLeftMotorSpeed == 0 && inputLastVibration.wRightMotorSpeed == 0,
           "settings did not stop active rumble");
@@ -518,27 +614,29 @@ static void testInputContract(PPCContext& ctx) {
     input.setMouseLookEnabled(true); input.mouseMotion(50, 50);
     check(state() == ERROR_SUCCESS && zero(output + 4, 12) && !input.mouseLookEnabled() &&
           input.consumeMouseLook().x == 0, "settings leaked keyboard or mouse input after focus change");
-    check(state(1) == ERROR_SUCCESS && zero(output + 4, 12), "settings leaked physical controller input");
-    check(input.setState(*memory, 1, 0, vibration) == ERROR_SUCCESS && inputLastVibration.wLeftMotorSpeed == 0,
+    check(state() == ERROR_SUCCESS && zero(output + 4, 12), "settings leaked routed physical controller input");
+    check(input.setState(*memory, 0, 0, vibration) == ERROR_SUCCESS && inputLastVibration.wLeftMotorSpeed == 0,
           "settings allowed game to restart rumble");
     input.setSettingsOpen(false);
-    check(state(1) == ERROR_SUCCESS && zero(output + 4, 12), "panel closing replayed held controller input");
+    check(state() == ERROR_SUCCESS && zero(output + 4, 12), "panel closing replayed held routed controller input");
     inputStates[1].Gamepad = {};
-    state(1);
+    state();
     inputStates[1].Gamepad.wButtons = XINPUT_GAMEPAD_B;
-    check(state(1) == ERROR_SUCCESS && PPC_LOAD_U16(output + 4) == XINPUT_GAMEPAD_B,
+    check(state() == ERROR_SUCCESS && PPC_LOAD_U16(output + 4) == XINPUT_GAMEPAD_B,
           "controller did not resume after release");
+    inputStates[1].Gamepad = {}; state();
     SendMessageW(window, WM_KEYDOWN, 'W', LPARAM(1) << 30);
     check(state() == ERROR_SUCCESS && zero(output + 4, 12), "panel closing replayed keyboard autorepeat");
     SendMessageW(window, WM_KEYUP, 'W', 0);
     SendMessageW(window, WM_KEYDOWN, 'W', 0);
     check(state() == ERROR_SUCCESS && PPC_LOAD_U16(output + 10) == 32767, "keyboard did not resume after release");
     SendMessageW(window, WM_KEYUP, 'W', 0);
-    check(input.setState(*memory, 1, 0, vibration) == ERROR_SUCCESS, "rumble did not resume after closing settings");
+    check(input.setState(*memory, 0, 0, vibration) == ERROR_SUCCESS, "rumble did not resume after closing settings");
     calls = inputVibrationCalls;
     input.attachWindow(nullptr);
     check(inputVibrationCalls == calls + 1 && inputLastVibration.wRightMotorSpeed == 0,
           "Input detach left a motor running");
+    inputStatus[1] = ERROR_DEVICE_NOT_CONNECTED;
     check(state() == ERROR_DEVICE_NOT_CONNECTED, "Detached keyboard remained connected");
 
     // Adaptive prompt source: keyboard/mouse default, controller only on new
@@ -720,8 +818,8 @@ static void testInputContract(PPCContext& ctx) {
     SendMessageW(window, WM_MOUSEMOVE, 0, MAKELPARAM(100, 100));
     inputStates[0].Gamepad = {XINPUT_GAMEPAD_A, 0, 0, 0, 0, 0, 0};
     check(promptState() == ERROR_SUCCESS, "Unchanged cursor poll failed");
-    // Primary-only: secondary slots never steal nor clear; idle/disconnected
-    // polls from another device cannot undo the primary decision. The A button
+    // Only guest zero is exposed: secondary guest polls never steal nor clear
+    // prompts, even when that Windows host slot has a connected pad. The A button
     // is still held from the cursor poll above, so synthesize a true release
     // poll followed by a new press before expecting a controller edge.
     inputStates[0].Gamepad = {};
@@ -735,16 +833,19 @@ static void testInputContract(PPCContext& ctx) {
     check(input.promptSource() == PromptInputSource::Controller, "Disconnected secondary pad cleared primary prompts");
     inputStatus[1] = ERROR_SUCCESS;
     inputStates[1].Gamepad = {};
-    check(input.getState(*memory, 1, 0, output) == ERROR_SUCCESS, "Idle secondary poll failed");
+    check(input.getState(*memory, 1, 0, output) == ERROR_DEVICE_NOT_CONNECTED && zero(output, 16),
+          "Idle secondary guest exposed a host controller");
     check(input.promptSource() == PromptInputSource::Controller, "Idle secondary pad cleared primary prompts");
     SendMessageW(window, WM_KEYDOWN, 'E', 0);
-    check(input.getState(*memory, 1, 0, output) == ERROR_SUCCESS, "Secondary poll during keyboard failed");
+    check(input.getState(*memory, 1, 0, output) == ERROR_DEVICE_NOT_CONNECTED && zero(output, 16),
+          "Secondary guest became connected during keyboard input");
     check(input.promptSource() == PromptInputSource::KeyboardMouse, "Secondary idle poll blocked keyboard reclaim");
     SendMessageW(window, WM_KEYUP, 'E', 0);
     inputStates[0].Gamepad = {};
     check(promptState() == ERROR_SUCCESS, "Primary release poll failed");
     inputStates[1].Gamepad = {XINPUT_GAMEPAD_B, 0, 0, 0, 0, 0, 0};
-    check(input.getState(*memory, 1, 0, output) == ERROR_SUCCESS, "Secondary edge poll failed");
+    check(input.getState(*memory, 1, 0, output) == ERROR_DEVICE_NOT_CONNECTED && zero(output, 16),
+          "Secondary guest exposed an unselected host edge");
     check(input.promptSource() == PromptInputSource::KeyboardMouse, "Secondary pad stole primary-only prompts");
     inputStatus[1] = ERROR_DEVICE_NOT_CONNECTED;
     inputStates[1] = {};
@@ -757,7 +858,7 @@ static void testInputContract(PPCContext& ctx) {
     SendMessageW(window, WM_SETFOCUS, 0, 0);
     check(promptState() == ERROR_SUCCESS && zero(output + 4, 12), "Slot test regain replayed input");
     puts("Native input prompts: default, idle, jitter, churn, edges, held, simultaneous, mouse, disconnect and focus passed.");
-    puts("Native input prompt retrigger: negative diagonal, anchor accumulation, bounded jitter, menu cursor and primary-only slots passed.");
+    puts("Native input prompt retrigger: negative diagonal, anchor accumulation, bounded jitter, menu cursor and single guest user passed.");
 
     // Capture uses raw window edges while the original menu receives a neutral
     // controller. Quick clicks and the newly assigned held key cannot replay.

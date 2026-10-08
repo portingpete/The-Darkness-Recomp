@@ -1,6 +1,9 @@
 # Native keyboard and mouse controls
 
 Run `Launch.cmd` for audio, or `Launch.cmd mute` for a muted game.
+The first connected controller uses the same local profile as keyboard and mouse,
+regardless of its Windows controller slot. It stays selected until disconnected;
+connect your preferred controller first when several controllers are available.
 Run `LaunchWithSettings.cmd` to choose video options and language before the game
 opens, then play with audio. It reads and saves `DarkRecomp.settings.ini`, so
 the pre-game launcher and in-game Video Settings share your choices.
