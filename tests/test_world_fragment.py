@@ -218,18 +218,19 @@ END''')
             self.assertEqual(compile_template(source, name + '_other', flags),
                              compile_source(select_template(source, flags)))
 
-    def test_gui_fade_preserves_background_rgb_and_original_alpha(self):
+    def test_gui_fade_keeps_source_rgb_with_original_neutral_fade_and_alpha(self):
         path = ROOT / 'Darkness/System/Gl/ARB_fragment_program/GUIFadeToWhite.fp'
         source = path.read_text(encoding='latin-1')
         original, original_metadata = compile_source(source)
         code, metadata = compile_template(source, 'GUIFadeToWhite', 0)
-        copy = 'oCol.xyz = ((t0)).xyz;\n'
-        self.assertEqual(code.count(copy), 1)
+        fade = 'oCol.xyz = ((c0.xxxx) * (p1.zzzz) + (t0) * (1 - (p1.zzzz))).xyz;\n'
+        self.assertEqual(code.count(fade), 1)
         # Strip the RGB override to recover the original shader byte for byte:
-        # sample coordinates, five samples, timers and alpha must all survive.
-        self.assertEqual(code.replace(copy, ''), original)
+        # samples, timers and alpha survive; RGB keeps the original neutral fade
+        # over the unboosted source instead of the colored four-tap boost.
+        self.assertEqual(code.replace(fade, ''), original)
         self.assertEqual(metadata['instruction_count'], original_metadata['instruction_count'] + 1)
-        self.assertEqual(metadata['native_adjustment'], 'source_matched_gui_background')
+        self.assertEqual(metadata['native_adjustment'], 'source_rgb_with_original_gui_fade')
         self.assertEqual(metadata['textures'], original_metadata['textures'])
         self.assertEqual(compile_template(source, 'GUIFadeToWhite_other', 0),
                          (original, original_metadata))
