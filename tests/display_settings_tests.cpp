@@ -36,11 +36,19 @@ int main() {
             check(loadGraphicsSettings(path) == GraphicsSettings{120,720,true,true,false} && loadFieldOfView(path) == 114,
                   "unsafe saved resolution did not recover independently");
         }
-        for (const auto requested : {720u, 1080u, 1440u}) {
-            const auto render = renderSizeForDisplay({3440,1440}, requested);
-            check(render.width == requested * 3440 / 1440 && render.height == requested,
-                  "supported native resolution was silently downscaled");
+        for (const NativeDisplaySize expected : {NativeDisplaySize{1720,720}, {2576,1080}, {3440,1440}}) {
+            const auto render = renderSizeForDisplay({3440,1440}, expected.height);
+            check(render.width == expected.width && render.height == expected.height,
+                  "supported native resolution did not preserve the aligned guest viewport");
         }
+        // The physical ultrawide display hits the host width cap at 2160p.
+        // The former even-only mode was 1364x570, while the original camera
+        // produced 1364x568 and every startup video draw failed the native gate.
+        const auto cappedUltrawide = renderSizeForDisplay({3440,1440}, 2160);
+        const auto cappedScale = nativeResolutionScale(cappedUltrawide);
+        check(cappedUltrawide.width == 4092 && cappedUltrawide.height == 1704 && cappedScale == 3 &&
+              cappedUltrawide.width / cappedScale == 1364 && cappedUltrawide.height / cappedScale == 568,
+              "capped ultrawide mode differs from the original fullscreen camera viewport");
         const auto native4k = renderSizeForDisplay({3840,2160}, 2160);
         check(native4k.width == 3840 && native4k.height == 2160, "4K resolution was silently downscaled");
         const auto superwide = renderSizeForDisplay({5120,1440}, 2160);
@@ -49,8 +57,8 @@ int main() {
             for (uint32_t height = 180; height <= 2160; ++height) {
                 const auto render = renderSizeForDisplay(output, height);
                 const auto scale = nativeResolutionScale(render);
-                check(scale >= 1 && scale <= 3 && render.width % (2 * scale) == 0 && render.height % (2 * scale) == 0,
-                      "native scaling did not retain exact integer edges and even guest dimensions");
+                check(scale >= 1 && scale <= 3 && render.width % (4 * scale) == 0 && render.height % (4 * scale) == 0,
+                      "native scaling did not retain exact integer edges and four-pixel guest viewports");
                 check(render.width / scale <= 2560 && render.height / scale <= 720,
                       "native scaling exceeded the guest allocation limits");
             }

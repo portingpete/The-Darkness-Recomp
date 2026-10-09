@@ -54,19 +54,19 @@ goto usage
 
 :play
 if not exist "build_native\Release\DarkRecompPreview.exe" goto missing
-echo Launching The Darkness with sound. Click in the game for mouse look; F1 shows controls.
+echo Launching The Darkness with sound. Mouse captures when gameplay starts; F1 shows controls.
 start "" "%~dp0build_native\Release\DarkRecompPreview.exe" --sound %REST%
 exit /b 0
 
 :mute
 if not exist "build_native\Release\DarkRecompPreview.exe" goto missing
-echo Launching The Darkness muted. Click in the game for mouse look; F1 shows controls.
+echo Launching The Darkness muted. Mouse captures when gameplay starts; F1 shows controls.
 start "" "%~dp0build_native\Release\DarkRecompPreview.exe" --mute %REST%
 exit /b 0
 
 :preview
 if not exist "build_native\Release\DarkRecompPreview.exe" goto missing
-echo Launching The Darkness preview. Click in the game for mouse look; F1 shows controls.
+echo Launching The Darkness preview. Mouse captures when gameplay starts; F1 shows controls.
 start "" "%~dp0build_native\Release\DarkRecompPreview.exe" %REST%
 exit /b 0
 
