@@ -1437,7 +1437,7 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
         fragmentName=="TexEnvProj1";
     const unsigned anisotropy=Native::graphicsSettings().anisotropyLevels;
     const bool spatialColorCubeCopy=fragmentName=="XREngine_CCFuser" &&
-        (fragmentFlags==0 || fragmentFlags==1);
+        (fragmentFlags==0 || fragmentFlags==1 || fragmentFlags==2);
     const unsigned colorLookupSlots=scale_==1?0u:
         fragmentName=="XREngine_CCFuser" && fragmentFlags==2?1u<<1:
         fragmentName=="XREngine_Final5" && (fragmentFlags&4)?1u<<2:0u;
@@ -1517,11 +1517,13 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
             views[slot]=logicalBloomView(resolved->second);
             if(bloomFilter)bloomControl.snap=1;
         }
-        if(scale_>1 && spatialColorCubeCopy && slot==1 &&
+        if(scale_>1 && spatialColorCubeCopy && slot==(fragmentFlags==2?0u:1u) &&
            draw.textures[slot] && draw.textures[slot]->width==324 && draw.textures[slot]->height==18) {
             // This pass copies original 324x18 color-cube texels into a scaled
             // render target. Linear wrapping blends the opposite LUT edges
             // into its first physical pixels, tinting dark scenes at 2x/3x.
+            // Append copies its source cube in slot0; its fractional RGB
+            // lookup in slot1 keeps the original interpolation.
             captured.minLinear=captured.magLinear=captured.mipLinear=false;
             captured.anisotropy=1;captured.baseOnly=true;
         }
@@ -1817,6 +1819,14 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
         auto alpha=[](D3D11_BLEND f) {return f==D3D11_BLEND_SRC_COLOR?D3D11_BLEND_SRC_ALPHA:f==D3D11_BLEND_INV_SRC_COLOR?D3D11_BLEND_INV_SRC_ALPHA:
             f==D3D11_BLEND_DEST_COLOR?D3D11_BLEND_DEST_ALPHA:f==D3D11_BLEND_INV_DEST_COLOR?D3D11_BLEND_INV_DEST_ALPHA:f;};
         rt.SrcBlendAlpha=alpha(rt.SrcBlend);rt.DestBlendAlpha=alpha(rt.DestBlend);rt.BlendOp=rt.BlendOpAlpha=D3D11_BLEND_OP_ADD;
+        if(fragmentFlags==0 && std::strcmp(effectiveName,"GUIFadeToWhite")==0 &&
+           (flags&0x1100000)==0x100000 && a[144]==7 && a[145]==8) {
+            // Reveal the photo with the original destination-alpha mask, then
+            // retire that mask before SRC_ALPHA extraction feeds the later
+            // radial/additive light passes. RGB still uses the incoming mask.
+            rt.RenderTargetWriteMask|=D3D11_COLOR_WRITE_ENABLE_ALPHA;
+            rt.SrcBlendAlpha=rt.DestBlendAlpha=D3D11_BLEND_ZERO;
+        }
     }
     if(blendStates_.size()>512)blendStates_.clear();
     auto& blendState=blendStates_.entry(blend);

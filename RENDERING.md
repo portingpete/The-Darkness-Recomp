@@ -13,8 +13,8 @@ remains 720. Video Settings now offers 360p, 480p, 720p, 1080p, 1440p and
 2160p. A 3440x1440 display can render at 3440x1440 when 1440p is selected;
 a 3840x2160 display can render at 3840x2160 when 2160p is selected. Dimensions
 are capped at 4096 pixels wide and 2160 high, preserving aspect when the width
-limit is reached and rounding to even guest dimensions. Internal resolution
-changes apply on restart.
+limit is reached and rounding to four-pixel guest viewport boundaries. Internal
+resolution changes apply on restart.
 
 After enabling **F6 resolution shortcut** in the F5 developer panel, F6 switches
 native rasterization between 720p and 1440p during play when the
@@ -77,6 +77,15 @@ world textures and internal scene buffers. Presentation fits the existing scene
 without cropping or stretching. Restart to change the internal aspect ratio;
 `--width W --height H` selects an explicit aspect and window size. See
 [CONTROLS.md](CONTROLS.md) for launcher and input options.
+
+Native tentacle menu transitions reveal the backdrop with its source RGB. The
+original destination-alpha mask still controls the reveal, then the RGB-only
+`GUIFadeToWhite` blend clears that mask before the later light-extraction pass.
+This prevents radial and additive lighting from brightening the revealed photo.
+The original wipe visible in Xenia includes a brightness boost; this native
+visual adjustment keeps the revealed backdrop at its settled color instead.
+Other blend modes and alpha-writing draws retain their original behavior.
+Hardware and WARP contracts cover the reveal, extraction and Final5 color grade.
 
 Options > Video Settings uses the original CubeMenu and CubeButton classes.
 `tools/compile_video_menu.py` builds private `CubeWnd.pc.xcr` and

@@ -54,7 +54,7 @@ The internal render height defaults to 720 pixels. Video Settings offers 360p,
 while keeping the original console allocations within their limits. Changes
 apply after restarting the game. `--windowed --width 2560 --height 1080` selects
 a window size and aspect ratio. Internal rendering supports up to 4096 x 2160,
-preserving aspect at the width limit and rounding to even guest dimensions.
+preserving aspect at the width limit and rounding to supported game dimensions.
 
 Open **F5** and check **Enable F6 resolution shortcut**, then press **F6** during
 play to switch between **720p and 1440p** without reloading the level. The shortcut
@@ -122,7 +122,9 @@ dump, choose **English**, or **System** on Russian Windows, to load its translat
 text and audio. Keep its own executable and all matching content files together.
 
 In menus, move the cursor over a choice and click to select it. The game releases
-mouse capture while a menu is open. Click inside gameplay to capture the mouse;
+mouse capture while a menu is open and captures it automatically when keyboard/mouse
+gameplay starts or resumes. Controller menu navigation leaves the mouse released.
+After a manual release or Alt-Tab, click inside gameplay to recapture the mouse;
 that first gameplay click only captures it.
 Press **F1** for the controls guide, **F2** to toggle capture, or **Escape**
 to pause and release the cursor. Alt-Tab, loss of focus, and closing the window

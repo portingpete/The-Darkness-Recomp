@@ -43,7 +43,9 @@ own `default.xex`. The Russian localization uses the game's English content
 slot: choose **English**, or **System default** on Russian Windows. Its translated
 text, fonts, and audio come from that dump.
 
-Click the game window to capture the mouse. **F1** shows controls, **F2** toggles
+The mouse captures automatically when keyboard/mouse gameplay starts or resumes
+after a menu. Click the game window to recapture after a manual release or Alt-Tab.
+**F1** shows controls, **F2** toggles
 capture, and **Esc** releases it. Graphics options are in **Options > Video Settings**
 and in the video settings launcher. Both use the same saved settings.
 Click menu choices to select them; the mouse wheel also changes choices and **E** confirms.
@@ -167,8 +169,9 @@ your saved game settings. Profiling is disabled by default; set
 `tools/run_native.py --stall-profile` for a bounded development run. Build with
 `-DDARK_STALL_PROFILER=OFF` to exclude the profiler completely.
 
-Click the game window to capture the mouse (**F1** controls guide, **F2**
-toggle capture, **Esc** release).
+The mouse captures automatically when keyboard/mouse gameplay starts or resumes
+after a menu. Click to recapture after a manual release or Alt-Tab (**F1** controls
+guide, **F2** toggle capture, **Esc** release).
 
 ## Docs
 

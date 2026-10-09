@@ -183,8 +183,9 @@ static std::array<uint8_t,3> colorGradeOracle(const std::vector<uint8_t>& cube,
 }
 static void colorGradeChainContract(ID3D11Device* device,ID3D11DeviceContext* context,
                                    uint32_t lutFormat=6,int lutExponent=0) {
-    constexpr std::array<const char*,10> names{"copy0","lerp1","append2","gamma4","chain0-2-4","append2-fractional",
-        "append2-resolved-clamp","append2-resolved-wrap","append2-resolved-mirror","append2-resolved-border"};
+    constexpr std::array<const char*,12> names{"copy0","lerp1","append2","gamma4","chain0-2-4","append2-fractional",
+        "append2-resolved-clamp","append2-resolved-wrap","append2-resolved-mirror","append2-resolved-border",
+        "append2-spatial-source-linear-wrap","append2-nonlinear-spatial-source-linear-wrap"};
     constexpr std::array<std::array<uint8_t,3>,24> swatches{{
         {0,0,0},{1,1,1},{2,2,2},{3,3,3},{5,5,5},{8,8,8},{12,12,12},{16,16,16},
         {24,24,24},{32,32,32},{48,48,48},{64,64,64},{96,96,96},{128,128,128},
@@ -203,7 +204,7 @@ static void colorGradeChainContract(ID3D11Device* device,ID3D11DeviceContext* co
     auto black=std::make_shared<ColorImage>();black->width=black->height=1;black->pixels={0,0,0,255};
     const auto cubeGeometry=colorGradeQuad(324,18,1280,720);
     const auto sceneGeometry=colorGradeQuad(width,height,width,height);
-    std::array<std::vector<uint8_t>,20> baseline;
+    std::array<std::vector<uint8_t>,names.size()*2> baseline;
     bool passed=true;unsigned comparisons=0;
     for(unsigned scale:{1u,2u,3u}) {
         context->ClearState();WorldRendererD3D11 renderer(device,context,scale);
@@ -217,8 +218,20 @@ static void colorGradeChainContract(ID3D11Device* device,ID3D11DeviceContext* co
             if(kind==3) {
                 fuser.fragmentConstants[1]={1.4f,.8f,1.1f,1};fuser.fragmentConstants[2]={0,0,0,0};
             }
-            if(kind>=5)fuser.textures[0]=fractional;
-            if(kind>=6) {
+            if(kind>=5 && kind<10)fuser.textures[0]=fractional;
+            if(kind>=10) {
+                // Video Settings' transition directly appends an authored
+                // 324x18 cube with linear wrapping in source slot0. This slot
+                // copies spatial texels; slot1 remains a fractional RGB lookup.
+                fuser.samplers[0]=colorGradeSampler(true,0);
+            }
+            if(kind==11) {
+                // Nonlinear source RGB addresses lie between slot1 texels.
+                // The same draw must preserve source blocks while retaining
+                // lookup interpolation; forcing both slots to point fails.
+                fuser.textures[0]=nonlinear;
+            }
+            if(kind>=6 && kind<10) {
                 // Exercise the append consumer of a resolved color cube with
                 // fractional red/green coordinates. All address modes are
                 // in range here, so the independent cube oracle applies.
