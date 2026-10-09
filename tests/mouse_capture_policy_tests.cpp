@@ -22,6 +22,67 @@ void startupAndGameplay() {
     NativeMouseCapturePolicy noMenu;
     require(noMenu.update(false, true, true, true) == Action::None, "Gameplay signal captured without a menu transition");
 }
+void acceptedGameplayLoad() {
+    NativeMouseCapturePolicy policy;
+    policy.update(true, false, true, true);
+    require(policy.update(false, false, true, true, true) == Action::Capture,
+            "Accepted gameplay load waited for the original gameplay-client signal");
+    require(policy.update(false, false, true, true, true) == Action::None,
+            "Accepted load captured the same menu transition twice");
+    require(policy.update(false, true, true, true) == Action::None,
+            "The later gameplay-client signal recaptured an accepted load");
+
+    NativeMouseCapturePolicy noMenu;
+    require(noMenu.update(false, false, true, true, true) == Action::None,
+            "Accepted load captured without a preceding menu transition");
+
+    NativeMouseCapturePolicy actualMenu;
+    actualMenu.update(true, false, true, true);
+    require(actualMenu.update(true, false, true, true, true) == Action::Release,
+            "Accepted load overrode a real menu's pointer ownership");
+    require(actualMenu.update(true, true, true, true) == Action::Release,
+            "A real menu lost pointer ownership to a later gameplay-client signal");
+}
+void acceptedLoadGuards() {
+    NativeMouseCapturePolicy manual;
+    manual.update(true, false, true, true);
+    manual.cancel();
+    require(manual.update(false, false, true, true, true) == Action::None,
+            "Accepted load undid an explicit menu release");
+    require(manual.update(false, true, true, true) == Action::None,
+            "A late gameplay-client signal undid release before an accepted load");
+
+    NativeMouseCapturePolicy loading;
+    loading.update(true, false, true, true);
+    loading.update(false, false, true, true);
+    loading.cancel();
+    require(loading.update(false, false, true, true, true) == Action::None,
+            "Accepted load undid an explicit release during loading");
+
+    NativeMouseCapturePolicy unavailable;
+    unavailable.update(true, false, true, true);
+    require(unavailable.update(false, false, false, true, true) == Action::None,
+            "Accepted load captured while focus or native input was unavailable");
+    require(unavailable.update(false, false, true, true) == Action::None,
+            "Focus/panel recovery resurrected an accepted load");
+    require(unavailable.update(false, true, true, true) == Action::None,
+            "A late gameplay-client signal resurrected an unavailable accepted load");
+
+    NativeMouseCapturePolicy suspended;
+    suspended.update(true, false, true, true);
+    suspended.suspend();
+    require(suspended.update(false, false, true, true, true) == Action::None,
+            "Accepted load undid a nested window operation's release");
+
+    NativeMouseCapturePolicy controller;
+    controller.update(true, false, true, false);
+    require(controller.update(false, false, true, false, true) == Action::None,
+            "Controller-accepted load took the desktop mouse");
+    require(controller.update(false, false, true, true) == Action::None,
+            "A later keyboard/mouse source change resurrected a controller load");
+    require(controller.update(false, true, true, true) == Action::None,
+            "A late gameplay-client signal resurrected a controller load");
+}
 void manualRelease() {
     NativeMouseCapturePolicy policy;
     policy.update(true, false, true, true);
@@ -89,10 +150,12 @@ void nestedWindowOperations() {
 int main() {
     try {
         startupAndGameplay();
+        acceptedGameplayLoad();
+        acceptedLoadGuards();
         manualRelease();
         unavailableAndController();
         nestedWindowOperations();
-        std::puts("Mouse capture: menu-to-game start/resume, startup/loading, manual release, focus/panels and controller use verified. No desktop input.");
+        std::puts("Mouse capture: accepted loads, menu-to-game start/resume, startup/loading, manual release, focus/panels and controller use verified. No desktop input.");
         return 0;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "MouseCapturePolicyContract: %s\n", error.what());

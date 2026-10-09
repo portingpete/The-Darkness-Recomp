@@ -423,6 +423,7 @@ void NativeInput::clearKeysLocked() {
     haveMenuPos_ = false;
     escapePauses_ = false;
     mouseLook_ = false;
+    gameplayCapturePrepared_ = gameplayCaptureRequested_ = loadingCapture_ = false;
     clearMouseLocked();
 }
 void NativeInput::clearMouseLocked() {
@@ -439,10 +440,12 @@ void NativeInput::clearMouseLocked() {
     mousePending_ = false;
     wheelPending_ = wheelRemainder_ = 0; wheelButton_ = 0; wheelNext_ = 0;
 }
-void NativeInput::setMouseLookEnabled(bool enabled) {
+void NativeInput::setMouseLookEnabled(bool enabled, bool waitForClient) {
     std::lock_guard lock(mutex_);
     ++menuEpoch_;
     mouseLook_ = enabled && window_ && focused_ && !settingsOpen_;
+    loadingCapture_ = !enabled && waitForClient && window_ && focused_ && !settingsOpen_;
+    if (!enabled && !waitForClient) gameplayCapturePrepared_ = gameplayCaptureRequested_ = false;
     clearMouseLocked();
     if (keys_[VK_SPACE]) {
         keys_[VK_SPACE] = false;
@@ -451,6 +454,44 @@ void NativeInput::setMouseLookEnabled(bool enabled) {
 }
 bool NativeInput::mouseLookEnabled() {
     std::lock_guard lock(mutex_);
+    return mouseLook_;
+}
+void NativeInput::requestGameplayMouseCapture() {
+    std::lock_guard lock(mutex_);
+    gameplayCaptureRequested_ = false;
+    gameplayCapturePrepared_ = false;
+    if (window_ && focused_ && !settingsOpen_ && !keyboardMenuInputBlocked() &&
+        promptSource_.load(std::memory_order_acquire) == PromptInputSource::KeyboardMouse)
+        gameplayCapturePrepared_ = true;
+}
+void NativeInput::publishGameplayMouseCaptureRequest() {
+    std::lock_guard lock(mutex_);
+    if (gameplayCapturePrepared_ && window_ && focused_ && !settingsOpen_ && !keyboardMenuInputBlocked() &&
+        promptSource_.load(std::memory_order_acquire) == PromptInputSource::KeyboardMouse)
+        gameplayCaptureRequested_ = true;
+    gameplayCapturePrepared_ = false;
+}
+bool NativeInput::takeGameplayMouseCaptureRequest() {
+    std::lock_guard lock(mutex_);
+    const bool requested = gameplayCaptureRequested_;
+    gameplayCaptureRequested_ = false;
+    return requested;
+}
+void NativeInput::cancelGameplayMouseCaptureRequest() {
+    std::lock_guard lock(mutex_);
+    gameplayCapturePrepared_ = gameplayCaptureRequested_ = false;
+}
+bool NativeInput::completeLoadingMouseCapture() {
+    std::lock_guard lock(mutex_);
+    if (!loadingCapture_) return false;
+    loadingCapture_ = false;
+    ++menuEpoch_;
+    mouseLook_ = window_ && focused_ && !settingsOpen_;
+    clearMouseLocked();
+    if (keys_[VK_SPACE]) {
+        keys_[VK_SPACE] = false;
+        if (heldKeys_) --heldKeys_;
+    }
     return mouseLook_;
 }
 void NativeInput::setGuestMenuActive(bool active) {
@@ -567,7 +608,7 @@ bool NativeInput::setKeyboardBindings(const KeyboardBindings& bindings) {
 }
 MenuCursorSnapshot NativeInput::menuCursor() {
     std::lock_guard lock(mutex_);
-    return {lastMenuX_, lastMenuY_, window_ && focused_ && !settingsOpen_ && !keyboardMenuInputBlocked() && !mouseLook_ && haveMenuPos_,
+    return {lastMenuX_, lastMenuY_, window_ && focused_ && !settingsOpen_ && !keyboardMenuInputBlocked() && !mouseLook_ && !loadingCapture_ && haveMenuPos_,
             keys_[VK_LBUTTON], menuMovement_, menuPresses_, menuEpoch_};
 }
 bool NativeInput::guestMenuAllowsPointer() {
@@ -666,6 +707,7 @@ bool NativeInput::windowMessage(HWND window, UINT message, WPARAM key, LPARAM de
         focused_ = false;
     } else if (message == WM_CAPTURECHANGED) {
         mouseLook_ = false;
+        gameplayCapturePrepared_ = gameplayCaptureRequested_ = loadingCapture_ = false;
         clearMouseLocked();
         resetPromptLocked();
     } else if (focused_ && !settingsOpen_) {

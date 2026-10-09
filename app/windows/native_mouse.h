@@ -2,6 +2,8 @@
 #include "runtime/native/input.h"
 #include "runtime/native/menu_pointer.h"
 #include "mouse_capture_policy.h"
+#include <cstdio>
+#include <cstdlib>
 #include <string>
 
 // The window thread owns Win32 capture. The input mutex is never held across
@@ -25,16 +27,22 @@ public:
     void setFrameRate(double fps) { fps_ = unsigned(fps + .5); updateTitle(); }
     void setRenderHeight(unsigned height) { renderHeight_ = height; updateTitle(); }
     void updateGameplayCapture(bool inputAvailable) {
+        // The guest retires the outgoing menu before publishing this request.
+        // Take it first so an older ownership sample cannot consume the event.
+        const bool loadAccepted = DarkRecomp::Native::nativeInput().takeGameplayMouseCaptureRequest();
         const bool menuActive = DarkRecomp::Native::guestMenuPointerActive();
         const bool gameplayActive = !DarkRecomp::Native::nativeInput().guestMenuAllowsPointer();
         const bool available = inputAvailable && registered_ && GetForegroundWindow() == window_ && !IsIconic(window_);
         const bool keyboardMouse = DarkRecomp::Native::nativeInput().promptSource() ==
                                    DarkRecomp::Native::PromptInputSource::KeyboardMouse;
-        const auto action = capturePolicy_.update(menuActive, gameplayActive, available, keyboardMouse);
+        const bool alreadyCaptured = captured_;
+        const auto action = capturePolicy_.update(menuActive, gameplayActive, available, keyboardMouse, loadAccepted);
         if (action == NativeMouseCapturePolicy::Action::Release) releaseCapture();
-        else if (action == NativeMouseCapturePolicy::Action::Capture && !captured_) capture();
+        else if (action == NativeMouseCapturePolicy::Action::Capture && !captured_) capture(loadAccepted);
+        if (loadAccepted && alreadyCaptured && captured_ && available && keyboardMouse)
+            DarkRecomp::Native::nativeInput().setMouseLookEnabled(false, true);
     }
-    bool capture() {
+    bool capture(bool waitForClient = false) {
         if (DarkRecomp::Native::guestMenuPointerActive()) return false;
         if (!registered_ || GetForegroundWindow() != window_ || IsIconic(window_)) return false;
         capturePolicy_.cancel();
@@ -42,17 +50,21 @@ public:
         captured_ = true;
         SetCapture(window_);
         if (GetCapture() != window_) { release(); return false; }
-        DarkRecomp::Native::nativeInput().setMouseLookEnabled(true);
+        DarkRecomp::Native::nativeInput().setMouseLookEnabled(!waitForClient, waitForClient);
         SetCursor(nullptr);
         updateTitle();
+        if (captureProbeEnabled())
+            std::printf("[MouseCapture] tick=%llu captured=1 waitingForClient=%u\n", GetTickCount64(), unsigned(waitForClient));
         return true;
     }
     void release() {
         capturePolicy_.cancel();
+        DarkRecomp::Native::nativeInput().cancelGameplayMouseCaptureRequest();
         releaseCapture();
     }
     void suspend() {
         capturePolicy_.suspend();
+        DarkRecomp::Native::nativeInput().cancelGameplayMouseCaptureRequest();
         releaseCapture();
     }
     bool message(UINT message, WPARAM key, LPARAM detail) {
@@ -112,6 +124,13 @@ public:
         return false;
     }
 private:
+    static bool captureProbeEnabled() {
+        static const bool enabled = [] {
+            const char* value = std::getenv("DARK_MENU_POINTER_PROBE");
+            return value && value[0] == '1' && value[1] == '\0';
+        }();
+        return enabled;
+    }
     void releaseCapture() {
         if (!captured_) return;
         captured_ = false;

@@ -1,18 +1,20 @@
 #pragma once
 
-// Menu ownership and the original gameplay-client signal arrive independently.
-// Keep the request through loading, but never infer gameplay from an idle menu
-// pointer alone (intro videos and animated menu transitions can both be idle).
+// Menu ownership, accepted gameplay loads and the original gameplay-client
+// signal arrive independently. Keep the request through loading, but never
+// infer gameplay from an idle menu pointer alone (intro videos and animated
+// menu transitions can both be idle).
 class NativeMouseCapturePolicy {
 public:
     enum class Action { None, Release, Capture };
-    Action update(bool menuActive, bool gameplayActive, bool available, bool keyboardMouse) noexcept {
+    Action update(bool menuActive, bool gameplayActive, bool available, bool keyboardMouse,
+                  bool loadAccepted = false) noexcept {
         if (menuActive && available && (!menuWasActive_ || !wasAvailable_)) pending_ = true;
         menuWasActive_ = menuActive;
         wasAvailable_ = available;
         if (!available) pending_ = false;
         if (menuActive) return Action::Release;
-        if (!pending_ || !gameplayActive) return Action::None;
+        if (!pending_ || (!gameplayActive && !loadAccepted)) return Action::None;
         pending_ = false;
         return keyboardMouse ? Action::Capture : Action::None;
     }
