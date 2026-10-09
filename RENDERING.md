@@ -78,14 +78,12 @@ without cropping or stretching. Restart to change the internal aspect ratio;
 `--width W --height H` selects an explicit aspect and window size. See
 [CONTROLS.md](CONTROLS.md) for launcher and input options.
 
-Native tentacle menu transitions reveal the backdrop with its source RGB. The
-original destination-alpha mask still controls the reveal, then the RGB-only
-`GUIFadeToWhite` blend clears that mask before the later light-extraction pass.
-This prevents radial and additive lighting from brightening the revealed photo.
-The original wipe visible in Xenia includes a brightness boost; this native
-visual adjustment keeps the revealed backdrop at its settled color instead.
-Other blend modes and alpha-writing draws retain their original behavior.
-Hardware and WARP contracts cover the reveal, extraction and Final5 color grade.
+Tentacle menu transitions reveal the backdrop with its source RGB while retaining
+the original destination-alpha mask and radial/additive lighting. This keeps the
+bright glow without the additional `GUIFadeToWhite` RGB boost. Scaled color-cube
+copies use point sampling to prevent pink contamination while the original color
+lookup keeps its interpolation. Hardware and WARP contracts cover source color,
+the reveal mask and retained light extraction.
 
 Options > Video Settings uses the original CubeMenu and CubeButton classes.
 `tools/compile_video_menu.py` builds private `CubeWnd.pc.xcr` and
