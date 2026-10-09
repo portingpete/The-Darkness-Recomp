@@ -22,6 +22,8 @@ std::atomic<uint32_t> modalDepth{0};
 std::atomic<uint64_t> menuTick{0};
 std::atomic<uint32_t> observedRoot{0};
 std::atomic<uint32_t> observedFrontend{0};
+std::mutex pointerOwnershipMutex;
+uint32_t acceptedLoadFrontend = 0;
 thread_local MenuPointerSession pointerSession;
 std::mutex projectionMutex;
 MenuPointerProjectionSession projectionSession;
@@ -52,11 +54,26 @@ bool hasMenuControl(uint8_t* base, uint32_t window, unsigned& budget, unsigned d
     return false;
 }
 
-uint32_t observeFrontend(uint8_t* base, uint32_t frontend) {
+uint32_t observeFrontend(uint8_t* base, uint32_t frontend, bool afterUpdate = false) {
     if (!memory || base != memory->base() || !frontend ||
         uint64_t(frontend) + 1036 > PPC_MEMORY_SIZE) return 0;
+    std::lock_guard ownershipLock(pointerOwnershipMutex);
     const auto root = PPC_LOAD_U32(frontend + 16);
-    if (!menuPointerTreeHasControl(base, root)) {
+    const bool hasControls = menuPointerTreeHasControl(base, root);
+    // SCRIPT_CREATE runs before the new root is assigned. Publish only after
+    // the owning update returns, reading the live root under the same lock as
+    // every observer. A previous render cannot then republish its old menu.
+    if (afterUpdate && acceptedLoadFrontend == frontend && !modalDepth.load(std::memory_order_acquire)) {
+        acceptedLoadFrontend = 0;
+        if (!hasControls) {
+            observedRoot.store(0, std::memory_order_release);
+            menuTick.store(0, std::memory_order_release);
+            nativeInput().publishGameplayMouseCaptureRequest();
+        } else {
+            nativeInput().cancelGameplayMouseCaptureRequest();
+        }
+    }
+    if (!hasControls) {
         if (observedFrontend.load(std::memory_order_acquire) == frontend)
             observedRoot.store(0, std::memory_order_release);
         return 0;
@@ -247,6 +264,30 @@ bool guestMenuPointerActive() noexcept {
 }
 }
 
+// The authored Continue/confirmed New Game route creates begin_loadtransform.
+// Its setpreloadflag callback runs while constructing the control-less window,
+// before root assignment and the deferred loader/client startup.
+extern "C" PPC_FUNC(__imp__sub_82102D38);
+PPC_FUNC(sub_82102D38) {
+    DarkRecomp::Native::StallProfiler::Scope stallProfile(DarkRecomp::Native::StallProfiler::Section::Guest, __func__, 0x82102D38u, uint32_t(ctx.lr));
+    const uint32_t application = ctx.r3.u32;
+    __imp__sub_82102D38(ctx, base);
+    if (!DarkRecomp::Native::memory || base != DarkRecomp::Native::memory->base() || !application ||
+        uint64_t(application) + 4909 > PPC_MEMORY_SIZE) return;
+    const uint32_t table = PPC_LOAD_U32(application);
+    if (table != 0x82051EA0 && table != 0x82055458 && table != 0x82060D88) return;
+    const uint32_t frontend = PPC_LOAD_U32(application + 60);
+    std::lock_guard ownershipLock(pointerOwnershipMutex);
+    if (!frontend || frontend != observedFrontend.load(std::memory_order_acquire)) return;
+    // Prepare while the accepted action still owns focus/device identity.
+    // Focus loss, manual release or a panel cancels this before publication.
+    DarkRecomp::Native::nativeInput().requestGameplayMouseCapture();
+    acceptedLoadFrontend = frontend;
+    if (probeEnabled())
+        std::fprintf(stderr, "[MouseCaptureLoadAccepted] tick=%llu application=%08X frontend=%08X\n",
+            GetTickCount64(), application, frontend);
+}
+
 extern "C" PPC_FUNC(__imp__sub_8244D760);
 PPC_FUNC(sub_8244D760) {
     DarkRecomp::Native::StallProfiler::Scope stallProfile(DarkRecomp::Native::StallProfiler::Section::Guest, __func__, 0x8244D760u, uint32_t(ctx.lr));
@@ -406,7 +447,7 @@ PPC_FUNC(sub_8236C508) {
     const uint32_t frontend = ctx.r3.u32;
     __imp__sub_8236C508(ctx, base);
     DarkRecomp::Native::updateKeyboardMenuGuest(ctx, base, frontend);
-    const auto root = observeFrontend(base, frontend);
+    const auto root = observeFrontend(base, frontend, true);
     if (root) processPointer(ctx, base, root);
 }
 
