@@ -1819,14 +1819,6 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
         auto alpha=[](D3D11_BLEND f) {return f==D3D11_BLEND_SRC_COLOR?D3D11_BLEND_SRC_ALPHA:f==D3D11_BLEND_INV_SRC_COLOR?D3D11_BLEND_INV_SRC_ALPHA:
             f==D3D11_BLEND_DEST_COLOR?D3D11_BLEND_DEST_ALPHA:f==D3D11_BLEND_INV_DEST_COLOR?D3D11_BLEND_INV_DEST_ALPHA:f;};
         rt.SrcBlendAlpha=alpha(rt.SrcBlend);rt.DestBlendAlpha=alpha(rt.DestBlend);rt.BlendOp=rt.BlendOpAlpha=D3D11_BLEND_OP_ADD;
-        if(fragmentFlags==0 && std::strcmp(effectiveName,"GUIFadeToWhite")==0 &&
-           (flags&0x1100000)==0x100000 && a[144]==7 && a[145]==8) {
-            // Reveal the photo with the original destination-alpha mask, then
-            // retire that mask before SRC_ALPHA extraction feeds the later
-            // radial/additive light passes. RGB still uses the incoming mask.
-            rt.RenderTargetWriteMask|=D3D11_COLOR_WRITE_ENABLE_ALPHA;
-            rt.SrcBlendAlpha=rt.DestBlendAlpha=D3D11_BLEND_ZERO;
-        }
     }
     if(blendStates_.size()>512)blendStates_.clear();
     auto& blendState=blendStates_.entry(blend);

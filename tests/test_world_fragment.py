@@ -206,8 +206,7 @@ END''')
             source = (directory / (name + '.fp')).read_text(encoding='latin-1')
             for flags in variants:
                 if (name == 'XREngine_CCFuser' and flags == 2 or
-                        name == 'XREngine_Final5' and flags & 4 or
-                        name == 'GUIFadeToWhite' and flags == 0):
+                        name == 'XREngine_Final5' and flags & 4):
                     continue
                 with self.subTest(name=name, flags=flags):
                     self.assertEqual(compile_template(source, name, flags, includes),
@@ -217,38 +216,6 @@ END''')
             source = (directory / (name + '.fp')).read_text(encoding='latin-1')
             self.assertEqual(compile_template(source, name + '_other', flags),
                              compile_source(select_template(source, flags)))
-
-    def test_gui_fade_preserves_background_rgb_and_original_alpha(self):
-        path = ROOT / 'Darkness/System/Gl/ARB_fragment_program/GUIFadeToWhite.fp'
-        source = path.read_text(encoding='latin-1')
-        original, original_metadata = compile_source(source)
-        code, metadata = compile_template(source, 'GUIFadeToWhite', 0)
-        copy = 'oCol.xyz = ((t0)).xyz;\n'
-        self.assertEqual(code.count(copy), 1)
-        # Strip the RGB override to recover the original shader byte for byte:
-        # sample coordinates, five samples, timers and alpha must all survive.
-        self.assertEqual(code.replace(copy, ''), original)
-        self.assertEqual(metadata['instruction_count'], original_metadata['instruction_count'] + 1)
-        self.assertEqual(metadata['native_adjustment'], 'source_matched_gui_background')
-        self.assertEqual(metadata['textures'], original_metadata['textures'])
-        self.assertEqual(compile_template(source, 'GUIFadeToWhite_other', 0),
-                         (original, original_metadata))
-        # main() decodes raw asset bytes, preserving CRLF; read_text normalizes
-        # newlines. Both explicit styles and the raw asset must opt in identically.
-        for label, variant in (('LF', source), ('CRLF', source.replace('\n', '\r\n')),
-                               ('raw asset', path.read_bytes().decode('latin-1'))):
-            with self.subTest(newlines=label):
-                self.assertEqual(compile_template(variant, 'GUIFadeToWhite', 0), (code, metadata))
-                self.assertEqual(compile_source(variant), (original, original_metadata))
-        boost = 'MAD r0, r0, p1.y, t0;'
-        fade = 'LRP oCol, p1.z, c0.xxxx, r0;'
-        for newline in ('\n', '\r\n'):
-            variant = source.replace('\n', newline)
-            for malformed in (variant.replace(boost, ''), variant.replace(boost, boost + boost),
-                              variant.replace(fade, ''), variant.replace(fade, fade + fade),
-                              variant.replace(boost + newline + fade, fade + newline + boost)):
-                with self.assertRaisesRegex(ValueError, 'GUI fade output'):
-                    compile_template(malformed, 'GUIFadeToWhite', 0)
 
     def test_shadow_projector_uses_logical_texel_filter_at_native_scale(self):
         source = (ROOT / 'Darkness/System/Gl/ARB_fragment_program/XREngine_ShadowProj.fp').read_text(encoding='latin-1')
