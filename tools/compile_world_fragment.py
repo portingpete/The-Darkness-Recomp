@@ -372,22 +372,23 @@ def compile_template(source, name, flags, includes=None):
     lookup_slot = (1 if name == 'XREngine_CCFuser' and flags == 2 else
                    2 if name == 'XREngine_Final5' and flags & 4 else None)
     selected = select_template(source, flags, includes)
-    source_matched_gui = name == 'GUIFadeToWhite' and flags == 0
-    if source_matched_gui:
+    source_rgb_gui_fade = name == 'GUIFadeToWhite' and flags == 0
+    if source_rgb_gui_fade:
         # This original program draws the background through the tentacle GUI's
-        # destination-alpha mask. Preserve its source RGB during the reveal so
-        # the opening matches the settled background. Keep the original samples,
-        # constants and alpha calculation; the original asset is unchanged.
+        # destination-alpha mask. Fade the unboosted source RGB to the original
+        # neutral gray so menu lights survive and the fully open reveal matches
+        # the settled background. Keep the original samples, constants and alpha
+        # calculation; the original asset is unchanged.
         boost = 'MAD r0, r0, p1.y, t0;'
         fade = 'LRP oCol, p1.z, c0.xxxx, r0;'
         original_tail = re.compile(re.escape(boost) + r'(\r?\n)' + re.escape(fade))
         if (selected.count(boost) != 1 or selected.count(fade) != 1 or
                 len(original_tail.findall(selected)) != 1):
             raise ValueError('Unexpected original GUI fade output')
-        selected = original_tail.sub(lambda match: match[0] + match[1] + 'MOV oCol.xyz, t0;', selected)
+        selected = original_tail.sub(lambda match: match[0] + match[1] + 'LRP oCol.xyz, p1.z, c0.xxxx, t0;', selected)
     shader, metadata = compile_source(selected, lookup_slot)
-    if source_matched_gui:
-        metadata['native_adjustment'] = 'source_matched_gui_background'
+    if source_rgb_gui_fade:
+        metadata['native_adjustment'] = 'source_rgb_with_original_gui_fade'
     return shader, metadata
 
 

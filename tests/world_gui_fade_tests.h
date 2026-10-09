@@ -1,5 +1,5 @@
 // The tentacle GUI reveals a background through a destination-alpha mask.
-// Its RGB must match the source artwork across the original fade phases.
+// Its RGB retains the original neutral-gray fade without the colored tap boost.
 // Preserve the original mask so the later SRC_ALPHA extraction and additive
 // light passes can still brighten the revealed backdrop.
 static void worldGuiFadeContract(ID3D11Device* device,ID3D11DeviceContext* context) {
@@ -39,7 +39,7 @@ static void worldGuiFadeContract(ID3D11Device* device,ID3D11DeviceContext* conte
                                 const std::array<std::array<double,4>,4>& taps,
                                 double gain,double fade) {
         auto result=originalResult(center,taps,gain,fade);
-        for(unsigned c=0;c<3;++c)result[c]=center[c];
+        for(unsigned c=0;c<3;++c)result[c]=fade*.28+(1-fade)*center[c];
         return result;
     };
     auto readCenter=[&](WorldRendererD3D11& renderer,unsigned scale,uint32_t target=3201) {
@@ -90,6 +90,12 @@ static void worldGuiFadeContract(ID3D11Device* device,ID3D11DeviceContext* conte
         const auto unchanged=draw(renderer,arbitrary,0,0);
         verify("zero-gain-copy",scale,unchanged,sourcePixel(*arbitrary,3,3));
 
+        auto black=makeImage();
+        for(size_t pixel=0;pixel<black->pixels.size();pixel+=4)
+            black->pixels[pixel]=black->pixels[pixel+1]=black->pixels[pixel+2]=0;
+        verify("black-to-original-gray",scale,draw(renderer,black,7.25f,1),
+               std::array<double,4>{.28,.28,.28,.28});
+
         auto gray=makeImage();
         setPixel(*gray,3,3,{91,91,91,137});
         setPixel(*gray,2,3,{12,12,12,26});setPixel(*gray,4,3,{48,48,48,77});
@@ -116,7 +122,7 @@ static void worldGuiFadeContract(ID3D11Device* device,ID3D11DeviceContext* conte
                 "GUI background RGB adjustment changed the original alpha sum");
         require(std::abs(cyanOriginal[0]-cyanExpected[0])>.05,
                 "GUI fade fixture does not distinguish the source from the original boost");
-        for(const auto& phase:std::array<std::array<float,2>,3>{{{{0,capturedFade}},{{capturedGain,0}},{{capturedGain,1}}}})
+        for(const auto& phase:std::array<std::array<float,2>,4>{{{{0,capturedFade}},{{capturedGain,0}},{{7.25f,0}},{{capturedGain,1}}}})
             verify("fade-phase-source",scale,draw(renderer,cyan,phase[0],phase[1]),
                    sourceMatchedResult(cyanCenter,cyanTaps,phase[0],phase[1]));
 
@@ -131,7 +137,7 @@ static void worldGuiFadeContract(ID3D11Device* device,ID3D11DeviceContext* conte
             maskedClear.color={.2f,.4f,.6f,mask};renderer.clear(maskedClear);
             require(renderer.draw(masked),"Masked GUI background draw rejected");
             std::array<double,4> expected{.2,.4,.6,mask};
-            for(unsigned c=0;c<3;++c)expected[c]=mask*cyanCenter[c]+(1-mask)*expected[c];
+            for(unsigned c=0;c<3;++c)expected[c]=mask*cyanExpected[c]+(1-mask)*expected[c];
             verify("destination-alpha-mask",scale,readCenter(renderer,scale),expected);
         }
 
@@ -144,7 +150,7 @@ static void worldGuiFadeContract(ID3D11Device* device,ID3D11DeviceContext* conte
         otherClear.viewport=otherBlend.viewport;otherClear.flags=1;
         otherClear.color={.2f,.4f,.6f,.35f};renderer.clear(otherClear);
         require(renderer.draw(otherBlend),"Other GUI blend draw rejected");
-        auto otherExpected=cyanCenter;otherExpected[3]=.35;
+        auto otherExpected=cyanExpected;otherExpected[3]=.35;
         verify("other-blend-preserves-alpha",scale,readCenter(renderer,scale),otherExpected);
 
         auto alphaWriting=makeFadePass(cyan,capturedGain,capturedFade);
@@ -153,7 +159,7 @@ static void worldGuiFadeContract(ID3D11Device* device,ID3D11DeviceContext* conte
         otherClear.targets=alphaWriting.targets;renderer.clear(otherClear);
         require(renderer.draw(alphaWriting),"Alpha-writing GUI draw rejected");
         std::array<double,4> alphaExpected{.2,.4,.6,.35};
-        for(unsigned c=0;c<3;++c)alphaExpected[c]=.35*cyanCenter[c]+.65*alphaExpected[c];
+        for(unsigned c=0;c<3;++c)alphaExpected[c]=.35*cyanExpected[c]+.65*alphaExpected[c];
         alphaExpected[3]=.35*cyanOriginal[3]+.65*.35;
         verify("alpha-writing-original-blend",scale,readCenter(renderer,scale),alphaExpected);
 
@@ -167,7 +173,7 @@ static void worldGuiFadeContract(ID3D11Device* device,ID3D11DeviceContext* conte
 
         // Exercise the menu's SRC_ALPHA/ZERO extraction and two ONE/ONE light
         // additions without intervening spatial filters. With a mask of 1,
-        // extraction must retain the source and the additions produce 3x source.
+        // extraction retains the neutral-faded source and additions produce 3x.
         auto extraction=colorGradeDraw(geometry,3205,width,height);
         extraction.material=WorldMaterial::fixed;
         extraction.fragmentName="MRenderXenon_Attrib_TexEnvMode01";
@@ -177,15 +183,16 @@ static void worldGuiFadeContract(ID3D11Device* device,ID3D11DeviceContext* conte
         WorldClear extractClear;extractClear.targets=extraction.targets;
         extractClear.viewport=extraction.viewport;extractClear.flags=1;
         renderer.clear(extractClear);require(renderer.draw(extraction),"GUI light extraction rejected");
-        auto extractionExpected=cyanCenter;extractionExpected[3]=1;
+        auto extractionExpected=cyanExpected;extractionExpected[3]=1;
         verify("source-alpha-light-extraction",scale,readCenter(renderer,scale,3205),extractionExpected);
         const auto extractedLight=colorGradeResolve(renderer,extraction,3206,width,height,26,4);
         const auto extractedPixels=colorGradeRead(renderer,device,context,extractedLight,scale);
         require(extractedPixels.size()==size_t(width*scale)*height*scale*4,"GUI extracted-light extent differs");
         for(unsigned y=0;y<height*scale;++y)for(unsigned x=0;x<width*scale;++x)for(unsigned c=0;c<3;++c) {
             const auto actual=extractedPixels[(size_t(y)*width*scale+x)*4+c];
-            const auto expected=cyan->pixels[(size_t(y/scale)*width+x/scale)*4+c];
-            require(std::abs(int(actual)-int(expected))<=2,"GUI extraction changed the source RGB under a full alpha mask");
+            const double source=cyan->pixels[(size_t(y/scale)*width+x/scale)*4+c]/255.0;
+            const auto expected=uint8_t(std::lround((capturedFade*.28+(1-capturedFade)*source)*255));
+            require(std::abs(int(actual)-int(expected))<=2,"GUI extraction changed the neutral-faded RGB under a full alpha mask");
             require(actual>0,"GUI destination-alpha mask no longer feeds the light filter");
         }
 
@@ -199,7 +206,7 @@ static void worldGuiFadeContract(ID3D11Device* device,ID3D11DeviceContext* conte
         put(additive.attributes.data()+92,0x01100008);
         additive.attributes[144]=2;additive.attributes[145]=2;
         require(renderer.draw(additive) && renderer.draw(additive),"GUI additive light passes rejected");
-        auto amplified=cyanCenter;for(unsigned c=0;c<3;++c)amplified[c]*=3;
+        auto amplified=cyanExpected;for(unsigned c=0;c<3;++c)amplified[c]*=3;
         amplified[3]=3;
         verify("two-additive-light-passes",scale,readCenter(renderer,scale,3207),amplified);
         const auto composedScene=colorGradeResolve(renderer,restored,3208,width,height,26,4);
@@ -233,7 +240,7 @@ static void worldGuiFadeContract(ID3D11Device* device,ID3D11DeviceContext* conte
             return output;
         };
         const std::array<double,4> noBloom{};
-        const auto amplifiedFinal=finalOracle(amplified,cyanCenter),sourceFinal=finalOracle(cyanCenter,noBloom);
+        const auto amplifiedFinal=finalOracle(amplified,cyanExpected),sourceFinal=finalOracle(cyanExpected,noBloom);
         const std::array<uint8_t,3> transitionFinal{finalPixel[0],finalPixel[1],finalPixel[2]};
         for(unsigned c=0;c<3;++c)if(std::abs(int(transitionFinal[c])-int(amplifiedFinal[c]))>2) {
             std::fprintf(stderr,"GUIFadeFinal5[scale=%u channel=%u] actual=%u expected=%u\n",
@@ -243,13 +250,20 @@ static void worldGuiFadeContract(ID3D11Device* device,ID3D11DeviceContext* conte
         require(std::abs(int(amplifiedFinal[1])-int(sourceFinal[1]))>10,
                 "Final5 fixture does not distinguish a boosted transition from the settled background");
 
-        // A separate fixed-texture pass represents the same settled background.
+        // A separate fixed-texture pass independently represents the same
+        // neutral-faded RGB with no extracted or additive lighting. Its RGBA8
+        // quantization remains within the existing two-byte output tolerance.
         // Verify both outputs against their independent tone-map expectations;
         // the lit transition must retain the additive contribution.
+        auto neutralBackdrop=makeImage();neutralBackdrop->pixels=cyan->pixels;
+        for(size_t pixel=0;pixel<neutralBackdrop->pixels.size();pixel+=4)for(unsigned c=0;c<3;++c) {
+            const double source=cyan->pixels[pixel+c]/255.0;
+            neutralBackdrop->pixels[pixel+c]=uint8_t(std::lround((capturedFade*.28+(1-capturedFade)*source)*255));
+        }
         auto background=colorGradeDraw(geometry,3211,width,height);
         background.material=WorldMaterial::fixed;
         background.fragmentName="MRenderXenon_Attrib_TexEnvMode01";
-        background.textures[0]=cyan;background.samplers[0]=colorGradeSampler(false,2);
+        background.textures[0]=neutralBackdrop;background.samplers[0]=colorGradeSampler(false,2);
         WorldClear backgroundClear;backgroundClear.targets=background.targets;
         backgroundClear.viewport=background.viewport;backgroundClear.flags=1;
         renderer.clear(backgroundClear);require(renderer.draw(background),"Settled background draw rejected");
@@ -263,15 +277,16 @@ static void worldGuiFadeContract(ID3D11Device* device,ID3D11DeviceContext* conte
         const auto backgroundRgba=colorGradeRead(renderer,device,context,backgroundOutput,scale);
         require(backgroundRgba.size()==rgba.size(),"Settled background output extent differs");
         for(unsigned y=0;y<height*scale;++y)for(unsigned x=0;x<width*scale;++x) {
-            const auto source=sourcePixel(*cyan,x/scale,y/scale);
-            auto lit=source;for(unsigned c=0;c<3;++c)lit[c]*=3;
-            const auto unlitExpected=finalOracle(source,noBloom),litExpected=finalOracle(lit,source);
+            auto faded=sourcePixel(*cyan,x/scale,y/scale);
+            for(unsigned c=0;c<3;++c)faded[c]=capturedFade*.28+(1-capturedFade)*faded[c];
+            auto lit=faded;for(unsigned c=0;c<3;++c)lit[c]*=3;
+            const auto unlitExpected=finalOracle(faded,noBloom),litExpected=finalOracle(lit,faded);
             const size_t pixel=(size_t(y)*width*scale+x)*4;
             for(unsigned c=0;c<3;++c) {
                 require(std::abs(int(backgroundRgba[pixel+c])-int(unlitExpected[c]))<=2,
-                        "Settled Final5 output differs from the unlit source tone-map oracle");
+                        "Unlit Final5 output differs from the neutral-faded tone-map oracle");
                 require(std::abs(int(rgba[pixel+c])-int(litExpected[c]))<=2,
-                        "Transition Final5 output differs from the additive source tone-map oracle");
+                        "Transition Final5 output differs from the lit neutral-faded tone-map oracle");
             }
         }
         require(int(rgba[(size_t(finalY)*finalWidth+finalX)*4+1])>
@@ -280,6 +295,6 @@ static void worldGuiFadeContract(ID3D11Device* device,ID3D11DeviceContext* conte
         std::printf("GUIFadeFinal5 scale=%u: unlit-oracle RGB=%u,%u,%u; lit RGB=%u,%u,%u.\n",
                     scale,sourceFinal[0],sourceFinal[1],sourceFinal[2],transitionFinal[0],transitionFinal[1],transitionFinal[2]);
 
-        std::printf("GUIFade scale=%u: source RGB, original alpha mask, nonzero extraction, additive light and Final5 tone maps passed.\n",scale);
+        std::printf("GUIFade scale=%u: neutral gray fade, source endpoint, original alpha mask, extraction, additive light and Final5 tone maps passed.\n",scale);
     }
 }

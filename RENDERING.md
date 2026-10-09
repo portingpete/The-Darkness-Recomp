@@ -78,11 +78,12 @@ without cropping or stretching. Restart to change the internal aspect ratio;
 `--width W --height H` selects an explicit aspect and window size. See
 [CONTROLS.md](CONTROLS.md) for launcher and input options.
 
-Tentacle menu transitions reveal the backdrop with its source RGB while retaining
-the original destination-alpha mask and radial/additive lighting. This keeps the
-bright glow without the additional `GUIFadeToWhite` RGB boost. Scaled color-cube
-copies use point sampling to prevent pink contamination while the original color
-lookup keeps its interpolation. Hardware and WARP contracts cover source color,
+Tentacle menus retain the original gray fade, destination-alpha mask and
+radial/additive lighting, including the warm floating glow around the tentacles.
+`GUIFadeToWhite` uses unboosted source RGB as the fade's backdrop while keeping the
+original fade timer and alpha arithmetic. Scaled color-cube copies use point
+sampling to prevent pink contamination while the original color lookup keeps its
+interpolation. Hardware and WARP contracts cover source color, the gray glow,
 the reveal mask and retained light extraction.
 
 Options > Video Settings uses the original CubeMenu and CubeButton classes.
