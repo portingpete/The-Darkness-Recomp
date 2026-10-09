@@ -11,6 +11,7 @@ struct BackgroundInputFixture {
     std::atomic<DWORD> vibrationStatus{ERROR_SUCCESS};
     std::atomic<unsigned> zeroAttempts{0}, successfulStops{0}, motorProbeCount{0};
     std::atomic<unsigned> vibrationCalls{0}, stateCalls{0}, capsCalls{0};
+    std::atomic<DWORD> stateBlockUser{0}, vibrationLastUser{XUSER_MAX_COUNT};
     HANDLE stateEntered = nullptr, stateRelease = nullptr, capsEntered = nullptr, capsRelease = nullptr;
     HANDLE vibrationEntered = nullptr, vibrationRelease = nullptr;
 } backgroundInput;
@@ -20,7 +21,7 @@ DWORD WINAPI backgroundInputState(DWORD user, XINPUT_STATE* state) noexcept {
     *state = {};
     state->Gamepad.wButtons = backgroundInput.buttons[user].load();
     const DWORD status = backgroundInput.status[user].load();
-    if (user == 0 && backgroundInput.blockState.load()) {
+    if (user == backgroundInput.stateBlockUser.load() && backgroundInput.blockState.load()) {
         SetEvent(backgroundInput.stateEntered);
         WaitForSingleObject(backgroundInput.stateRelease, INFINITE);
     }
@@ -38,6 +39,7 @@ DWORD WINAPI backgroundInputCaps(DWORD user, DWORD, XINPUT_CAPABILITIES* caps) n
     return backgroundInput.capsStatus[user].load();
 }
 DWORD WINAPI backgroundInputVibration(DWORD user, XINPUT_VIBRATION* vibration) noexcept {
+    backgroundInput.vibrationLastUser = user;
     const DWORD result = backgroundInput.vibrationStatus.load();
     const bool nonzero = vibration->wLeftMotorSpeed || vibration->wRightMotorSpeed;
     if (nonzero && backgroundInput.blockVibration.load()) {
@@ -72,6 +74,7 @@ static void testBackgroundInputContract() {
     backgroundInput.zeroAttempts = 0; backgroundInput.successfulStops = 0;
     backgroundInput.zeroBeforeProbe = false;
     backgroundInput.stateCalls = 0; backgroundInput.capsCalls = 0;
+    backgroundInput.stateBlockUser = 0; backgroundInput.vibrationLastUser = XUSER_MAX_COUNT;
     for (auto* handle : {&backgroundInput.stateEntered, &backgroundInput.stateRelease,
                         &backgroundInput.capsEntered, &backgroundInput.capsRelease,
                         &backgroundInput.vibrationEntered, &backgroundInput.vibrationRelease})
@@ -185,16 +188,54 @@ static void testBackgroundInputContract() {
         // suppression for every slot. The two contracts need independent
         // preconditions: a new held pad is accepted outside capture, while a
         // pad held through capture must first produce a neutral sample.
+        const auto hotplugBegin = backgroundInput.stateCompletions[1].load();
         backgroundInput.status[1] = ERROR_SUCCESS; backgroundInput.buttons[1] = XINPUT_GAMEPAD_X;
-        check(until([&] { return input->getState(*memory, 1, 0, stateOut) == ERROR_SUCCESS &&
+        check(until([&] { return backgroundInput.stateCompletions[1].load() > hotplugBegin; }),
+              "Late nonzero-slot physical-controller hotplug was not discovered");
+        check(input->getState(*memory, 0, 0, stateOut) == ERROR_SUCCESS && PPC_LOAD_U16(stateOut + 4) == 0,
+              "A late host pad stole the connected guest controller");
+        backgroundInput.status[0] = ERROR_DEVICE_NOT_CONNECTED;
+        check(until([&] { return input->getState(*memory, 0, 0, stateOut) == ERROR_SUCCESS &&
             PPC_LOAD_U16(stateOut + 4) == XINPUT_GAMEPAD_X &&
-            input->getCapabilities(*memory, 1, XINPUT_FLAG_GAMEPAD, capsOut) == ERROR_SUCCESS; }),
-              "Late physical-controller hotplug was not discovered");
+            input->getCapabilities(*memory, 0, XINPUT_FLAG_GAMEPAD, capsOut) == ERROR_SUCCESS &&
+            PPC_LOAD_U16(capsOut + 16) == 0x1234; }),
+              "Selected controller disconnect did not route the discovered nonzero host pad to guest zero");
+        check(input->getState(*memory, 1, 0, stateOut) == ERROR_DEVICE_NOT_CONNECTED &&
+              memory->read32(stateOut + 4) == 0 &&
+              input->getCapabilities(*memory, 1, XINPUT_FLAG_GAMEPAD, capsOut) == ERROR_DEVICE_NOT_CONNECTED &&
+              memory->read32(capsOut) == 0, "Nonzero host hotplug exposed a secondary guest user");
+        // The physical freshness barrier follows the selected host slot, even
+        // though every guest query uses user zero.
+        backgroundInput.stateBlockUser = 1;
+        ResetEvent(backgroundInput.stateEntered); ResetEvent(backgroundInput.stateRelease);
+        backgroundInput.blockState = true;
+        check(WaitForSingleObject(backgroundInput.stateEntered, 2000) == WAIT_OBJECT_0,
+              "Routed nonzero host state probe did not block");
+        input->windowMessage(window, WM_KILLFOCUS, 0, 0);
+        input->windowMessage(window, WM_SETFOCUS, 0, 0);
+        check(input->getState(*memory, 0, 0, stateOut) == ERROR_SUCCESS && PPC_LOAD_U16(stateOut + 4) == 0,
+              "Routed nonzero host replayed a stale snapshot after focus regain");
+        backgroundInput.buttons[1] = XINPUT_GAMEPAD_B;
+        backgroundInput.blockState = false; SetEvent(backgroundInput.stateRelease);
+        check(until([&] { return input->getState(*memory, 0, 0, stateOut) == ERROR_SUCCESS &&
+            PPC_LOAD_U16(stateOut + 4) == XINPUT_GAMEPAD_B; }),
+              "Routed nonzero host suppressed a freshly polled held button");
+        const auto routedMotors = backgroundInput.vibrationCalls.load();
+        check(input->setState(*memory, 0, 0, rumble) == ERROR_SUCCESS &&
+              until([&] { return backgroundInput.vibrationCalls.load() > routedMotors &&
+                  backgroundInput.vibrationLastUser.load() == 1; }),
+              "Guest-zero rumble did not reach the routed nonzero host");
         backgroundInput.status[1] = ERROR_DEVICE_NOT_CONNECTED;
-        check(until([&] { return input->getState(*memory, 1, 0, stateOut) == ERROR_DEVICE_NOT_CONNECTED &&
-            input->getCapabilities(*memory, 1, 0, capsOut) == ERROR_DEVICE_NOT_CONNECTED &&
-            memory->read32(stateOut + 4) == 0 && memory->read32(capsOut) == 0; }),
-              "Controller disconnect retained stale state or capabilities");
+        check(until([&] { return input->getState(*memory, 0, 0, stateOut) == ERROR_SUCCESS &&
+            input->getCapabilities(*memory, 0, 0, capsOut) == ERROR_SUCCESS &&
+            memory->read32(stateOut + 4) == 0 && PPC_LOAD_U16(capsOut + 16) == 0; }),
+              "Routed controller disconnect did not restore neutral keyboard input and capabilities");
+        backgroundInput.nonzeroVibration = false;
+        backgroundInput.status[0] = ERROR_SUCCESS;
+        backgroundInput.stateBlockUser = 0;
+        check(until([&] { return input->getState(*memory, 0, 0, stateOut) == ERROR_SUCCESS &&
+            input->getCapabilities(*memory, 0, 0, capsOut) == ERROR_SUCCESS &&
+            PPC_LOAD_U16(capsOut + 16) == 0x1234; }), "Original host pad did not resume the guest route");
 
         // Complete one old neutral poll during capture, then hold the next
         // neutral poll in flight across capture close. It must not clear the

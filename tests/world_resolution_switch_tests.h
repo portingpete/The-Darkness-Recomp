@@ -229,7 +229,7 @@ static void previewResolutionSwitchContract(ID3D11Device* device,ID3D11DeviceCon
     EnginePreviewD3D11 preview(device,context,chain.Get(),64,36,1);
     const auto saved=graphicsSettings();
     struct Restore {GraphicsSettings value;~Restore(){setGraphicsSettings(value);}} restore{saved};
-    auto neutral=saved;neutral.antialiasing=false;neutral.brightnessPercent=100;
+    auto neutral=saved;neutral.antialiasing=AntialiasingMode::Off;neutral.brightnessPercent=100;
     require(setGraphicsSettings(neutral),"Resolution neutral presentation settings rejected");
     preview.render({resolutionFlatMesh({64,128,192,255})});
     const uint32_t original=preview.readPixel(63,35);

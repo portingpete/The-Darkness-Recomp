@@ -78,7 +78,8 @@ GraphicsSettings loadGraphicsSettings(const std::filesystem::path& path) noexcep
             readUnsigned(path, L"Fullscreen", defaults.fullscreen, 0, 1) != 0,
             readUnsigned(path, L"Bloom", defaults.bloom, 0, 1) != 0,
             readUnsigned(path, L"MotionBlur", defaults.motionBlur, 0, 1) != 0,
-            readUnsigned(path, L"Antialiasing", defaults.antialiasing, 0, 1) != 0,
+            AntialiasingMode(readUnsigned(path, L"Antialiasing", unsigned(defaults.antialiasing),
+                                         0, unsigned(AntialiasingMode::MSAA8x))),
             readUnsigned(path, L"BrightnessPercent", defaults.brightnessPercent, 50, 200),
             validAnisotropyLevels(anisotropy) ? anisotropy : defaults.anisotropyLevels};
 }
@@ -106,7 +107,7 @@ bool saveSettings(const std::filesystem::path& path, float fov, const GraphicsSe
             !writeUnsigned(staging, L"Fullscreen", settings.fullscreen) ||
             !writeUnsigned(staging, L"Bloom", settings.bloom) ||
             !writeUnsigned(staging, L"MotionBlur", settings.motionBlur) ||
-            !writeUnsigned(staging, L"Antialiasing", settings.antialiasing) ||
+            !writeUnsigned(staging, L"Antialiasing", unsigned(settings.antialiasing)) ||
             !writeUnsigned(staging, L"BrightnessPercent", settings.brightnessPercent) ||
             !writeUnsigned(staging, L"AnisotropyLevels", settings.anisotropyLevels) ||
             (language && !saveGameLanguage(staging, *language))) return false;

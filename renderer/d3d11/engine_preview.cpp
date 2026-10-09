@@ -85,7 +85,7 @@ float displayGammaChannel(float value,uint channel) {
     return saturate(float(displayGammaRamp[q*3+channel].x)/(64.0*1023.0));
 }
 float4 displayGammaPixel(Presentation f) : SV_TARGET {
-    // Apply the Xbox LUT to source texels before scaling or optional FXAA.
+    // Apply the Xbox LUT to source texels before scaling or post-process AA.
     float4 color=presentationImage.Load(int3(int2(f.position.xy),0));
     color.rgb=float3(displayGammaChannel(color.r,0),displayGammaChannel(color.g,1),displayGammaChannel(color.b,2));
     color.a=1.0;
@@ -547,8 +547,9 @@ void EnginePreviewD3D11::copyToDisplay() {
     Ptr<ID3D11Texture2D> back; check(swapChain_->GetBuffer(0, IID_PPV_ARGS(&back)), "get display target");
     D3D11_TEXTURE2D_DESC desc{}; back->GetDesc(&desc);
     const auto settings = Native::graphicsSettings();
-    const bool antialiasing = settings.antialiasing;
-    if (!antialiasing && !displayGamma_ && !highPrecisionDisplay_ && settings.brightnessPercent == 100 &&
+    const bool fxaa = settings.antialiasing == Native::AntialiasingMode::FXAA;
+    const bool smaa = settings.antialiasing == Native::AntialiasingMode::SMAA;
+    if (!fxaa && !smaa && !displayGamma_ && !highPrecisionDisplay_ && settings.brightnessPercent == 100 &&
         desc.Width == width_ && desc.Height == height_) {
         context_->CopyResource(back.Get(), target_.Get());
         return;
@@ -556,6 +557,13 @@ void EnginePreviewD3D11::copyToDisplay() {
     if (!presentationTarget_)
         check(device_->CreateRenderTargetView(back.Get(), nullptr, &presentationTarget_), "create presentation target");
     updateCalibratedImage();
+    ID3D11ShaderResourceView* source = displayGamma_?calibratedSource_.Get():presentationSource_.Get();
+    if(smaa) {
+        if(!smaa_)smaa_=std::make_unique<SmaaD3D11>(device_.Get(),context_.Get());
+        // Rebuild at the calibrated source's resolution after F6 changes. Each
+        // copy begins with the owned original, so repaints never compound AA.
+        source=smaa_->filter(source);
+    }
     context_->ClearState(); world_->invalidateBindings();
     const float black[]{0, 0, 0, 1};
     context_->ClearRenderTargetView(presentationTarget_.Get(), black);
@@ -568,12 +576,12 @@ void EnginePreviewD3D11::copyToDisplay() {
     context_->RSSetViewports(1, &viewport);
     context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     context_->VSSetShader(presentationVs_.Get(), nullptr, 0);
-    context_->PSSetShader(antialiasing ? antialiasingPs_.Get() : presentationPs_.Get(), nullptr, 0);
+    context_->PSSetShader(fxaa ? antialiasingPs_.Get() : presentationPs_.Get(), nullptr, 0);
     const float tone[]{0,settings.brightnessPercent/100.0f,0,0};
     updateConstants(context_.Get(),presentationConstants_.Get(),tone,sizeof(tone));
     ID3D11Buffer* constants = presentationConstants_.Get(); context_->PSSetConstantBuffers(1, 1, &constants);
     ID3D11SamplerState* sampler = sampler_.Get(); context_->PSSetSamplers(0, 1, &sampler);
-    ID3D11ShaderResourceView* source = displayGamma_?calibratedSource_.Get():presentationSource_.Get(); context_->PSSetShaderResources(3, 1, &source);
+    context_->PSSetShaderResources(3, 1, &source);
     context_->Draw(3, 0);
     source = nullptr; context_->PSSetShaderResources(3, 1, &source);
 }

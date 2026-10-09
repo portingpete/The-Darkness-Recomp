@@ -161,7 +161,7 @@ static void testScreenFade(PPCContext& ctx) {
     using namespace ScreenFadeTestDetail;
     Fixture fixture;
     auto settings = fixture.oldSettings;
-    settings.antialiasing = false;
+    settings.antialiasing = AntialiasingMode::Off;
     settings.brightnessPercent = 100;
     check(setGraphicsSettings(settings), "Cannot set neutral screen fade test presentation");
     fixture.window = CreateWindowExW(0, L"STATIC", L"Screen fade contract", WS_OVERLAPPEDWINDOW,

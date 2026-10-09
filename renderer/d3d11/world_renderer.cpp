@@ -426,8 +426,9 @@ WorldRendererD3D11::Ptr<ID3D11Texture2D> WorldRendererD3D11::resizedTexture(
     check(device_->CreateTexture2D(&desc,initial.data(),&result),"resized retained texture");
     return result;
 }
-WorldRendererD3D11::Surface WorldRendererD3D11::resizedSurface(const Surface& source,uint32_t scale) {
+WorldRendererD3D11::Surface WorldRendererD3D11::resizedSurface(Surface& source,uint32_t scale) {
     if(!source.texture)return source;
+    synchronizeSurface(source,true);
     if(source.width>D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION/scale ||
        source.height>D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION/scale)
         throw std::invalid_argument("Scaled retained surface exceeds GPU dimensions");
@@ -438,18 +439,101 @@ WorldRendererD3D11::Surface WorldRendererD3D11::resizedSurface(const Surface& so
         check(device_->CreateShaderResourceView(result.texture.Get(),&desc,&result.view),"resized surface read view");
     }
     if(source.color) {
-        D3D11_RENDER_TARGET_VIEW_DESC desc{};source.color->GetDesc(&desc);
-        check(device_->CreateRenderTargetView(result.texture.Get(),&desc,&result.color),"resized surface color view");
+        check(device_->CreateRenderTargetView(result.texture.Get(),nullptr,&result.color),"resized surface color view");
     }
     if(source.depth) {
         D3D11_DEPTH_STENCIL_VIEW_DESC desc{};source.depth->GetDesc(&desc);
+        desc.ViewDimension=D3D11_DSV_DIMENSION_TEXTURE2D;
         check(device_->CreateDepthStencilView(result.texture.Get(),&desc,&result.depth),"resized surface depth view");
+        result.singleDepth=result.depth;
+        D3D11_SHADER_RESOURCE_VIEW_DESC stencil{};stencil.Format=DXGI_FORMAT_X24_TYPELESS_G8_UINT;
+        stencil.ViewDimension=D3D11_SRV_DIMENSION_TEXTURE2D;stencil.Texture2D.MipLevels=1;
+        check(device_->CreateShaderResourceView(result.texture.Get(),&stencil,&result.stencilView),"resized stencil view");
     }
     for(unsigned face=0;face<source.faces.size();++face)if(source.faces[face]) {
         D3D11_RENDER_TARGET_VIEW_DESC desc{};source.faces[face]->GetDesc(&desc);
         check(device_->CreateRenderTargetView(result.texture.Get(),&desc,&result.faces[face]),"resized surface cube face");
     }
+    if(source.multisample)attachMultisample(result,sampleCount_,true);
     return result;
+}
+void WorldRendererD3D11::synchronizeSurface(Surface& source,bool stencil) {
+    if(!source.multisample || (!source.resolveDirty && (!stencil || !source.stencilDirty)))return;
+    if(source.depth) {
+        if(!msaaDepthTransfer_)msaaDepthTransfer_=std::make_unique<MsaaDepthTransferD3D11>(device_.Get(),context_.Get());
+        const bool paused=pauseHistogram();
+        try {
+            msaaDepthTransfer_->copy(source.multisampleDepthView.Get(),source.multisampleStencilView.Get(),true,
+                source.singleDepth.Get(),source.width*scale_,source.height*scale_,stencil);
+        } catch(...) {if(paused)resumeHistogram();throw;}
+        if(paused)resumeHistogram();
+        if(stencil)source.stencilDirty=false;
+    } else {
+        context_->ResolveSubresource(source.texture.Get(),0,source.multisample.Get(),0,DXGI_FORMAT_R16G16B16A16_FLOAT);
+    }
+    source.resolveDirty=false;
+}
+void WorldRendererD3D11::attachMultisample(Surface& surface,unsigned samples,bool retained) {
+    if(samples==1)return;
+    const bool depth=bool(surface.depth);
+    D3D11_TEXTURE2D_DESC desc{};surface.texture->GetDesc(&desc);
+    desc.SampleDesc.Count=samples;desc.SampleDesc.Quality=D3D11_STANDARD_MULTISAMPLE_PATTERN;
+    check(device_->CreateTexture2D(&desc,nullptr,&surface.multisample),"multisample world surface");
+    if(depth) {
+        surface.singleDepth=surface.depth;
+        D3D11_DEPTH_STENCIL_VIEW_DESC dsv{};dsv.Format=DXGI_FORMAT_D24_UNORM_S8_UINT;
+        dsv.ViewDimension=D3D11_DSV_DIMENSION_TEXTURE2DMS;
+        check(device_->CreateDepthStencilView(surface.multisample.Get(),&dsv,&surface.depth),"multisample depth view");
+        D3D11_SHADER_RESOURCE_VIEW_DESC view{};view.ViewDimension=D3D11_SRV_DIMENSION_TEXTURE2DMS;
+        view.Format=DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+        check(device_->CreateShaderResourceView(surface.multisample.Get(),&view,&surface.multisampleDepthView),"multisample depth read view");
+        view.Format=DXGI_FORMAT_X24_TYPELESS_G8_UINT;
+        check(device_->CreateShaderResourceView(surface.multisample.Get(),&view,&surface.multisampleStencilView),"multisample stencil read view");
+        if(retained) {
+            if(!msaaDepthTransfer_)msaaDepthTransfer_=std::make_unique<MsaaDepthTransferD3D11>(device_.Get(),context_.Get());
+            const bool paused=pauseHistogram();
+            try {msaaDepthTransfer_->copy(surface.view.Get(),surface.stencilView.Get(),false,surface.depth.Get(),desc.Width,desc.Height,true);}
+            catch(...) {if(paused)resumeHistogram();throw;}
+            if(paused)resumeHistogram();
+        } else context_->ClearDepthStencilView(surface.depth.Get(),D3D11_CLEAR_DEPTH|D3D11_CLEAR_STENCIL,0,0);
+    } else {
+        check(device_->CreateRenderTargetView(surface.multisample.Get(),nullptr,&surface.color),"multisample color view");
+        if(retained) {
+            if(!msaaDepthTransfer_)msaaDepthTransfer_=std::make_unique<MsaaDepthTransferD3D11>(device_.Get(),context_.Get());
+            const bool paused=pauseHistogram();
+            try {msaaDepthTransfer_->copyColor(surface.view.Get(),surface.color.Get(),desc.Width,desc.Height);}
+            catch(...) {if(paused)resumeHistogram();throw;}
+            if(paused)resumeHistogram();
+        } else {const float zero[4]{};context_->ClearRenderTargetView(surface.color.Get(),zero);}
+    }
+    surface.resolveDirty=surface.stencilDirty=false;
+}
+bool WorldRendererD3D11::setSampleCount(unsigned requested) {
+    if(requested!=1 && requested!=2 && requested!=4 && requested!=8)throw std::invalid_argument("Invalid MSAA sample count");
+    if(requested==requestedSampleCount_)return false;
+    unsigned supported=requested;
+    while(supported>1) {
+        UINT color=0,depth=0;
+        if(SUCCEEDED(device_->CheckMultisampleQualityLevels(DXGI_FORMAT_R16G16B16A16_FLOAT,supported,&color)) &&
+           SUCCEEDED(device_->CheckMultisampleQualityLevels(DXGI_FORMAT_D24_UNORM_S8_UINT,supported,&depth)) && color && depth)break;
+        supported/=2;
+    }
+    if(supported==sampleCount_) {requestedSampleCount_=requested;return false;}
+    requireResizeBoundary();
+    context_->ClearState();invalidateBindings();pixelBuffersBound_=false;
+    decltype(surfaces_) replacement;replacement.reserve(surfaces_.size());
+    for(auto& [key,old]:surfaces_) {
+        synchronizeSurface(old,true);
+        Surface next=old;next.multisample.Reset();next.multisampleDepthView.Reset();next.multisampleStencilView.Reset();
+        if(next.depth)next.depth=next.singleDepth;
+        else check(device_->CreateRenderTargetView(next.texture.Get(),nullptr,&next.color),"single-sample world color view");
+        if(supported>1)attachMultisample(next,supported,true);
+        replacement.emplace(key,std::move(next));
+    }
+    surfaces_.swap(replacement);sampleCount_=supported;requestedSampleCount_=requested;
+    context_->ClearState();invalidateBindings();pixelBuffersBound_=false;
+    std::fprintf(stderr,"[Antialiasing] requestedSamples=%u activeSamples=%u retainedSurfaces=%zu\n",requested,supported,surfaces_.size());
+    return true;
 }
 bool WorldRendererD3D11::setRenderScale(uint32_t scale) {
     Native::StallProfiler::Scope stallRender(Native::StallProfiler::Section::Rendering, "WorldRendererD3D11::setRenderScale");
@@ -461,8 +545,8 @@ bool WorldRendererD3D11::setRenderScale(uint32_t scale) {
     // old maps retain every texture/view if allocation, readback or upload fails.
     decltype(surfaces_) surfaces;decltype(resolved_) resolved;
     surfaces.reserve(surfaces_.size());resolved.reserve(resolved_.size());
-    for(const auto& [key,surface]:surfaces_)surfaces.emplace(key,resizedSurface(surface,scale));
-    for(const auto& [key,surface]:resolved_)resolved.emplace(key,resizedSurface(surface,scale));
+    for(auto& [key,surface]:surfaces_)surfaces.emplace(key,resizedSurface(surface,scale));
+    for(auto& [key,surface]:resolved_)resolved.emplace(key,resizedSurface(surface,scale));
     surfaces_.swap(surfaces);resolved_.swap(resolved);scale_=scale;
     boundColor_=nullptr;boundDepth_=nullptr;boundViews_.fill(nullptr);
     return true;
@@ -536,6 +620,7 @@ WorldRendererD3D11::Surface& WorldRendererD3D11::surface(uint64_t key,uint32_t w
     const auto surfaceStart=std::chrono::steady_clock::now();
     Native::StallProfiler::Scope stallSurface(Native::StallProfiler::Section::Rendering,
                                              "WorldRendererD3D11 surface allocation");
+    synchronizeSurface(s,true);
     const auto old=s;
     width=(std::max)(old.width,width);height=(std::max)(old.height,height);
     if(!width || !height || width>D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION/scale_ || height>D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION/scale_)
@@ -551,6 +636,9 @@ WorldRendererD3D11::Surface& WorldRendererD3D11::surface(uint64_t key,uint32_t w
     if (depth) {
         D3D11_DEPTH_STENCIL_VIEW_DESC dsv{};dsv.ViewDimension=D3D11_DSV_DIMENSION_TEXTURE2D;dsv.Format=DXGI_FORMAT_D24_UNORM_S8_UINT;
         check(device_->CreateDepthStencilView(s.texture.Get(),&dsv,&s.depth),"world depth view");
+        s.singleDepth=s.depth;
+        srv.Format=DXGI_FORMAT_X24_TYPELESS_G8_UINT;
+        check(device_->CreateShaderResourceView(s.texture.Get(),&srv,&s.stencilView),"world stencil view");
         context_->ClearDepthStencilView(s.depth.Get(),D3D11_CLEAR_DEPTH|D3D11_CLEAR_STENCIL,0,0);
     } else {
         check(device_->CreateRenderTargetView(s.texture.Get(),nullptr,&s.color),"world color view");
@@ -576,8 +664,9 @@ WorldRendererD3D11::Surface& WorldRendererD3D11::surface(uint64_t key,uint32_t w
             context_->CopyResource(s.texture.Get(),expanded.Get());
         } else context_->CopySubresourceRegion(s.texture.Get(),0,0,0,0,old.texture.Get(),0,&box);
     }
+    attachMultisample(s,sampleCount_,bool(old.texture));
     noteWorstUpload(millisBetween(surfaceStart,std::chrono::steady_clock::now()),
-        size_t(desc.Width)*desc.Height*(depth?4:8),depth?"surface-depth":"surface-color");
+        size_t(desc.Width)*desc.Height*(depth?4:8)*sampleCount_,depth?"surface-depth":"surface-color");
     return s;
 }
 void WorldRendererD3D11::transfer(ID3D11ShaderResourceView* source,ID3D11RenderTargetView* target,
@@ -731,6 +820,7 @@ bool WorldRendererD3D11::resolve(const Native::WorldResolve& r) {
         uint64_t(r.rectangle[0])+r.destination.width-r.offset[0]}));
     copied[3]=uint32_t((std::min)({uint64_t(resolveRegion[3]),uint64_t(src->second.height),
         uint64_t(r.rectangle[1])+r.destination.height-r.offset[1]}));
+    synchronizeSurface(src->second);
     transfer(src->second.view.Get(),r.destination.faces==6?dest.faces[r.face].Get():dest.color.Get(),copied,r.offset,std::exp2(float(r.exponent)));
     dest.logicalValid=false;
     // Record the completed transfer before any separately recorded resolve
@@ -798,6 +888,7 @@ void WorldRendererD3D11::histogram(const std::shared_ptr<Native::WorldQuery>& qu
         if(activeHistogram_.source)throw std::invalid_argument("Nested histogram query");
         activeHistogram_.source=query;
         activeHistogram_.scale=scale_;
+        activeHistogram_.samples=sampleCount_;
         D3D11_QUERY_DESC desc{D3D11_QUERY_OCCLUSION,0};
         check(device_->CreateQuery(&desc,&activeHistogram_.query),"histogram query");
         context_->Begin(activeHistogram_.query.Get());
@@ -808,7 +899,9 @@ void WorldRendererD3D11::histogram(const std::shared_ptr<Native::WorldQuery>& qu
     }
 }
 bool WorldRendererD3D11::pauseHistogram() {
-    if(!activeHistogram_.source)return false;
+    // An outer clear can already own the pause while another attachment grows.
+    // Only the scope that ends a live segment should resume the measurement.
+    if(!activeHistogram_.source || !activeHistogram_.query)return false;
     context_->End(activeHistogram_.query.Get());
     activeHistogram_.segments.push_back(std::move(activeHistogram_.query));return true;
 }
@@ -840,7 +933,7 @@ void WorldRendererD3D11::pollHistograms() {
         if(!ready || !collect(query.query.Get()))break;
         // Guest exposure consumes logical pixel counts. Normalize after summing
         // all segments so helper-induced query splits cannot lose extra samples.
-        query.source->result->samples.store(samples/(query.scale*query.scale),std::memory_order_release);++completed;
+        query.source->result->samples.store(samples/(query.scale*query.scale*query.samples),std::memory_order_release);++completed;
     }
     pendingHistograms_.erase(pendingHistograms_.begin(),pendingHistograms_.begin()+completed);
 }
@@ -870,7 +963,7 @@ float4 clearPS() : SV_Target {return clearColor;}
     cb.Usage=D3D11_USAGE_DYNAMIC;cb.CPUAccessFlags=D3D11_CPU_ACCESS_WRITE;
     check(device_->CreateBuffer(&cb,nullptr,&clearConstants_),"clear constants");
     D3D11_RASTERIZER_DESC raster{};raster.FillMode=D3D11_FILL_SOLID;raster.CullMode=D3D11_CULL_NONE;
-    raster.DepthClipEnable=TRUE;raster.ScissorEnable=TRUE;
+    raster.DepthClipEnable=TRUE;raster.ScissorEnable=TRUE;raster.MultisampleEnable=TRUE;
     check(device_->CreateRasterizerState(&raster,&clearRaster_),"clear rasterizer");
     for(unsigned mask=0;mask<4;++mask) {
         D3D11_DEPTH_STENCIL_DESC depth{};depth.DepthEnable=(mask&1)!=0;depth.DepthFunc=D3D11_COMPARISON_ALWAYS;
@@ -898,6 +991,7 @@ void WorldRendererD3D11::clear(const Native::WorldClear& c) {
         }
         if(rect.right<=rect.left || rect.bottom<=rect.top) {++emptyClearRegions_;return;}
         ++cleared;
+        target.resolveDirty=target.stencilDirty=bool(target.multisample);
         if(rect.left==0 && rect.top==0 && rect.right==LONG(target.width) && rect.bottom==LONG(target.height)) {
             if(depth)context_->ClearDepthStencilView(target.depth.Get(),((c.flags&16)?D3D11_CLEAR_DEPTH:0)|((c.flags&32)?D3D11_CLEAR_STENCIL:0),std::clamp(c.depth,0.0f,1.0f),UINT8(c.stencil));
             else context_->ClearRenderTargetView(target.color.Get(),c.color.data());
@@ -942,6 +1036,7 @@ std::vector<uint8_t> WorldRendererD3D11::readSurface(const Native::WorldSurfaceT
 std::vector<uint8_t> WorldRendererD3D11::readSurfaceKey(uint64_t key,bool depth) {
     const auto it=surfaces_.find(key);
     if (it==surfaces_.end()) return {};
+    synchronizeSurface(it->second,true);
     const auto& s=it->second;D3D11_TEXTURE2D_DESC desc{};s.texture->GetDesc(&desc);
     desc.Usage=D3D11_USAGE_STAGING;desc.BindFlags=0;desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
     Ptr<ID3D11Texture2D> staging;check(device_->CreateTexture2D(&desc,nullptr,&staging),"world readback texture");
@@ -969,7 +1064,14 @@ void WorldRendererD3D11::endFrame() {
     otherWorldPhase_=0;otherWorldSurface_=otherWorldMask_=0;
 }
 void WorldRendererD3D11::captureTextureReadback(ID3D11Texture2D* texture,unsigned command,unsigned ordinal,unsigned pass,
-    std::string_view stage,std::string_view role,uint64_t key,unsigned slot) noexcept {
+        std::string_view stage,std::string_view role,uint64_t key,unsigned slot) noexcept {
+    // Captures address the completed single-sample representation, even when
+    // the active OM attachment stores multisample geometry coverage.
+    if(texture)for(auto& [surfaceKey,surface]:surfaces_)if(surface.multisample.Get()==texture || surface.texture.Get()==texture) {
+        try {synchronizeSurface(surface,true);texture=surface.texture.Get();}
+        catch(...) {texture=nullptr;}
+        break;
+    }
     D3D11_TEXTURE2D_DESC desc{};if(texture)texture->GetDesc(&desc);
     unsigned pixelBytes=0;std::string_view encoding="raw";
     switch(desc.Format) {
@@ -1216,9 +1318,13 @@ void WorldRendererD3D11::captureShadow(const Native::WorldDraw& draw,unsigned co
         }
     }
     auto color=surfaces_.find(draw.surfaceKey(0));
-    if(draw.targets[0])snapshot(color==surfaces_.end()?nullptr:color->second.texture.Get(),draw.surfaceKey(0),0,"target-alpha",true);
+    ID3D11Texture2D* colorTexture=color==surfaces_.end()?nullptr:color->second.texture.Get();
+    if(colorTexture)try {synchronizeSurface(color->second);} catch(...) {colorTexture=nullptr;}
+    if(draw.targets[0])snapshot(colorTexture,draw.surfaceKey(0),0,"target-alpha",true);
     auto depth=surfaces_.find(draw.surfaceKey(4));
-    if(draw.targets[4])snapshot(depth==surfaces_.end()?nullptr:depth->second.texture.Get(),draw.surfaceKey(4),4,"depth-stencil",false);
+    ID3D11Texture2D* depthTexture=depth==surfaces_.end()?nullptr:depth->second.texture.Get();
+    if(depthTexture)try {synchronizeSurface(depth->second,true);} catch(...) {depthTexture=nullptr;}
+    if(draw.targets[4])snapshot(depthTexture,draw.surfaceKey(4),4,"depth-stencil",false);
 }
 void WorldRendererD3D11::noteWorstUpload(double ms, size_t bytes, const char* kind) {
     if (ms > worstUploadMs_) { worstUploadMs_ = ms; worstUploadBytes_ = bytes; worstUploadKind_ = kind; }
@@ -1844,7 +1950,7 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
     // without0x1000, and face=0 (CCW front) with0x1000. Disabling culling
     // clears both cull and face bits, also defining the stencil front side.
     raster.FrontCounterClockwise=!(flags&0x800) || (flags&0x1000)!=0;
-    raster.DepthClipEnable=TRUE;raster.ScissorEnable=(flags&0x20)!=0;
+    raster.DepthClipEnable=TRUE;raster.ScissorEnable=(flags&0x20)!=0;raster.MultisampleEnable=sampleCount_>1;
     if(!WorldRenderState::depthBias(flags,std::bit_cast<float>(word(a+100)),
         std::bit_cast<float>(word(a+104)),scale_,raster))return rejected(11);
     if(rasterStates_.size()>512)rasterStates_.clear();
@@ -1960,7 +2066,6 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
     if (measure) {
         D3D11_QUERY_DESC desc{D3D11_QUERY_PIPELINE_STATISTICS,0};
         if (!queries_[material]) check(device_->CreateQuery(&desc,&queries_[material]),"world pipeline query");
-        context_->Begin(queries_[material].Get());
     }
     const bool captureProjector=captureFrame_ && draw.fragmentName=="XREngine_ShadowProj";
     unsigned shadowPass=0;
@@ -1973,13 +2078,18 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
     const unsigned reflectionPass=captureReflection?captureReflectionPasses_++:0;
     if(captureReflection)captureReflectionDraw(draw,command,smokeOrdinal,reflectionPass,false);
     if(otherWorldPass)captureOtherWorldDraw(draw,command,smokeOrdinal,otherWorldPass,false);
+    // MSAA diagnostic readbacks may draw depth/stencil transfer helpers. Only
+    // the native geometry belongs in this material's pipeline statistics.
+    if(measure)context_->Begin(queries_[material].Get());
     context_->DrawIndexed(count,g.firstIndex,0);
+    if(measure) {context_->End(queries_[material].Get());queryPending_[material]=true;queryOrdinals_[material]=ordinal;}
+    if(hasColor) {auto& output=surfaces_.at(draw.surfaceKey(0));output.resolveDirty=bool(output.multisample);}
+    if(depth) {auto& output=surfaces_.at(draw.surfaceKey(4));output.resolveDirty=output.stencilDirty=bool(output.multisample);}
     if(otherWorldPass)captureOtherWorldDraw(draw,command,smokeOrdinal,otherWorldPass,true);
     if(captureReflection)captureReflectionDraw(draw,command,smokeOrdinal,reflectionPass,true);
     if(captureProjector && shadowPass<8)captureShadow(draw,command,smokeOrdinal,shadowPass,true,views);
     if(captureFrame_)Native::traceWorldDrawResult(inspection_,command,smokeOrdinal,0,fragmentFlags,captureTextureMask,captureResolvedMask);
     bindingsValid_=true;
-    if (measure) {context_->End(queries_[material].Get());queryPending_[material]=true;queryOrdinals_[material]=ordinal;}
     if (inspectLighting) {
         const auto after=readSurface(draw,0);size_t changed=0,nonfinite=0;
         if (after.size()==beforeLighting.size()) for(size_t i=0;i+8<=after.size();i+=8) {
@@ -2201,6 +2311,7 @@ void WorldRendererD3D11::beginFrame() {
     frameUploadBytes_ = 0;
     transientBuffers_.beginFrame();
     const auto graphics = Native::graphicsSettings();
+    setSampleCount(Native::antialiasingSampleCount(graphics.antialiasing));
     bloom_ = graphics.bloom;
     motionBlur_ = graphics.motionBlur;
     invalidateBindings();

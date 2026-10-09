@@ -68,21 +68,42 @@ int main() {
             check(saveDisplaySettings(path,114,high) && loadGraphicsSettings(path)==high,
                   "high internal resolution did not persist");
         }
-        const GraphicsSettings custom{137, 719, true, false, false, true, true};
+        const GraphicsSettings custom{137, 719, true, false, false, true, AntialiasingMode::FXAA};
         check(saveDisplaySettings(path, 93.125f, custom), "save custom graphics values");
         check(loadGraphicsSettings(path) == custom && loadFieldOfView(path) == 93.125f,
               "complete graphics round trip including bloom, motion blur and antialiasing");
-        auto aaOff = custom; aaOff.antialiasing = false;
+        check(GraphicsSettings{}.antialiasing == AntialiasingMode::Off, "antialiasing must default to Off");
+        for (const auto mode : {AntialiasingMode::Off, AntialiasingMode::FXAA, AntialiasingMode::SMAA,
+                               AntialiasingMode::MSAA2x, AntialiasingMode::MSAA4x, AntialiasingMode::MSAA8x}) {
+            auto selected = custom; selected.antialiasing = mode;
+            check(saveDisplaySettings(path, 93.125f, selected) && loadGraphicsSettings(path) == selected &&
+                  loadFieldOfView(path) == 93.125f, "antialiasing mode did not persist independently");
+            wchar_t savedMode[16]{};
+            GetPrivateProfileStringW(L"Display", L"Antialiasing", L"missing", savedMode, 16, path.c_str());
+            check(std::wstring_view(savedMode) == std::to_wstring(unsigned(mode)),
+                  "antialiasing did not save the stable numeric mode");
+        }
+        auto aaOff = custom; aaOff.antialiasing = AntialiasingMode::Off;
         check(saveDisplaySettings(path, 93.125f, aaOff) && loadGraphicsSettings(path) == aaOff,
               "antialiasing Off did not persist independently");
-        check(saveDisplaySettings(path, 93.125f, custom), "restore FXAA");
+        check(WritePrivateProfileStringW(L"Display", L"Antialiasing", L"1", path.c_str()) &&
+              loadGraphicsSettings(path) == custom, "legacy antialiasing 1 must retain FXAA");
+        check(WritePrivateProfileStringW(L"Display", L"Antialiasing", L"0", path.c_str()) &&
+              loadGraphicsSettings(path) == aaOff, "legacy antialiasing 0 must retain Off");
         check(WritePrivateProfileStringW(L"Display", L"Antialiasing", nullptr, path.c_str()), "remove antialiasing for legacy settings");
         check(loadGraphicsSettings(path) == aaOff, "legacy settings must default antialiasing to Off");
-        for (const auto bad : {L"-1", L"2", L"FXAA", L"42949672960"}) {
+        for (const auto bad : {L"-1", L"6", L"255", L"FXAA", L"1.0", L"42949672960"}) {
             WritePrivateProfileStringW(L"Display", L"Antialiasing", bad, path.c_str());
             check(loadGraphicsSettings(path) == aaOff, "invalid antialiasing did not fall back independently");
         }
         check(saveDisplaySettings(path, 93.125f, custom), "restore FXAA after invalid values");
+        check(setGraphicsSettings(custom), "select valid antialiasing before invalid-mode checks");
+        for (unsigned mode : {6u, 7u, 255u}) {
+            auto invalid = custom; invalid.antialiasing = AntialiasingMode(mode);
+            check(!validGraphicsSettings(invalid) && !setGraphicsSettings(invalid) && graphicsSettings() == custom &&
+                  !saveDisplaySettings(path, 90, invalid) && loadGraphicsSettings(path) == custom &&
+                  loadFieldOfView(path) == 93.125f, "invalid antialiasing mode partially applied settings");
+        }
         check(GraphicsSettings{}.anisotropyLevels == 16, "new settings must default to 16x anisotropic filtering");
         for (unsigned levels : {1u, 2u, 4u, 8u, 16u}) {
             auto selected = custom; selected.anisotropyLevels = levels;

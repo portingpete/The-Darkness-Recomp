@@ -4,6 +4,9 @@ Run `Launch.cmd` for audio, or `Launch.cmd mute` for a muted game.
 Keyboard/mouse play captures the cursor as soon as Continue or a confirmed New
 Game starts loading. Camera movement begins when the gameplay client is ready;
 mouse movement during loading is discarded. Escape and Alt-Tab release capture.
+The first controller detected by the game uses the same local profile as keyboard and mouse,
+regardless of its Windows controller slot. It stays selected until disconnected;
+start the game with only your preferred controller connected to choose it.
 Run `LaunchWithSettings.cmd` to choose video options and language before the game
 opens, then play with audio. It reads and saves `DarkRecomp.settings.ini`, so
 the pre-game launcher and in-game Video Settings share your choices.
@@ -74,6 +77,9 @@ Open **Options > Video Settings** for the game's native graphics rows:
 - **Brightness:** 50% to 200%, with 100% neutral.
 - **Gamma:** the original 12-step calibration control, with the middle position
   as default. Use Left/Right to adjust and choose Yes when leaving Options to save.
+- **Color correction profile:** the original seven presets, from **Profile 0 (None)**
+  through **Profile 6**. Use Left/Right to change and choose Yes when leaving
+  Options to save.
 - **Field of view:** Original or **60�120 horizontal degrees at 16:9**;
   ultrawide displays show more at the sides.
 - **Bloom:** on by default; toggle the final-composite glow.
@@ -82,7 +88,8 @@ Open **Options > Video Settings** for the game's native graphics rows:
 - **Resolution:** 360p, 480p, 720p, 1080p, 1440p or 2160p; requires a restart.
 - **Display:** windowed or borderless fullscreen.
 - **Motion blur:** Off (default) or On.
-- **Antialiasing:** Off (default) or FXAA; smooths edges immediately and saves automatically.
+- **Antialiasing:** Off (default), FXAA, SMAA, MSAA 2x, MSAA 4x, or MSAA 8x.
+  Applies immediately and saves automatically.
 - **Language:** System, English, German, French, Spanish, or Italian; requires a restart.
 - **Texture filtering:** Original, 2x, 4x, 8x, or **16x anisotropic (default)**.
   Applies immediately to world textures while preserving the original UI and effects sampling.

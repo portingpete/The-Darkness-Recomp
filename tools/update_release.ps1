@@ -311,7 +311,11 @@ function Invoke-DarkRecompUpdate([string]$Root, [switch]$CheckOnly, [switch]$Acc
             return 10
         }
         $release = Select-NewestRelease $releases $current.version
-        if (!$release) { Write-Host "Installed release $($current.version) is current."; return 0 }
+        if (!$release) {
+            Write-Host "No newer published release is available. Installed: $($current.version)."
+            Write-Host 'Source-code fixes become available here after a new release is published.'
+            return 0
+        }
         Write-Host "Update available: $($current.version) -> $($release.tag_name)"
         if ($CheckOnly -or ($NonInteractive -and !$AcceptUpdate)) { return 2 }
         if (!$AcceptUpdate) {

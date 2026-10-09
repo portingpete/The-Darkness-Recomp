@@ -116,7 +116,7 @@ static void retainedOutput() {
         ~RestoreSettings() { setGraphicsSettings(settings); }
     } restore{saved};
     auto selected = saved;
-    selected.antialiasing = false;
+    selected.antialiasing = AntialiasingMode::Off;
     selected.brightnessPercent = 100;
     require(setGraphicsSettings(selected), "Cannot select neutral display settings");
     NativeDisplayReuse reuse;
@@ -216,10 +216,11 @@ static void retainedOutput() {
     const auto sharp = readOutput(display);
     const auto diagonalSource = renderer.readPixel(20, 20);
     reuse.presented(S_OK);
-    selected.antialiasing = true;
-    require(setGraphicsSettings(selected), "Cannot select quiescent FXAA");
+    for(auto aaMode:{AntialiasingMode::FXAA,AntialiasingMode::SMAA}) {
+    selected.antialiasing = aaMode;
+    require(setGraphicsSettings(selected), "Cannot select quiescent AA");
     reuse.invalidate();
-    require(copyPending(reuse, renderer, copies), "FXAA change did not refresh the quiescent image");
+    require(copyPending(reuse, renderer, copies), "AA change did not refresh the quiescent image");
     const auto filtered = readOutput(display);
     unsigned changed = 0, intermediate = 0;
     for (size_t i = 0; i < filtered.size(); ++i) {
@@ -227,20 +228,21 @@ static void retainedOutput() {
         const auto value = filtered[i] & 255;
         intermediate += value > 0 && value < 255;
     }
-    require(changed > 12 && intermediate > 12, "Quiescent FXAA did not smooth retained diagonal edges");
-    require(renderer.readPixel(20, 20) == diagonalSource, "FXAA refresh mutated the owned image");
+    require(changed > 12 && intermediate > 12, "Quiescent AA did not smooth retained diagonal edges");
+    require(renderer.readPixel(20, 20) == diagonalSource, "AA refresh mutated the owned image");
     reuse.presented(S_OK); reuse.invalidate();
     require(copyPending(reuse, renderer, copies) && readOutput(display) == filtered,
-            "Repainting retained FXAA output accumulated blur");
+            "Repainting retained AA output accumulated blur");
     reuse.presented(S_OK);
-    selected.antialiasing = false;
-    require(setGraphicsSettings(selected), "Cannot disable quiescent FXAA");
+    selected.antialiasing = AntialiasingMode::Off;
+    require(setGraphicsSettings(selected), "Cannot disable quiescent AA");
     reuse.invalidate();
     require(copyPending(reuse, renderer, copies) && readOutput(display) == sharp,
-            "Disabling FXAA did not restore every retained source pixel");
+            "Disabling AA did not restore every retained source pixel");
+    }
     require(display.GetDevice()->GetDeviceRemovedReason() == S_OK, "Display reuse removed the graphics device");
     std::printf("DisplayReuseContract GPU copies=%u realAccepted=%u realOccluded=%u realOther=%u; "
-                "128 quiescent loops, repaint/events, resize, partial frames, brightness and FXAA passed.\n",
+                "128 quiescent loops, repaint/events, resize, partial frames, brightness and AA passed.\n",
                 copies, accepted, occluded, other);
     std::puts("Hidden-window GPU checks read copied pixels before flip-discard Present. S_OK skip "
               "semantics are also modeled explicitly; visible DWM retention and monitor scanout are not measured.");

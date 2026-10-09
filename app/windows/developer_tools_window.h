@@ -25,6 +25,7 @@ public:
     bool handleTestCommand(std::string_view command);
 
 private:
+    friend struct DeveloperToolsWindowTestFixture;
     static LRESULT CALLBACK windowProc(HWND, UINT, WPARAM, LPARAM);
     LRESULT message(UINT, WPARAM, LPARAM);
     bool open();
@@ -49,5 +50,6 @@ private:
     std::function<void(bool)> setResolutionShortcut_;
     bool resolutionShortcutEnabled_ = false;
     bool inputGate_ = false;
+    bool speedDropDownOpen_ = false;
     std::wstring displayedStatus_;
 };

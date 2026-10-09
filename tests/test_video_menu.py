@@ -265,8 +265,62 @@ class VideoMenu(unittest.TestCase):
             texts = [after.decode(c)[1] for n in page.children for c in n.children
                      if after.decode(c)[0] == "TEXT"]
             self.assertIn("sc, §LMENU_GAMMA", texts)
-            self.assertIn("sc, GAMMA: ORIGINAL GAME CALIBRATION", texts)
             self.assertNotIn("sc, Gamma: lower is darker; 1.00 is neutral", texts)
+
+    def test_original_color_profile_controls_are_preserved(self):
+        for (before, _), (after, _) in zip(registries(self.source), registries(self.output)):
+            source, = [n for n in before.roots if before.decode(n) == ("WINDOW", "options_video")]
+            page, = [n for n in after.roots if after.decode(n) == ("WINDOW", "options_video")]
+            profiles = dict(after.decode(c) for c in page.children)["NUMBEROFPROFILES"]
+            self.assertEqual(profiles[0], 5)
+            self.assertEqual(struct.unpack(after.endian + "I", profiles[1])[0], 7)
+
+            def profile_nodes(registry, parent, group):
+                return [n for n in parent.children if registry.decode(n)[0] == "WINDOW"
+                        and dict(registry.decode(c) for c in n.children).get("GROUP") == group]
+
+            original_controls = profile_nodes(before, source, "cableprofile")
+            controls = profile_nodes(after, page, "colorprofile")
+            self.assertEqual(len(controls), 2)
+            self.assertEqual([dict(after.decode(c) for c in n.children)["CLASSNAME"] for n in controls],
+                             ["CubeOptionButton", "CubeText"])
+            for old, new in zip(original_controls, controls):
+                fields = [after.decode(c) for c in new.children]
+                props = dict(fields)
+                allowed_changes = {"RGN", "GROUP"}
+                self.assertEqual(props["GROUP"], "colorprofile")
+                if props["CLASSNAME"] == "CubeOptionButton":
+                    self.assertEqual(props["STYLE"], "HIDDENFOCUS")
+                    self.assertNotIn("TEXT", props)
+                    order = [name for name, _ in fields]
+                    self.assertEqual(order.count("STYLE"), 1)
+                    # Geometry loading uses a name-hash lookup, unlike the
+                    # sequential registry-property parser. STYLE must remain
+                    # reachable in the original sorted property hash list.
+                    hashes = list(struct.unpack("<" + "H" * len(fields), new.hashes[:len(fields) * 2]))
+                    self.assertEqual(hashes, sorted(hashes))
+                    allowed_changes.add("STYLE")
+                self.assertEqual([field for field in fields if field[0] not in allowed_changes],
+                                 [before.decode(c) for c in old.children if before.decode(c)[0] not in ("RGN", "GROUP")])
+                self.assertEqual(props["RGN"], "1,7,18,1")
+                self.assertNotIn("SCRIPT_PRESSED", props)
+            button, selected = [dict(after.decode(c) for c in n.children) for n in controls]
+            self.assertEqual(button["OPTION"], "OPTG\\VIDEO_CABLEPROFILE")
+            self.assertEqual(button["OPTIONLIST"], "OPTG\\VIDEO_CABLEPROFILELIST")
+            self.assertEqual(selected["TEXT"], "sc, §ROPTG\\VIDEO_CABLEPROFILESELECTED")
+            self.assertEqual(selected["ALWAYSPAINT"], "true")
+            self.assertEqual(selected["RGN"], button["RGN"], "selected profile paints inside its button")
+
+            def profile_label(registry, parent):
+                label, = [n for n in parent.children if registry.decode(n)[0] == "WINDOW"
+                          and dict(registry.decode(c) for c in n.children).get("TEXT") ==
+                          "sc, §LMENU_VIDEO_CABLEPROFILE"]
+                return label
+
+            old_label, label = profile_label(before, source), profile_label(after, page)
+            self.assertEqual([after.decode(c) for c in label.children if after.decode(c)[0] != "RGN"],
+                             [before.decode(c) for c in old_label.children if before.decode(c)[0] != "RGN"])
+            self.assertEqual(dict(after.decode(c) for c in label.children)["RGN"], "1,6,18,1")
 
     def test_language_selection_is_visible_with_restart_help(self):
         for registry, _ in registries(self.output):
@@ -275,8 +329,8 @@ class VideoMenu(unittest.TestCase):
                         for window in page.children if registry.decode(window)[0] == "WINDOW"]
             label, = [c for c in controls if c.get("TEXT") == "sc, LANGUAGE"]
             button, = [c for c in controls if c.get("SCRIPT_PRESSED") == "darkrecomp.language"]
-            self.assertEqual(label["RGN"], "1,14,10,1")
-            self.assertEqual(button["RGN"], "11,14,8,1")
+            self.assertEqual(label["RGN"], "1,16,10,1")
+            self.assertEqual(button["RGN"], "11,16,8,1")
             self.assertEqual(button["TEXT"], "sc, <    SYSTEM    >")
             self.assertEqual(button["CLASSNAME"], "CubeButton")
             self.assertEqual(button["ALWAYSPAINT"], "1")
@@ -299,7 +353,7 @@ class VideoMenu(unittest.TestCase):
                 self.assertEqual(height, 1)
                 if "TEXT" in props:
                     self.assertTrue(props["TEXT"].startswith("sc, "))
-                    # The original Gamma label is a localization reference.
+                    # Original option labels and selected values use localization/registry references.
                     if not props["TEXT"].startswith("sc, §"):
                         self.assertLessEqual(len(props["TEXT"][4:]), width * 2)
                 if props["CLASSNAME"] == "CubeButton":
@@ -310,15 +364,17 @@ class VideoMenu(unittest.TestCase):
                     self.assertEqual(len(props["TEXT"][4:]), width * 2,
                                      "initial value must reserve the same glyph width as live values")
                     self.assertTrue(props["TEXT"].startswith("sc, < ") and props["TEXT"].endswith(" >"))
-                # The original meter paints inside its option button's region.
-                if props["CLASSNAME"] != "CubeOptionMeter":
+                # Retail option values paint inside their option button's region.
+                overlay = props["CLASSNAME"] == "CubeOptionMeter" or (
+                    props["CLASSNAME"] == "CubeText" and props.get("GROUP") == "colorprofile")
+                if not overlay:
                     rows.setdefault(y, []).append((x, x + width))
             for y, intervals in rows.items():
                 intervals.sort()
                 for left, right in zip(intervals, intervals[1:]):
                     self.assertLessEqual(left[1], right[0], f"overlapping columns on row {y}")
-            for y in range(4, 5 + len(SETTINGS)):
-                self.assertEqual(rows[y], [(1, 11), (11, 19)])
+            for y in range(4, 7 + len(SETTINGS)):
+                self.assertEqual(rows[y], [(1, 19)] if y in (6, 7) else [(1, 11), (11, 19)])
 
     def test_chunk_bounds_and_original_hash_algorithm(self):
         for registry, _ in registries(self.output):
@@ -371,6 +427,12 @@ class VideoMenu(unittest.TestCase):
         scripts = [registry.decode(prop)[1] for child in page.children for prop in child.children
                    if registry.decode(prop)[0] == "SCRIPT_PRESSED"]
         self.assertEqual(scripts, ["darkrecomp." + key for key in SETTINGS])
+        profiles = [dict(registry.decode(prop) for prop in child.children)
+                    for child in page.children if registry.decode(child)[0] == "WINDOW"
+                    and dict(registry.decode(prop) for prop in child.children).get("GROUP") == "colorprofile"]
+        self.assertEqual([p["CLASSNAME"] for p in profiles], ["CubeOptionButton", "CubeText"])
+        self.assertEqual(profiles[0]["OPTION"], "OPTG\\VIDEO_CABLEPROFILE")
+        self.assertEqual(profiles[1]["TEXT"], "sc, §ROPTG\\VIDEO_CABLEPROFILESELECTED")
 
 
 if __name__ == "__main__":

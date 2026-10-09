@@ -48,6 +48,8 @@ struct MenuCursorSnapshot {
 
 // Buttons, keyboard movement and physical controllers use the XAM ABI.
 // Relative mouse look is consumed separately at the gameplay look boundary.
+// The single local profile owns guest user 0. Bind the first connected host
+// controller to that user until it disconnects, regardless of its Windows slot.
 // No guest input structures are cast to Windows structs: every multi-byte
 // field is serialized big endian.
 class NativeInput {
@@ -97,7 +99,6 @@ private:
         XINPUT_GAMEPAD previous{};
         uint32_t packet = 0;
         bool connected = false;
-        bool rumbling = false;
     };
     void clearKeysLocked();
     void suppressMenuActivationKeysLocked();
@@ -111,6 +112,7 @@ private:
     void controllerWorker();
     void stopControllerWorker();
     DWORD physicalState(uint32_t user, XINPUT_STATE& state, uint64_t& generation);
+    DWORD primaryStateLocked(XINPUT_STATE& state, uint64_t& generation, uint32_t& hostUser);
     DWORD physicalCapabilities(uint32_t user, uint32_t flags, XINPUT_CAPABILITIES& caps);
     DWORD physicalVibration(uint32_t user, XINPUT_VIBRATION vibration);
     ControllerApi api_;
@@ -156,6 +158,8 @@ private:
     bool haveMenuPos_ = false;
     uint64_t menuMovement_ = 0, menuPresses_ = 0, menuEpoch_ = 0;
     std::array<Slot, XUSER_MAX_COUNT> slots_{};
+    int primaryController_ = -1;
+    std::array<bool, XUSER_MAX_COUNT> hostRumbling_{};
     InputCounters counters_{};
     std::atomic<PromptInputSource> promptSource_{PromptInputSource::KeyboardMouse};
     std::array<XINPUT_GAMEPAD, XUSER_MAX_COUNT> lastPhysical_{};
