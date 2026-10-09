@@ -43,18 +43,23 @@ resolved-texture sampling and exposure histogram normalization.
 new edge coverage inside logical pixels and retains it through resolve/present.
 Startup captures at 3440x1440 and 3840x2160 also exercise the original game.
 
-Shadow projectors retain the original Xenon fractional comparison filter: sixteen
-point depth comparisons receive separable outer texel weights and normalize by
-nine. Logical atlas coordinates keep the same filter footprint at each native
-scale. Depths are compared before their results are blended, preserving smooth
-shadow transitions, reversed depth, texture addressing and border depths. GPU
-contracts sweep fractional vertical, horizontal, diagonal and corner edges at
-scales one, two and three on hardware and WARP.
+Shadow projectors retain the original Xenon fractional comparison filter and its
+three-texel box footprint. At native scales two and three, resolved shadow atlases
+contribute every physical depth texel covered by that box, with fractional weights
+at its edges. Sampling only the logical texel centers discarded additional caster
+coverage and caused moving shadows to shimmer despite higher-resolution maps.
+Unscaled atlases and CPU textures retain the original sixteen comparisons and
+normalization by nine. Depths are compared before their results are blended,
+preserving shadow softness, reversed depth, texture addressing and border depths.
+The original caster bias is retained. GPU contracts sweep fractional vertical,
+horizontal, diagonal and corner edges at scales one, two and three on hardware
+and WARP, including rasterized caster coverage inside logical texels and switches
+between resolved atlases and CPU textures.
 
 A 2560x1440 in-game Jackie monologue capture exercises this projector. The
-pre-fix shader produced coverage quantized to 1/16; the corrected shader produces
-fractional coverage. The pre-fix shader fails the new PCF regression, while the
-corrected shader passes the renderer, shader and bloom contracts.
+earlier fractional-filter repair removed coverage quantization to 1/16. Native
+atlas integration also uses the distinct caster depths and partial coverage that
+the logical-center filter skipped.
 
 The original selected display mode retains its logical resolution identifiers
 while its allocation extents change before buffer creation. The engine then

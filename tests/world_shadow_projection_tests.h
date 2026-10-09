@@ -1,5 +1,6 @@
 // The shipped Xenon shadow projector reads both the scene depth and a resolved
-// depth atlas. Its PCF footprint is four logical atlas texels at every scale.
+// depth atlas. Its comparison box spans three logical texels at every scale;
+// resolved atlases contribute every covered native texel to that box.
 static void shadowProjectionPass(WorldRendererD3D11& renderer,const WorldDraw& seed,unsigned scale) {
     WorldClear shadow;shadow.targets[4]=3101;shadow.viewport={0,0,64,64};shadow.flags=48;
     WorldResolve shadowCopy;shadowCopy.targets=shadow.targets;shadowCopy.flags=4;
@@ -103,24 +104,34 @@ static void shadowProjectionPass(WorldRendererD3D11& renderer,const WorldDraw& s
         }
         require(renderer.resolve(shadowCopy),"Subtexel shadow atlas resolve rejected");
     };
-    auto oracle=[&](double px,double py,uint8_t address,bool border) {
-        const int ix=int(std::floor(px)),iy=int(std::floor(py));
-        const double fx=px-ix,fy=py-iy;
-        const double wx[]{1-fx,1,1,fx},wy[]{1-fy,1,1,fy};
+    // Integrate the area of native unit texel squares intersecting the original
+    // box. This oracle does not reproduce the shader's endpoint-weight loop.
+    auto boxOracle=[&](double px,double py,uint8_t address,bool border,const auto& texel) {
+        const double left=(px-1)*scale,top=(py-1)*scale;
+        const double right=left+3*scale,bottom=top+3*scale;
+        const int side=int(64*scale);
         double coverage=0;
-        for(int y=0;y<4;++y)for(int x=0;x<4;++x) {
-            int column=ix+x-1,row=iy+y-1;
-            const bool outside=column<0 || column>=64 || row<0 || row>=64;
-            double sample=0;
-            if(address==6 && outside)sample=border?1:0;
-            else {
-                if(address==0) {column=(column%64+64)%64;row=(row%64+64)%64;}
-                else {column=(std::clamp)(column,0,63);row=(std::clamp)(row,0,63);}
-                sample=mask[size_t(row)*64+column];
+        for(int y=int(std::floor(top));y<int(std::ceil(bottom));++y)
+            for(int x=int(std::floor(left));x<int(std::ceil(right));++x) {
+                const double area=((std::min)(right,double(x+1))-(std::max)(left,double(x)))*
+                                  ((std::min)(bottom,double(y+1))-(std::max)(top,double(y)));
+                int column=x,row=y;
+                const bool outside=column<0 || column>=side || row<0 || row>=side;
+                double sample=0;
+                if(address==6 && outside)sample=border?1:0;
+                else {
+                    if(address==0) {column=(column%side+side)%side;row=(row%side+side)%side;}
+                    else {column=(std::clamp)(column,0,side-1);row=(std::clamp)(row,0,side-1);}
+                    sample=texel(column,row);
+                }
+                coverage+=area*sample;
             }
-            coverage+=wx[x]*wy[y]*sample;
-        }
-        return coverage/9;
+        return coverage/(9*scale*scale);
+    };
+    auto oracle=[&](double px,double py,uint8_t address,bool border) {
+        return boxOracle(px,py,address,border,[&](int x,int y) {
+            return mask[size_t(y/scale)*64+unsigned(x)/scale];
+        });
     };
     unsigned phaseChecks=0,addressChecks=0;
     auto checkLookup=[&](double px,double py,uint8_t address,bool border,bool linear,unsigned pattern) {
@@ -161,6 +172,77 @@ static void shadowProjectionPass(WorldRendererD3D11& renderer,const WorldDraw& s
         checkLookup(position[0],position[1],address.mode,address.border,linear,3);++addressChecks;
     }
 
+    // Render a diagonal caster instead of clearing logical rectangles. At 2x/3x
+    // its edge has distinct depths inside logical cells; one logical-center
+    // lookup discards that coverage and jumps as the projected phase moves.
+    auto geometry=std::make_shared<StoredGeometry>();
+    geometry->vertexCount=3;geometry->stride=16;geometry->formats[0]=4;
+    geometry->vertices.resize(48);geometry->indices={0,1,2};
+    constexpr float corners[3][2]{{25.1875f,26.0625f},{39.5625f,36.4375f},{36.125f,40.0625f}};
+    for(unsigned i=0;i<3;++i) {
+        const EngineVector position{corners[i][0]/32-1,1-corners[i][1]/32,.75f,1};
+        for(unsigned lane=0;lane<4;++lane)
+            put(geometry->vertices.data()+i*16+lane*4,std::bit_cast<uint32_t>(position[lane]));
+    }
+    auto casterDraw=draw;casterDraw.material=WorldMaterial::depth;casterDraw.fragmentName.clear();
+    casterDraw.fragmentFlags=0;casterDraw.targets={0,0,0,0,3101};casterDraw.depthRange={0,1,0,0};
+    casterDraw.geometry.vertices=casterDraw.geometry.indices=geometry;
+    casterDraw.geometry.firstIndex=0;casterDraw.geometry.indexCount=3;
+    casterDraw.constants.vectors[7]={};
+    for(unsigned row=0;row<4;++row) {
+        casterDraw.constants.vectors[row]={};casterDraw.constants.vectors[row][row]=1;
+    }
+    casterDraw.attributes.fill(0);put(casterDraw.attributes.data()+92,6);casterDraw.attributes[96]=8;
+    shadow.depth=.25f;renderer.clear(shadow);
+    require(renderer.draw(casterDraw),"Native diagonal shadow caster rejected");
+    const auto nativeDepth=renderer.readSurface(3101,true);
+    const unsigned nativeSide=64*scale;
+    require(nativeDepth.size()==size_t(nativeSide)*nativeSide*4,"Native diagonal shadow extent differs");
+    auto nativeTexel=[&](int x,int y) {
+        uint32_t packed=0;std::memcpy(&packed,nativeDepth.data()+(size_t(y)*nativeSide+unsigned(x))*4,4);
+        return (packed&0xFFFFFF)>=0x800000?1.0:0.0;
+    };
+    unsigned partialCells=0;
+    for(unsigned y=0;y<64;++y)for(unsigned x=0;x<64;++x) {
+        unsigned occupied=0;
+        for(unsigned yy=0;yy<scale;++yy)for(unsigned xx=0;xx<scale;++xx)
+            occupied+=nativeTexel(int(x*scale+xx),int(y*scale+yy))!=0;
+        partialCells+=occupied>0 && occupied<scale*scale;
+    }
+    require(scale==1 || partialCells>0,"Diagonal caster failed to exercise coverage inside logical cells");
+    require(renderer.resolve(shadowCopy),"Native diagonal shadow resolve rejected");
+    draw.fragmentConstants[5][3]=.5f;
+    auto& nativeSampler=draw.samplers[0];nativeSampler.address.fill(2);nativeSampler.border=0;
+    unsigned nativeChecks=0,sparseDifferences=0;
+    auto checkNative=[&](double px,double py) {
+        draw.fragmentConstants[3][3]=float((px+.5)/64-.5);
+        draw.fragmentConstants[4][3]=float(.5-(py+.5)/64);
+        const double expected=boxOracle(px,py,2,false,nativeTexel);
+        // Independent legacy sparse result makes the fixture prove its value:
+        // an implementation that merely retains logical anchors must fail it.
+        const int ix=int(std::floor(px)),iy=int(std::floor(py));
+        const double wx[]{1-(px-ix),1,1,px-ix},wy[]{1-(py-iy),1,1,py-iy};
+        double sparse=0;
+        for(int y=0;y<4;++y)for(int x=0;x<4;++x) {
+            const int column=int((ix+x-1+.5)*scale),row=int((iy+y-1+.5)*scale);
+            sparse+=nativeTexel(column,row)*wx[x]*wy[y]/9;
+        }
+        sparseDifferences+=std::abs(sparse-expected)>.01;
+        try {
+            checkProjection(expected,"Shadow projector skipped native diagonal caster coverage");
+        } catch(...) {
+            std::fprintf(stderr,"ShadowNative%u logical=%g,%g expected=%g legacySparse=%g partialCells=%u\n",
+                         scale,px,py,expected,sparse,partialCells);
+            throw;
+        }
+        ++nativeChecks;
+    };
+    for(bool linear:{false,true})for(double fy:phases)for(double fx:phases) {
+        nativeSampler.minLinear=nativeSampler.magLinear=nativeSampler.mipLinear=linear;
+        checkNative(31+fx,31+fy);
+    }
+    require(scale==1 || sparseDifferences>0,"Native shadow regression cannot distinguish sparse logical filtering");
+
     // Repeated logical depth blocks cannot distinguish point from linear reads
     // at the anchored centers. This atlas instead has two physical texels per
     // logical texel: every tap is between four checker cells. Linear depth reads
@@ -187,6 +269,12 @@ static void shadowProjectionPass(WorldRendererD3D11& renderer,const WorldDraw& s
             checkProjection(expected,"Shadow projector filtered raw depths before comparison");
         }
     }
+    // Rebind the resolved atlas after CPU fallback. Cached constants must return
+    // to native coverage; the CPU checker above also catches stale native scale.
+    draw.textures[0].reset();draw.textureObjects[0]=shadowCopy.destination;
+    draw.fragmentConstants[5][3]=.5f;
+    nativeSampler.minLinear=nativeSampler.magLinear=nativeSampler.mipLinear=false;
+    checkNative(31.125,31.875);
     // Invalid logical pitches must reject before touching the rendered target,
     // including when a valid projector and its bindings are already cached.
     const auto unchanged=renderer.readSurface(3103,false);
@@ -198,6 +286,6 @@ static void shadowProjectionPass(WorldRendererD3D11& renderer,const WorldDraw& s
         require(renderer.draw(draw),"Valid shadow projector did not recover after invalid pitch");
         require(renderer.readSurface(3103,false)==unchanged,"Invalid shadow pitch changed subsequent cached rendering");
     }
-    std::printf("ShadowProjection%u: depth polarity, equality, isolated caster, %u subtexel edge/corner, %u address, raw-depth filtering and invalid-pitch checks passed.\n",
-                scale,phaseChecks,addressChecks);
+    std::printf("ShadowProjection%u: depth polarity, equality, isolated caster, %u subtexel edge/corner, %u address, %u native diagonal phases, raw-depth filtering, binding reset and invalid-pitch checks passed.\n",
+                scale,phaseChecks,addressChecks,nativeChecks);
 }

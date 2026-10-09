@@ -161,7 +161,7 @@ class WorldRendererD3D11 {
     void captureOtherWorldDraw(const Native::WorldDraw&,unsigned command,unsigned ordinal,unsigned pass,
         bool after,bool bypassed=false) noexcept;
     void smokeEvidence(const Native::WorldDraw&,uint32_t,unsigned);
-    Ptr<ID3D11Buffer> fragmentConstants_,textureScales_,colorLookupConstants_,transferConstants_,viewportConstants_,bloomConstants_;
+    Ptr<ID3D11Buffer> fragmentConstants_,textureScales_,colorLookupConstants_,transferConstants_,viewportConstants_,bloomConstants_,shadowConstants_;
     // Only raster variants with active original user planes read this buffer.
     // Ordinary draws retain their existing viewport upload and output layout.
     struct ClipConstants {
@@ -177,6 +177,7 @@ class WorldRendererD3D11 {
     std::array<uint8_t,16> uploadedAlpha_{};
     std::array<uint8_t,16> uploadedColorLookup_{};
     std::array<uint8_t,16> uploadedBloom_{};
+    std::array<uint8_t,16> uploadedShadow_{};
     bool viewportUploaded_=false,pixelConstantsUploaded_=false;
     bool bindingsValid_=false;
     bool pixelBuffersBound_=false;
