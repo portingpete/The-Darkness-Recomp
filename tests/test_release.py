@@ -52,6 +52,9 @@ class ReleaseTests(unittest.TestCase):
         (self.root / 'tools/add_steam_shortcut.py').write_bytes((ROOT / 'tools/add_steam_shortcut.py').read_bytes())
         for name in release.LINUX_SETUP_TOOLS:
             (self.root / 'tools' / name).write_bytes((ROOT / 'tools' / name).read_bytes())
+        (self.root / 'third_party/smaa').mkdir(parents=True)
+        (self.root / 'third_party/smaa/LICENSE.txt').write_bytes(
+            (ROOT / 'third_party/smaa/LICENSE.txt').read_bytes())
 
     def game_files(self):
         game = self.root / 'Darkness'
@@ -99,6 +102,8 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(bundle.read('tools/add_steam_shortcut.py'), (ROOT / 'tools/add_steam_shortcut.py').read_bytes())
             self.assertIn('START_HERE.txt', names)
             manifest = json.loads(bundle.read('RELEASE.json'))
+            self.assertIn((ROOT / 'third_party/smaa/LICENSE.txt').read_bytes(),
+                          bundle.read('ThirdParty/README.txt'))
             self.assertEqual(manifest['commit'], 'abc123')
             for name, expected in manifest['sha256'].items():
                 self.assertEqual(hashlib.sha256(bundle.read(name)).hexdigest(), expected)

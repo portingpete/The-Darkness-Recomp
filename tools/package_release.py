@@ -77,6 +77,11 @@ def package(root: Path, crt: Path, output: Path, version: str, revision: str) ->
         'the Visual Studio x64 CRT redistributable directory.\r\n'
         'The Darkness Recomp: GPLv3; see COPYING and the source in RELEASE.json.\r\n'
     ).encode('utf-8')
+    # Keep the combined notice at the path understood by older updaters.
+    # Preserve SMAA's attribution and full license alongside the executable.
+    notices += (b'\r\nSMAA 1x: iryoku/smaa, pinned source and lookup tables in '
+                b'third_party/smaa at the source revision in RELEASE.json.\r\n\r\n')
+    notices += (root / 'third_party/smaa/LICENSE.txt').read_bytes()
     manifest = {
         'version': version, 'commit': revision,
         'source': f'https://github.com/portingpete/The-Darkness-Recomp/tree/{revision}',

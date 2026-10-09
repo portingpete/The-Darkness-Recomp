@@ -7,8 +7,8 @@ static void testPreviewAntialiasing(EnginePreviewD3D11& renderer, ID3D11Device* 
                                    ID3D11DeviceContext* context, IDXGISwapChain* swapChain) {
     const auto saved = graphicsSettings();
     struct Restore { GraphicsSettings settings; ~Restore() { setGraphicsSettings(settings); } } restore{saved};
-    auto select = [&](bool enabled) {
-        auto selected = saved; selected.antialiasing = enabled;
+    auto select = [&](AntialiasingMode mode) {
+        auto selected = saved; selected.antialiasing = mode;
         selected.brightnessPercent = 100;
         require(setGraphicsSettings(selected), "Cannot select antialiasing");
     };
@@ -39,19 +39,25 @@ static void testPreviewAntialiasing(EnginePreviewD3D11& renderer, ID3D11Device* 
         context->Unmap(staging.Get(), 0);
         return pixels;
     };
+    std::vector<uint32_t> fxaaNative;
+    for(auto filterMode : {AntialiasingMode::FXAA,AntialiasingMode::SMAA}) {
     // Native size, upscale, pillarbox, letterbox, downscale, then native again.
     for (const auto [width, height] : {std::pair{64u,64u}, {128u,128u}, {128u,64u},
                                       {64u,128u}, {32u,32u}, {64u,64u}}) {
         renderer.releaseDisplayTarget(); context->ClearState();
         require(SUCCEEDED(swapChain->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, 0)), "AA output resize failed");
-        select(false); renderer.render({triangle}); renderer.copyToDisplay();
+        select(AntialiasingMode::Off); renderer.render({triangle}); renderer.copyToDisplay();
         const auto original = readOutput();
         const auto sourcePixel = renderer.readPixel(20,20);
         if (width == 64 && height == 64)
             for (const auto pixel : original)
                 require(pixel == 0xFF000000 || pixel == 0xFFFFFFFF, "AA Off changed hard rasterized edges");
-        select(true); renderer.copyToDisplay();
+        select(filterMode); renderer.copyToDisplay();
         const auto filtered = readOutput();
+        if(width==64 && height==64) {
+            if(filterMode==AntialiasingMode::FXAA)fxaaNative=filtered;
+            else require(filtered!=fxaaNative,"SMAA returned the FXAA result instead of morphological AA");
+        }
         unsigned changed = 0, intermediate = 0;
         const unsigned extent = std::min(width, height);
         const unsigned left = (width - extent) / 2, top = (height - extent) / 2;
@@ -60,34 +66,34 @@ static void testPreviewAntialiasing(EnginePreviewD3D11& renderer, ID3D11Device* 
             changed += filtered[i] != original[i];
             const auto channel = filtered[i] & 255;
             intermediate += channel > 0 && channel < 255;
-            require((filtered[i] >> 24) == 255, "FXAA changed alpha");
+            require((filtered[i] >> 24) == 255, "AA changed alpha");
             require(((filtered[i] >> 8) & 255) == channel && ((filtered[i] >> 16) & 255) == channel,
-                    "FXAA introduced a color tint");
+                    "AA introduced a color tint");
             if (x < left || x >= left + extent || y < top || y >= top + extent)
-                require(filtered[i] == 0xFF000000, "FXAA damaged fitted output borders");
+                require(filtered[i] == 0xFF000000, "AA damaged fitted output borders");
         }
-        require(changed > 12 && intermediate > 12, "FXAA did not smooth diagonal edges");
+        require(changed > 12 && intermediate > 12, "AA did not smooth diagonal edges");
         // Flat interiors and the source image stay exact; repeated presentation
         // must not accumulate blur, and Off must recover every original pixel.
-        require(filtered.front() == original.front(), "FXAA changed flat background");
-        require(renderer.readPixel(20,20) == sourcePixel, "FXAA mutated its source");
+        require(filtered.front() == original.front(), "AA changed flat background");
+        require(renderer.readPixel(20,20) == sourcePixel, "AA mutated its source");
         renderer.copyToDisplay();
         require(readOutput() == filtered, "Repeated presentation compounded antialiasing");
-        select(false); renderer.copyToDisplay();
-        require(readOutput() == original, "Turning FXAA off did not restore original output");
+        select(AntialiasingMode::Off); renderer.copyToDisplay();
+        require(readOutput() == original, "Turning AA off did not restore original output");
         // A following draw must recover state after the fullscreen AA pass.
-        select(true); renderer.render({triangle}); renderer.copyToDisplay();
-        require(readOutput() == filtered, "FXAA leaked pipeline state into the next frame");
-        for (bool aa : {false,true}) for (unsigned brightness : {50u,100u,125u,200u}) {
+        select(filterMode); renderer.render({triangle}); renderer.copyToDisplay();
+        require(readOutput() == filtered, "AA leaked pipeline state into the next frame");
+        for (auto aa : {AntialiasingMode::Off,filterMode}) for (unsigned brightness : {50u,100u,125u,200u}) {
             auto selected=graphicsSettings();selected.antialiasing=aa;
             selected.brightnessPercent=brightness;
             setGraphicsSettings(selected);renderer.copyToDisplay();
-            const auto corrected=readOutput();const auto& neutral=aa?filtered:original;
+            const auto corrected=readOutput();const auto& neutral=aa==filterMode?filtered:original;
             for(size_t i=0;i<corrected.size();++i) {
                 for(unsigned c=0;c<3;++c) {
                     // The neutral reference is already quantized to UNORM8;
                     // brightness operates before that rounding. Bound the original
-                    // half-code interval, especially at near-black FXAA edges.
+                    // half-code interval, especially at near-black AA edges.
                     const double value=(neutral[i]>>(c*8))&255;
                     const double low=std::min(255.0,std::max(0.0,value-.51)*brightness/100.0);
                     const double high=std::min(255.0,std::min(255.0,value+.51)*brightness/100.0);
@@ -100,28 +106,82 @@ static void testPreviewAntialiasing(EnginePreviewD3D11& renderer, ID3D11Device* 
             require(renderer.readPixel(20,20)==sourcePixel,"Brightness changed the owned scene");
             renderer.copyToDisplay();require(readOutput()==corrected,"Repeated brightness correction accumulated");
         }
-        select(false);renderer.copyToDisplay();
+        select(AntialiasingMode::Off);renderer.copyToDisplay();
         require(readOutput()==original,"Neutral brightness did not restore the exact image");
+    }
+    }
+    // Source extent changes exercise the SMAA metrics and target allocations;
+    // changing only the swap chain would leave the three AA passes unchanged.
+    for(unsigned scale:{1u,2u,1u}) {
+        renderer.resizeRenderTarget(64*scale,64*scale,scale);
+        select(AntialiasingMode::Off);renderer.render({triangle});renderer.copyToDisplay();
+        const auto sharp=readOutput();
+        const auto source=renderer.readPixel(20*scale,20*scale);
+        select(AntialiasingMode::SMAA);renderer.copyToDisplay();
+        const auto smooth=readOutput();
+        require(smooth!=sharp,"SMAA failed after changing the owned render resolution");
+        require(renderer.readPixel(20*scale,20*scale)==source,"SMAA changed the resized owned source");
+        renderer.copyToDisplay();require(readOutput()==smooth,"Resized SMAA accumulated blur on repaint");
+        select(AntialiasingMode::Off);renderer.copyToDisplay();
+        require(readOutput()==sharp,"Off failed to restore the resized source");
     }
     // A flat, non-gray image exercises the early exit and channel preservation.
     SimpleMesh flat = triangle;
     flat.vertices = {{{-1,-1,.5f},{0,0},{.25f,.5f,.75f,1}}, {{3,-1,.5f},{0,0},{.25f,.5f,.75f,1}},
                      {{-1,3,.5f},{0,0},{.25f,.5f,.75f,1}}};
-    select(false); renderer.render({flat}); renderer.copyToDisplay();
+    select(AntialiasingMode::Off); renderer.render({flat}); renderer.copyToDisplay();
     const auto flatOriginal = readOutput();
-    select(true); renderer.copyToDisplay();
-    require(readOutput() == flatOriginal, "FXAA changed a uniform color");
-    for(bool aa:{false,true})for(unsigned brightness:{50u,100u,125u,200u}) {
+    for(auto mode:{AntialiasingMode::FXAA,AntialiasingMode::SMAA}) {
+        select(mode); renderer.copyToDisplay();
+        require(readOutput() == flatOriginal, "AA changed a uniform color");
+    }
+    for(auto aa:{AntialiasingMode::Off,AntialiasingMode::FXAA,AntialiasingMode::SMAA})for(unsigned brightness:{50u,100u,125u,200u}) {
         auto selected=graphicsSettings();selected.antialiasing=aa;
         selected.brightnessPercent=brightness;
         setGraphicsSettings(selected);renderer.copyToDisplay();
         const auto corrected=readOutput();
         for(size_t i=0;i<corrected.size();++i)for(unsigned c=0;c<3;++c) {
             const double expected=std::min(255.0,double((flatOriginal[i]>>(c*8))&255)*brightness/100.0);
-            require(std::abs(double((corrected[i]>>(c*8))&255)-expected)<=1,"Flat-color brightness or FXAA early exit is wrong");
+            require(std::abs(double((corrected[i]>>(c*8))&255)-expected)<=1,"Flat-color brightness or AA early exit is wrong");
         }
     }
-    select(false);renderer.copyToDisplay();
+    select(AntialiasingMode::Off);renderer.copyToDisplay();
     require(readOutput()==flatOriginal,"Neutral brightness did not restore flat colors");
-    std::puts("PreviewAntialiasing passed: FXAA, brightness combinations, neutral restoration, flat colors, resize, borders and repeated frames.");
+    // High-precision calibrated input must keep the same color through the
+    // intermediates. The independent integer LUT oracle also checks that gamma
+    // is applied before AA and is not applied again during presentation.
+    renderer.releaseDisplayTarget();context->ClearState();
+    {
+        EnginePreviewD3D11 precise(device,context,swapChain,64,64,1,true);
+        auto gamma=std::make_shared<DisplayGamma>();gamma->piecewise=true;
+        for(unsigned i=0;i<128;++i)for(unsigned c=0;c<3;++c)
+            gamma->entries[i*3+c]={((i*6+c*64)%800)*64,6*64};
+        SimpleMesh gammaState;gammaState.displayGamma=gamma;
+        select(AntialiasingMode::Off);precise.render({gammaState,flat});precise.copyToDisplay();
+        const auto calibrated=readOutput();
+        const auto raw=precise.readPixel(20,20);
+        for(auto mode:{AntialiasingMode::Off,AntialiasingMode::FXAA,AntialiasingMode::SMAA})
+            for(unsigned brightness:{50u,100u,125u,200u}) {
+                auto selected=saved;selected.antialiasing=mode;selected.brightnessPercent=brightness;
+                require(setGraphicsSettings(selected),"Cannot select high-precision AA settings");
+                precise.copyToDisplay();const auto pixels=readOutput();
+                for(auto pixel:pixels) {
+                    for(unsigned c=0;c<3;++c) {
+                        const unsigned q=unsigned(flat.vertices.front().color[c]*1023.0f+.5f);
+                        const auto& entry=gamma->entries[(q/8)*3+c];
+                        const unsigned code=(entry[0]*8+(q%8)*entry[1]+256)/512;
+                        const double expected=std::min(255.0,code*255.0/1023*brightness/100);
+                        require(std::abs(double((pixel>>(c*8))&255)-expected)<=1,
+                                "AA lost precision or changed calibrated gamma/brightness");
+                    }
+                    require(pixel>>24==255,"Calibrated AA changed alpha");
+                }
+                if(brightness==100)require(pixels==calibrated,"AA changed a flat calibrated color");
+                require(precise.readPixel(20,20)==raw,"Calibrated AA mutated the raw source");
+                precise.copyToDisplay();require(readOutput()==pixels,"Calibrated AA accumulated on repaint");
+            }
+        precise.releaseDisplayTarget();context->ClearState();
+    }
+    select(AntialiasingMode::Off);
+    std::puts("PreviewAntialiasing passed: FXAA and SMAA, brightness, flat/high-precision gamma colors, source/output resize, borders and repeated frames.");
 }

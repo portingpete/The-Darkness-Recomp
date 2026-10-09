@@ -88,7 +88,8 @@ Open **Options > Video Settings** for the game's native graphics rows:
 - **Resolution:** 360p, 480p, 720p, 1080p, 1440p or 2160p; requires a restart.
 - **Display:** windowed or borderless fullscreen.
 - **Motion blur:** Off (default) or On.
-- **Antialiasing:** Off (default) or FXAA; smooths edges immediately and saves automatically.
+- **Antialiasing:** Off (default), FXAA, SMAA, MSAA 2x, MSAA 4x, or MSAA 8x.
+  Applies immediately and saves automatically.
 - **Language:** System, English, German, French, Spanish, or Italian; requires a restart.
 - **Texture filtering:** Original, 2x, 4x, 8x, or **16x anisotropic (default)**.
   Applies immediately to world textures while preserving the original UI and effects sampling.

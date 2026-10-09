@@ -72,7 +72,8 @@ target_sources(DarkRuntime PRIVATE renderer/engine/engine_vertex_descriptor.cpp)
 target_sources(DarkRuntime PRIVATE renderer/engine/engine_palette.cpp)
 target_sources(DarkRuntime PRIVATE renderer/engine/engine_vertex_program.cpp)
 set_source_files_properties(renderer/engine/engine_transforms.cpp PROPERTIES COMPILE_OPTIONS "/fp:strict")
-target_sources(DarkRuntime PRIVATE renderer/engine/simple_mesh.cpp renderer/d3d11/engine_preview.cpp)
+target_sources(DarkRuntime PRIVATE renderer/engine/simple_mesh.cpp renderer/d3d11/engine_preview.cpp
+  renderer/d3d11/smaa_d3d11.cpp renderer/d3d11/msaa_depth_transfer.cpp)
 target_link_libraries(DarkRuntime PUBLIC d3dcompiler)
 set(DARK_SHADER_DIR "${CMAKE_BINARY_DIR}/native_shaders")
 add_custom_command(OUTPUT "${DARK_SHADER_DIR}/engine_vertex_template.generated.h"
@@ -239,6 +240,13 @@ if(BUILD_TESTING)
     add_executable(DeveloperResolutionShortcutTests tests/developer_resolution_shortcut_contract.cpp)
     target_include_directories(DeveloperResolutionShortcutTests PRIVATE "${CMAKE_SOURCE_DIR}")
     add_test(NAME DeveloperResolutionShortcutContract COMMAND DeveloperResolutionShortcutTests)
+    add_executable(DeveloperSpeedDropdownTests tests/developer_speed_dropdown_contract.cpp
+        app/windows/developer_tools_window.cpp)
+    target_include_directories(DeveloperSpeedDropdownTests PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_compile_definitions(DeveloperSpeedDropdownTests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
+    target_link_libraries(DeveloperSpeedDropdownTests PRIVATE user32 gdi32 xinput)
+    add_test(NAME DeveloperSpeedDropdownContract COMMAND DeveloperSpeedDropdownTests)
+    set_tests_properties(DeveloperSpeedDropdownContract PROPERTIES TIMEOUT 15)
     add_executable(KeyboardBindingsTests tests/keyboard_bindings_tests.cpp
         app/windows/keyboard_settings.cpp runtime/native/keyboard_bindings.cpp)
     target_include_directories(KeyboardBindingsTests PRIVATE "${CMAKE_SOURCE_DIR}")

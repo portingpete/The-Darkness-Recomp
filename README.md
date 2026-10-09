@@ -10,8 +10,8 @@ renderer — no emulation at runtime.
 
 Playable today: full gameplay, mouse look + controller input, video settings
 (resolution, FOV, original Xbox gamma calibration and color profiles, bloom,
-frame cap, VSync, 16x texture filtering), keyboard remapping, cursor menu selection,
-XMA audio, and saves.
+frame cap, VSync, FXAA/SMAA/MSAA antialiasing, 16x texture filtering), keyboard
+remapping, cursor menu selection, XMA audio, and saves.
 
 ## Download and play
 

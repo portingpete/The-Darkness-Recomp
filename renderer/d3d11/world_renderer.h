@@ -4,6 +4,7 @@
 #include "descriptor_cache.h"
 #include "world_vertex_metadata.h"
 #include "world_constant_ranges.h"
+#include "msaa_depth_transfer.h"
 #include <d3d11.h>
 #include <d3dcompiler.h>
 #include <wrl/client.h>
@@ -55,6 +56,9 @@ class WorldRendererD3D11 {
     Ptr<ID3D11Device> device_;
     Ptr<ID3D11DeviceContext> context_;
     uint32_t scale_;
+    unsigned sampleCount_=1;
+    unsigned requestedSampleCount_=0;
+    std::unique_ptr<MsaaDepthTransferD3D11> msaaDepthTransfer_;
     TransientGeometryBuffers transientBuffers_;
     struct Geometry {std::shared_ptr<const Native::StoredGeometry> source; WorldVertexMetadata metadata; Ptr<ID3D11Buffer> buffer; uint64_t used=0;UINT transientCapacity=0;
         size_t bytes() const {return transientCapacity?transientCapacity:size_t(metadata.count)*sizeof(Native::WorldVertex);}};
@@ -62,6 +66,12 @@ class WorldRendererD3D11 {
         size_t bytes() const {return transientCapacity?transientCapacity:source->indices.size()*sizeof(uint16_t);}};
     // Guest dimensions and ownership stay logical; only GPU storage is scaled.
     struct Surface {uint32_t width=0,height=0; Ptr<ID3D11Texture2D> texture; std::array<Ptr<ID3D11RenderTargetView>,6> faces; Ptr<ID3D11RenderTargetView> color; Ptr<ID3D11DepthStencilView> depth; Ptr<ID3D11ShaderResourceView> view;
+        // Original shaders still consume single-sample textures. Geometry writes
+        // matching multisample color/depth attachments, resolved on demand.
+        Ptr<ID3D11Texture2D> multisample;
+        Ptr<ID3D11DepthStencilView> singleDepth;
+        Ptr<ID3D11ShaderResourceView> stencilView,multisampleDepthView,multisampleStencilView;
+        bool resolveDirty=false,stencilDirty=false;
         // Bloom filters are authored in guest texels. Cache an area-averaged
         // logical view, refreshed after each resolve, for those consumers.
         Ptr<ID3D11Texture2D> logicalTexture;
@@ -213,7 +223,7 @@ class WorldRendererD3D11 {
     std::array<Ptr<ID3D11Query>,5> queries_;
     std::array<bool,5> queryPending_{};
     std::array<uint64_t,5> drawOrdinals_{},queryOrdinals_{};
-    struct HistogramQuery {std::shared_ptr<Native::WorldQuery> source;Ptr<ID3D11Query> query;std::vector<Ptr<ID3D11Query>> segments;uint32_t scale=1;};
+    struct HistogramQuery {std::shared_ptr<Native::WorldQuery> source;Ptr<ID3D11Query> query;std::vector<Ptr<ID3D11Query>> segments;uint32_t scale=1,samples=1;};
     HistogramQuery activeHistogram_;
     std::vector<HistogramQuery> pendingHistograms_;
     bool pauseHistogram();
@@ -221,7 +231,9 @@ class WorldRendererD3D11 {
     Ptr<ID3D11Buffer> alphaTestConstants_;
     void requireResizeBoundary() const;
     Ptr<ID3D11Texture2D> resizedTexture(ID3D11Texture2D*,uint32_t width,uint32_t height);
-    Surface resizedSurface(const Surface&,uint32_t scale);
+    Surface resizedSurface(Surface&,uint32_t scale);
+    void attachMultisample(Surface&,unsigned samples,bool retained);
+    void synchronizeSurface(Surface&,bool stencil=false);
     Surface& surface(uint64_t storageKey,uint32_t width,uint32_t height,bool depth);
     std::vector<uint8_t> readSurfaceKey(uint64_t storageKey,bool depth);
     ID3D11ShaderResourceView* image(const std::shared_ptr<const ColorImage>&,bool speculative=false);
@@ -237,6 +249,10 @@ public:
     // contents and pending measurements; failed allocation leaves the old scale.
     bool setRenderScale(uint32_t scale);
     uint32_t renderScale() const {return scale_;}
+    // Render-thread-only at a completed-frame boundary. Unsupported sample
+    // counts fall back to the next lower count supported by both attachments.
+    bool setSampleCount(unsigned samples);
+    unsigned sampleCount() const {return sampleCount_;}
     void inspectNextFrame();
     void endFrame();
     void setDiagnostics(bool enabled) {diagnostics_=enabled;}
