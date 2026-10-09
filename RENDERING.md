@@ -78,10 +78,12 @@ without cropping or stretching. Restart to change the internal aspect ratio;
 `--width W --height H` selects an explicit aspect and window size. See
 [CONTROLS.md](CONTROLS.md) for launcher and input options.
 
-Tentacle menu transitions retain the original `GUIFadeToWhite` brightness boost,
-reveal mask and radial/additive lighting. The bright wipe is also visible in
-Xenia. Scaled color-cube copies use point sampling to prevent pink contamination
-while the original color lookup keeps its interpolation.
+Tentacle menu transitions reveal the backdrop with its source RGB while retaining
+the original destination-alpha mask and radial/additive lighting. This keeps the
+bright glow without the additional `GUIFadeToWhite` RGB boost. Scaled color-cube
+copies use point sampling to prevent pink contamination while the original color
+lookup keeps its interpolation. Hardware and WARP contracts cover source color,
+the reveal mask and retained light extraction.
 
 Options > Video Settings uses the original CubeMenu and CubeButton classes.
 `tools/compile_video_menu.py` builds private `CubeWnd.pc.xcr` and
