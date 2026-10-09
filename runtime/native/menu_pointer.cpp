@@ -262,6 +262,16 @@ bool guestMenuPointerActive() noexcept {
     if (modalDepth.load(std::memory_order_acquire)) return true;
     return ownsPointer(observedRoot.load(std::memory_order_acquire));
 }
+uint32_t guestGameplayLoadFrontend(uint8_t* base, uint32_t application) noexcept {
+    if (!memory || base != memory->base() || !application ||
+        uint64_t(application) + 4909 > PPC_MEMORY_SIZE) return 0;
+    const uint32_t table = PPC_LOAD_U32(application);
+    if (table != 0x82051EA0 && table != 0x82055458 && table != 0x82060D88) return 0;
+    const uint32_t frontend = PPC_LOAD_U32(application + 3672);
+    if (!frontend || uint64_t(frontend) + 1036 > PPC_MEMORY_SIZE ||
+        PPC_LOAD_U32(frontend) != 0x82071A10 || PPC_LOAD_U32(frontend + 24) != application) return 0;
+    return frontend;
+}
 }
 
 // The authored Continue/confirmed New Game route creates begin_loadtransform.
@@ -272,11 +282,7 @@ PPC_FUNC(sub_82102D38) {
     DarkRecomp::Native::StallProfiler::Scope stallProfile(DarkRecomp::Native::StallProfiler::Section::Guest, __func__, 0x82102D38u, uint32_t(ctx.lr));
     const uint32_t application = ctx.r3.u32;
     __imp__sub_82102D38(ctx, base);
-    if (!DarkRecomp::Native::memory || base != DarkRecomp::Native::memory->base() || !application ||
-        uint64_t(application) + 4909 > PPC_MEMORY_SIZE) return;
-    const uint32_t table = PPC_LOAD_U32(application);
-    if (table != 0x82051EA0 && table != 0x82055458 && table != 0x82060D88) return;
-    const uint32_t frontend = PPC_LOAD_U32(application + 60);
+    const uint32_t frontend = DarkRecomp::Native::guestGameplayLoadFrontend(base, application);
     std::lock_guard ownershipLock(pointerOwnershipMutex);
     if (!frontend || frontend != observedFrontend.load(std::memory_order_acquire)) return;
     // Prepare while the accepted action still owns focus/device identity.

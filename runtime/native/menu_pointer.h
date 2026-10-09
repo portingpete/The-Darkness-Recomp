@@ -155,6 +155,9 @@ void initializeMenuPointer() noexcept;
 void setMenuPointerDisplay(uint32_t imageWidth, uint32_t imageHeight,
                            uint32_t outputWidth, uint32_t outputHeight) noexcept;
 bool guestMenuPointerActive() noexcept;
+// Retail application ownership: +60 is CWorldData, +3672 is CubeFrontEnd;
+// FrontEnd initialization stores the owning application at +24.
+uint32_t guestGameplayLoadFrontend(uint8_t* base, uint32_t application) noexcept;
 // Visible, enabled descendants distinguish an input menu from the FrontEnd's
 // empty HUD/title window. The root itself cannot be a pointer target.
 bool menuPointerTreeHasControl(uint8_t* base, uint32_t root);
