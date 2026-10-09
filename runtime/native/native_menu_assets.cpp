@@ -182,9 +182,10 @@ void store(const std::filesystem::path& path, const Bytes& bytes) {
 }
 
 NativeMenuAssets prepareNativeMenuAssets(const std::filesystem::path& gameDirectory,
-                                        const std::filesystem::path& bundledAssetsDirectory) noexcept {
+                                        const std::filesystem::path& bundledAssetsDirectory,
+                                        bool russianMenu) noexcept {
     try {
-        const auto menuPath = bundledAssetsDirectory / L"CubeWnd.pc.xcr";
+        const auto menuPath = bundledAssetsDirectory / (russianMenu ? L"CubeWnd.pc.ru.xcr" : L"CubeWnd.pc.xcr");
         const auto archivePath = bundledAssetsDirectory / L"GameContext_Create.pc.xdf";
         const auto [menuHash, archiveHash] = sourceHashes(bundledAssetsDirectory / L"CubeWnd.pc.xcr.source.sha256");
         const auto sourceMenu = read(gameDirectory / L"Content/Gui/CubeWnd.xcr");
@@ -194,7 +195,7 @@ NativeMenuAssets prepareNativeMenuAssets(const std::filesystem::path& gameDirect
         }
         read(menuPath);
         auto sourceArchive = read(gameDirectory / L"Content/Xdf/GameContext_Create.XDF");
-        if (hash(sourceArchive) == archiveHash) {
+        if (!russianMenu && hash(sourceArchive) == archiveHash) {
             read(archivePath);
             return {menuPath, archivePath};
         }

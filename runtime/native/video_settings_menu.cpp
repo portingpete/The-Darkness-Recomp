@@ -2,6 +2,7 @@
 #include "graphics_settings.h"
 #include "fov_settings.h"
 #include "language_settings.h"
+#include "native_menu_text.h"
 #include "video_settings_menu.h"
 #include "keyboard_menu.h"
 #include "keyboard_menu_guest.h"
@@ -110,6 +111,7 @@ std::string videoSettingLabel(std::string_view action) {
         // Match the retail menu typography for every live setting value.
         for (char& glyph : result)
             if (glyph >= 'a' && glyph <= 'z') glyph = char(glyph - 'a' + 'A');
+        result = nativeMenuText(result);
         const size_t padding = result.size() < 12 ? 12 - result.size() : 0;
         result = "sc, < " + std::string(padding / 2, ' ') + result +
                  std::string(padding - padding / 2, ' ') + " >";

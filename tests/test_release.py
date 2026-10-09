@@ -38,6 +38,7 @@ class ReleaseTests(unittest.TestCase):
         for name in release.BINARIES:
             (self.bin / name).write_bytes(b'build output')
         for name in release.DOCUMENTS:
+            (self.root / name).parent.mkdir(parents=True, exist_ok=True)
             (self.root / name).write_bytes((ROOT / name).read_bytes())
         deps = self.root / 'build_native/deps'
         audio = deps / 'ffmpeg-darkxma'
@@ -81,6 +82,9 @@ class ReleaseTests(unittest.TestCase):
             self.assertNotIn('build_native/Release/Unrelated.dll', names)
             self.assertIn('build_native/Release/vcruntime140_1.dll', names)
             self.assertIn('build_native/Release/DarkRecompSettings.exe', names)
+            self.assertIn('build_native/Release/CubeWnd.pc.ru.xcr', names)
+            for name in ('assets/localization/README.md', 'assets/localization/native_menu_ru.json'):
+                self.assertEqual(bundle.read(name), (ROOT / name).read_bytes())
             self.assertEqual(bundle.read('LaunchWithSettings.cmd'), (ROOT / 'LaunchWithSettings.cmd').read_bytes())
             self.assertEqual(bundle.read('LaunchStallProfiler.cmd'), (ROOT / 'LaunchStallProfiler.cmd').read_bytes())
             self.assertIn('Launch.sh', names)

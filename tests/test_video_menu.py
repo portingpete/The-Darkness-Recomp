@@ -1,6 +1,7 @@
 """Non-rendering checks for the original menu registry override."""
 from pathlib import Path
 import hashlib
+import os
 import struct
 import sys
 import unittest
@@ -10,6 +11,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 from compile_video_menu import (Registry, SETTINGS, KEYBOARD_ACTIONS, KEYBOARD_PRIMARY,
                                KEYBOARD_SECONDARY, compile_menu, compile_menu_archive, menu_source_hashes)
+from compile_native_menu_text import load_catalog
+
+GAME = Path(os.environ.get("DARK_MENU_TEST_GAME_DIRECTORY", ROOT / "Darkness"))
 
 
 def registries(data):
@@ -57,9 +61,63 @@ def archive_reads(data):
 class VideoMenu(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.source = (ROOT / "Darkness/Content/Gui/CubeWnd.xcr").read_bytes()
+        cls.source = (GAME / "Content/Gui/CubeWnd.xcr").read_bytes()
         cls.output = compile_menu(cls.source)
-        cls.archive = (ROOT / "Darkness/Content/Xdf/GameContext_Create.XDF").read_bytes()
+        cls.archive = (GAME / "Content/Xdf/GameContext_Create.XDF").read_bytes()
+
+    def test_russian_menu_translates_generated_text_and_preserves_original_resources(self):
+        translations = load_catalog()
+        output = compile_menu(self.source, translations)
+        for (before, _), (english, _), (russian, _) in zip(
+                registries(self.source), registries(self.output), registries(output)):
+            self.assertEqual(russian.root_hashes, english.root_hashes)
+            self.assertEqual(len(russian.roots), len(english.roots))
+            originals = {before.decode(n)[1]: n for n in before.roots}
+            translated_controls = 0
+            for english_root, russian_root in zip(english.roots, russian.roots):
+                self.assertEqual(english.decode(english_root), russian.decode(russian_root))
+                name = english.decode(english_root)[1]
+                original_controls = [tree(before, n) for n in originals[name].children
+                                     if before.decode(n)[0] == "WINDOW"] if name in originals else []
+                self.assertEqual(len(english_root.children), len(russian_root.children))
+                for english_control, russian_control in zip(english_root.children, russian_root.children):
+                    original = tree(english, english_control)
+                    if english.decode(english_control)[0] != "WINDOW" or original in original_controls:
+                        self.assertEqual(tree(russian, russian_control), original)
+                        continue
+                    ep = dict(english.decode(c) for c in english_control.children)
+                    rp = dict(russian.decode(c) for c in russian_control.children)
+                    self.assertEqual({k: v for k, v in rp.items() if k != "TEXT"},
+                                     {k: v for k, v in ep.items() if k != "TEXT"})
+                    if "TEXT" not in ep:
+                        continue
+                    token, text = ep["TEXT"].split(", ", 1)
+                    ru_token, ru_text = rp["TEXT"].split(", ", 1)
+                    self.assertEqual(ru_token, token)
+                    if text.startswith("§"):
+                        self.assertEqual(ru_text, text)
+                        continue
+                    width = int(rp["RGN"].split(",")[2]) * (2 if token == "sc" else 1)
+                    self.assertLessEqual(len(ru_text), width, name)
+                    if text.startswith("< "):
+                        value = text[2:-2].strip()
+                        expected = translations.get(value, value)
+                        self.assertEqual(ru_text, "< " + expected.center(12) + " >")
+                        self.assertEqual(len(ru_text), 16, "live video button sizing must stay fixed")
+                    elif text.startswith("["):
+                        value = text[1:-1].strip()
+                        expected = translations["UNBOUND"] if value == "UNBOUND" else value
+                        self.assertEqual(ru_text, "[" + expected.center(8) + "]")
+                        self.assertEqual(len(ru_text), 10, "binding hit rectangles must stay fixed")
+                    elif text.startswith("PAGE "):
+                        self.assertEqual(ru_text, translations["PAGE"] + text[4:])
+                    else:
+                        self.assertEqual(ru_text, translations[text])
+                        decoded = ru_text.encode("latin1").decode("cp1251")
+                        self.assertTrue(any("А" <= c <= "Я" or c == "Ё" for c in decoded), text)
+                        self.assertEqual(decoded, decoded.upper())
+                        translated_controls += 1
+            self.assertGreater(translated_controls, 75, "new PC menu text was not translated")
 
     def test_source_hashes_pin_menu_and_localized_archive(self):
         self.assertEqual(menu_source_hashes(self.source, self.archive),

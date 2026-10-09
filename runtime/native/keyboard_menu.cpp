@@ -1,4 +1,5 @@
 #include "keyboard_menu.h"
+#include "native_menu_text.h"
 #include <algorithm>
 #include <charconv>
 #include <mutex>
@@ -121,10 +122,11 @@ std::string KeyboardMenuState::label(std::string_view action) const {
         else text = keyLabel(staged_.keys[selected->action][selected->slot]);
         // CubeButton trims whitespace while sizing its initial TEXT. Keep
         // visible edges so every key/capture label owns the full five cells.
-        return "sc, [" + centered(std::move(text), 8) + "]";
+        return "sc, [" + centered(std::string(nativeMenuText(text)), 8) + "]";
     }
     if (action == "darkrecomp.keyboard.save")
-        return active_ && !closing_ && status_ == Status::Failed ? "sc, FAIL" : "sc, SAVE";
+        return "sc, " + std::string(nativeMenuText(
+            active_ && !closing_ && status_ == Status::Failed ? "FAIL" : "SAVE"));
     if (action != "darkrecomp.keyboard.status") return {};
     const char* text = "SAVE APPLIES CHANGES. CANCEL DISCARDS.";
     switch (status_) {
@@ -138,7 +140,7 @@ std::string KeyboardMenuState::label(std::string_view action) const {
     case Status::Failed: text = "SAVE FAILED. TRY AGAIN OR CANCEL."; break;
     case Status::Saved: text = "KEYBOARD/MOUSE BINDINGS SAVED."; break;
     }
-    return padded(text, 40);
+    return padded(std::string(nativeMenuText(text)), 40);
 }
 bool KeyboardMenuState::keyEvent(unsigned key, bool down, bool repeat, bool alt) noexcept {
     if (key >= held_.size() || key == 0) return false;

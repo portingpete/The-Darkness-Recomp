@@ -1,4 +1,5 @@
 #include "runtime/native/keyboard_menu.h"
+#include "runtime/native/native_menu_text.h"
 #include <cstdio>
 #include <stdexcept>
 
@@ -238,9 +239,24 @@ void labelsAndBridge() {
     endKeyboardMenu();
 }
 }
+static void russianLabels() {
+    initializeNativeMenuText(true, 1);
+    KeyboardMenuState menu;
+    menu.begin(defaultKeyboardBindings());
+    check(menu.label("darkrecomp.keyboard.bind.0.0") == "sc, [   W    ]", "Russian labels changed physical keys");
+    check(menu.label("darkrecomp.keyboard.bind.0.1") == "sc, [  \xcd\xc5\xd2   ]",
+          "Russian unbound label lost CP1251 or fixed binding width");
+    check(menu.label("darkrecomp.keyboard.save") == "sc, \xd1\xce\xd5\xd0\xc0\xcd\xc8\xd2\xdc",
+          "Russian live Save label overwrote the translated initial text");
+    check(menu.label("darkrecomp.keyboard.status").size() == 44, "Russian status changed authored width");
+    menu.action("darkrecomp.keyboard.bind.0.0");
+    check(menu.label("darkrecomp.keyboard.bind.0.0").size() == 14, "Russian capture label changed hit width");
+    initializeNativeMenuText(false, 1);
+}
 int main() {
     try {
         activationRelease(); captureValidation(); mouseCapture(); altCapture(); saveCancelAndCompletion(); saveButtonFeedback(); labelsAndBridge();
+        russianLabels();
         std::puts("Keyboard/mouse menu: activation release, capture validation, staged edits, Save/Cancel and async completion passed.");
         return 0;
     } catch (const std::exception& error) {
