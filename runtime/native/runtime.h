@@ -13,6 +13,7 @@
 #include <vector>
 #include "ppc_context.h"
 #include "native_menu_assets.h"
+#include "developer_weapon_assets.h"
 
 namespace DarkRecomp { class CDisplayContextD3D11; }
 
@@ -28,6 +29,8 @@ public:
     uint8_t* base() const { return base_; }
     const std::filesystem::path& gameDirectory() const { return gameDir_; }
     const NativeMenuAssets& nativeMenuAssets() const { return nativeMenuAssets_; }
+    void enableDeveloperWeaponAssets(PPCContext& ctx, uint8_t* base);
+    std::shared_ptr<const CachedWeaponFile> developerWeaponFile(const std::filesystem::path& path) const;
     bool commit(uint32_t address, uint32_t size);
     uint32_t allocate(uint32_t size, uint32_t alignment = 4096,
                       uint32_t regionBase = 0x10000000, uint64_t regionEnd = 0x60000000);
@@ -82,6 +85,7 @@ private:
     std::vector<std::pair<uint32_t, bool>> memoryViews_;
     std::filesystem::path gameDir_;
     NativeMenuAssets nativeMenuAssets_;
+    std::atomic<std::shared_ptr<const DeveloperWeaponAssets>> developerWeaponAssets_;
     uint32_t headerSize_ = 0;
     std::vector<uint8_t> tlsInitial_;
     std::map<uint32_t, uint32_t> allocations_;
