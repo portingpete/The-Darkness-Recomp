@@ -9,8 +9,9 @@ renderer — no emulation at runtime.
 > (step 1 below).
 
 Playable today: full gameplay, mouse look + controller input, video settings
-(resolution, FOV, original Xbox gamma calibration, bloom, frame cap, VSync,
-16x texture filtering), keyboard remapping, cursor menu selection, XMA audio, and saves.
+(resolution, FOV, original Xbox gamma calibration and color profiles, bloom,
+frame cap, VSync, 16x texture filtering), keyboard remapping, cursor menu selection,
+XMA audio, and saves.
 
 ## Download and play
 
@@ -184,6 +185,8 @@ guide, **F2** toggle capture, **Esc** release).
 Run **LaunchWithUpdates.cmd** to check for a newer GitHub release, including
 prereleases. Approve the update when prompted, or decline to play your installed
 version. Downloads and installed files are checked against SHA-256 hashes.
+The launcher installs packaged releases. Fixes committed to GitHub become
+available through it after a new release with a higher version is published.
 Close the game first. Recovery copies are kept in the folder printed by the
 updater. Network failures still let you play the installed version.
 The updater works with extracted releases; update source checkouts with Git.

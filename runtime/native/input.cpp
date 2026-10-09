@@ -261,6 +261,43 @@ DWORD NativeInput::physicalState(uint32_t user, XINPUT_STATE& state, uint64_t& g
     generation = physicalSlots_[user].generation;
     return physicalSlots_[user].status;
 }
+DWORD NativeInput::primaryStateLocked(XINPUT_STATE& state, uint64_t& generation, uint32_t& hostUser) {
+    // Host device indices are not profile identities. Only guest user 0 has
+    // local sign-in, saves and achievements; exposing host slots 1-3 as guest
+    // users sends the original frontend into the Xbox sign-in UI.
+    if (primaryController_ >= 0) {
+        hostUser = uint32_t(primaryController_);
+        const DWORD status = physicalState(hostUser, state, generation);
+        if (status != ERROR_DEVICE_NOT_CONNECTED) return status;
+        if (hostRumbling_[hostUser]) physicalVibration(hostUser, {});
+        hostRumbling_[hostUser] = false;
+        primaryController_ = -1;
+        slots_[0].connected = false;
+        resetPromptLocked();
+    }
+    DWORD fallback = ERROR_DEVICE_NOT_CONNECTED;
+    for (uint32_t host = 0; host < XUSER_MAX_COUNT; ++host) {
+        XINPUT_STATE candidate{};
+        uint64_t candidateGeneration = 0;
+        const DWORD status = physicalState(host, candidate, candidateGeneration);
+        if (host == 0) {
+            fallback = status;
+            state = candidate;
+            generation = candidateGeneration;
+        }
+        if (status != ERROR_SUCCESS) continue;
+        primaryController_ = int(host);
+        hostUser = host;
+        state = candidate;
+        generation = candidateGeneration;
+        slots_[0].connected = false;
+        resetPromptLocked();
+        std::fprintf(stderr, "[Input] host controller=%u -> local user=0\n", host);
+        return ERROR_SUCCESS;
+    }
+    hostUser = 0;
+    return fallback;
+}
 DWORD NativeInput::physicalCapabilities(uint32_t user, uint32_t flags, XINPUT_CAPABILITIES& caps) {
     if (!backgroundController_) return api_.capabilities(user, flags, &caps);
     auto lock = StallProfiler::lock(controllerMutex_, "NativeInput::physicalCapabilities cache mutex");
@@ -640,11 +677,11 @@ MouseLookDelta NativeInput::consumeMouseLook() {
     return result;
 }
 void NativeInput::stopVibrationLocked() {
-    for (uint32_t user = 0; user < slots_.size(); ++user) {
-        if (slots_[user].rumbling) {
+    for (uint32_t user = 0; user < hostRumbling_.size(); ++user) {
+        if (hostRumbling_[user]) {
             XINPUT_VIBRATION stop{};
             physicalVibration(user, stop);
-            slots_[user].rumbling = false;
+            hostRumbling_[user] = false;
         }
     }
 }
@@ -653,6 +690,7 @@ void NativeInput::attachWindow(HWND window) {
     stopVibrationLocked();
     clearKeysLocked();
     resetPromptLocked();
+    primaryController_ = -1;
     guestMenuActive_ = guestMenuContextKnown_ = false;
     window_ = window;
     focused_ = false;
@@ -870,6 +908,10 @@ DWORD NativeInput::getState(Memory& owner, uint32_t user, uint32_t flags, uint32
         return ERROR_INVALID_PARAMETER;
     auto lock = StallProfiler::lock(mutex_, "NativeInput::getState input mutex");
     ++counters_.polls;
+    if (user != 0) {
+        memset(owner.base() + output, 0, 16);
+        return ERROR_DEVICE_NOT_CONNECTED;
+    }
     const bool capturingKey = keyboardMenuInputBlocked();
     if (capturingKey) suppressMenuActivationKeysLocked();
     else if (captureWasBlocked_) {
@@ -882,12 +924,13 @@ DWORD NativeInput::getState(Memory& owner, uint32_t user, uint32_t flags, uint32
     }
     XINPUT_STATE state{};
     uint64_t physicalGeneration = 0;
-    DWORD status = physicalState(user, state, physicalGeneration);
+    uint32_t hostUser = 0;
+    DWORD status = primaryStateLocked(state, physicalGeneration, hostUser);
     // Focus requires a poll started after the ownership change, rather than
     // replaying a cached/in-flight sample. A fresh held button still reaches
     // the game as it did with synchronous XInput, including a newly hotplugged
     // pad. Neutral-release suppression remains specific to menus/settings.
-    if (physicalGeneration < controllerFreshAfter_[user]) state.Gamepad = {};
+    if (physicalGeneration < controllerFreshAfter_[hostUser]) state.Gamepad = {};
     bool keyboard = user == 0 && window_;
     auto& slot = slots_[user];
     if (status != ERROR_SUCCESS && !(status == ERROR_DEVICE_NOT_CONNECTED && keyboard)) {
@@ -898,7 +941,7 @@ DWORD NativeInput::getState(Memory& owner, uint32_t user, uint32_t flags, uint32
         return status;
     }
     if (status != ERROR_SUCCESS) state = {};
-    if (waitForControllerRelease_[user]) {
+    if (waitForControllerRelease_[hostUser]) {
         const auto& pad = state.Gamepad;
         const bool neutral = !pad.wButtons &&
             pad.bLeftTrigger <= XINPUT_GAMEPAD_TRIGGER_THRESHOLD && pad.bRightTrigger <= XINPUT_GAMEPAD_TRIGGER_THRESHOLD &&
@@ -907,7 +950,7 @@ DWORD NativeInput::getState(Memory& owner, uint32_t user, uint32_t flags, uint32
             std::abs(int(pad.sThumbRX)) <= XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE &&
             std::abs(int(pad.sThumbRY)) <= XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE;
         if (!settingsOpen_ && !capturingKey && (!window_ || focused_) && neutral &&
-            physicalGeneration >= controllerFreshAfter_[user]) waitForControllerRelease_[user] = false;
+            physicalGeneration >= controllerFreshAfter_[hostUser]) waitForControllerRelease_[hostUser] = false;
         state.Gamepad = {};
     }
     // Classify the raw physical pad before keyboard merge: merged guest bits
@@ -947,8 +990,16 @@ DWORD NativeInput::getCapabilities(Memory& owner, uint32_t user, uint32_t flags,
     if (user >= slots_.size() || (flags & ~XINPUT_FLAG_GAMEPAD) || !guestSpan(owner, output, 20, true))
         return ERROR_INVALID_PARAMETER;
     auto lock = StallProfiler::lock(mutex_, "NativeInput::getCapabilities input mutex");
+    if (user != 0) {
+        memset(owner.base() + output, 0, 20);
+        return ERROR_DEVICE_NOT_CONNECTED;
+    }
     XINPUT_CAPABILITIES caps{};
-    DWORD status = physicalCapabilities(user, flags, caps);
+    XINPUT_STATE state{};
+    uint64_t generation = 0;
+    uint32_t hostUser = 0;
+    DWORD status = primaryStateLocked(state, generation, hostUser);
+    if (status == ERROR_SUCCESS) status = physicalCapabilities(hostUser, flags, caps);
     bool keyboard = user == 0 && window_;
     if (status != ERROR_SUCCESS && !(status == ERROR_DEVICE_NOT_CONNECTED && keyboard)) {
         memset(owner.base() + output, 0, 20);
@@ -976,11 +1027,18 @@ DWORD NativeInput::setState(Memory& owner, uint32_t user, uint32_t flags, uint32
     if (user >= slots_.size() || flags != 0 || !guestSpan(owner, input, 4, false))
         return ERROR_INVALID_PARAMETER;
     auto lock = StallProfiler::lock(mutex_, "NativeInput::setState input mutex");
+    if (user != 0) return ERROR_DEVICE_NOT_CONNECTED;
     XINPUT_VIBRATION vibration{read16(owner.base() + input), read16(owner.base() + input + 2)};
     bool requested = vibration.wLeftMotorSpeed || vibration.wRightMotorSpeed;
     if (settingsOpen_ || (window_ && !focused_)) vibration = {};
-    DWORD status = physicalVibration(user, vibration);
-    slots_[user].rumbling = status == ERROR_SUCCESS && (vibration.wLeftMotorSpeed || vibration.wRightMotorSpeed);
+    XINPUT_STATE state{};
+    uint64_t generation = 0;
+    uint32_t hostUser = 0;
+    DWORD status = primaryStateLocked(state, generation, hostUser);
+    if (status == ERROR_SUCCESS) {
+        status = physicalVibration(hostUser, vibration);
+        hostRumbling_[hostUser] = status == ERROR_SUCCESS && (vibration.wLeftMotorSpeed || vibration.wRightMotorSpeed);
+    }
     if (status == ERROR_DEVICE_NOT_CONNECTED && user == 0 && window_)
         return requested ? ERROR_NOT_SUPPORTED : ERROR_SUCCESS;
     return status;

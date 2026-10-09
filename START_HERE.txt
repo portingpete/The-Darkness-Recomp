@@ -64,6 +64,8 @@ installing a newer release, including prereleases, verifies the download,
 and keeps your game files, saves, achievements and settings. Close the game
 before updating. If the network is unavailable, you can still play.
 The updater prints the recovery folder containing replaced program files.
+It installs packaged releases. Fixes committed to GitHub become available
+through the updater after a new release with a higher version is published.
 
 Close the game. Extract the new Windows ZIP into your existing game folder
 and replace the included program files. Keep your Darkness folder, saves
