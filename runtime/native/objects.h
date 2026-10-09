@@ -17,6 +17,7 @@ struct KernelObject {
     bool writable = false;
     bool unbuffered = false;
     uint32_t fileOpenOptions = 0;
+    std::shared_ptr<const DarkRecomp::Native::CachedWeaponFile> cachedWeaponFile;
     bool notificationListener = false;
     uint64_t notificationAreas = 0;
     uint32_t notificationMaxVersion = 0;

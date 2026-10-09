@@ -429,6 +429,24 @@ uint32_t Memory::headerField(uint32_t key) const {
     }
     return 0;
 }
+void Memory::enableDeveloperWeaponAssets(PPCContext& ctx, uint8_t* base) {
+    if (base != base_) throw std::runtime_error("invalid weapon resource memory");
+    if (developerWeaponAssets_.load(std::memory_order_acquire)) return;
+    auto assets = std::make_shared<const DeveloperWeaponAssets>(
+        prepareDeveloperWeaponAssets(ctx, base, gameDir_));
+    developerWeaponAssets_.store(std::move(assets), std::memory_order_release);
+}
+std::shared_ptr<const CachedWeaponFile> Memory::developerWeaponFile(const std::filesystem::path& path) const {
+    const auto assets = developerWeaponAssets_.load(std::memory_order_acquire);
+    if (!assets) return {};
+    auto relative = path.lexically_relative(gameDir_).string();
+    for (char& c : relative) {
+        if (c == '/') c = '\\';
+        if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+    }
+    const auto found = assets->find(relative);
+    return found == assets->end() ? nullptr : found->second;
+}
 void Memory::initThread(PPCContext& ctx) {
     ctx = PPCContext{};
     // Guarded guest stack and a separate PCR/TLS/TEB allocation.

@@ -63,7 +63,12 @@ bool invalidUnbufferedRequest(bool unbuffered, uint32_t length, const LARGE_INTE
     return unbuffered && length && ((length & 511) ||
         (offset && offset->QuadPart >= 0 && (uint64_t(offset->QuadPart) & 511)));
 }
-struct PathResult { std::filesystem::path path; bool writable = false; uint32_t status = 0; };
+struct PathResult {
+    std::filesystem::path path;
+    bool writable = false;
+    uint32_t status = 0;
+    std::shared_ptr<const CachedWeaponFile> cachedWeaponFile;
+};
 PathResult resolve(uint32_t attributes) {
     PathResult result;
     if (!attributes) { result.status = invalidParameter; return result; }
@@ -157,6 +162,15 @@ PathResult resolve(uint32_t attributes) {
         // NtCreateFile consumes NT paths and does not accept Win32's '/' alias.
         result.path.make_preferred();
     }
+    if (!result.status && !result.writable) {
+        auto cached = memory->developerWeaponFile(result.path);
+        std::error_code error;
+        if (cached && !std::filesystem::exists(result.path, error) && !error) {
+            result.cachedWeaponFile = std::move(cached);
+            result.path = result.cachedWeaponFile->path;
+            result.path.make_preferred();
+        }
+    }
     return result;
 }
 uint32_t create(PPCContext& ctx, uint32_t out, uint32_t access, uint32_t attributes, uint32_t ios,
@@ -193,6 +207,7 @@ uint32_t create(PPCContext& ctx, uint32_t out, uint32_t access, uint32_t attribu
             stored->isFile = true; stored->path = resolved.path; stored->writable = resolved.writable;
             stored->unbuffered = (options & 8) != 0;
             stored->fileOpenOptions = options;
+            stored->cachedWeaponFile = std::move(resolved.cachedWeaponFile);
             memory->write32(out, id);
         }
     }
@@ -268,6 +283,31 @@ PPC_FUNC(__imp__NtReadFile) {
     }
     uint32_t apc = ctx.r5.u32, argument = ctx.r6.u32;
     auto lock = StallProfiler::lock(file->ioMutex, "file-io-mutex");
+    if (file->cachedWeaponFile && ctx.r9.u32) {
+        // XDF caches contain exact read ranges, sometimes an optimized prefix
+        // of a larger nominal file. Never expose sparse holes as asset bytes.
+        auto position = offset;
+        uint32_t status = 0;
+        if (!ctx.r10.u32 || position.QuadPart == -2) {
+            IO_STATUS_BLOCK positionIo{};
+            using Query = NTSTATUS (NTAPI*)(HANDLE, PIO_STATUS_BLOCK, PVOID, ULONG, FILE_INFORMATION_CLASS);
+            status = uint32_t(nt<Query>(ctx, "NtQueryInformationFile")(
+                file->handle, &positionIo, &position, sizeof(position), FILE_INFORMATION_CLASS(14)));
+        }
+        const auto size = file->cachedWeaponFile->size;
+        if (int32_t(status) >= 0 && position.QuadPart < 0) status = invalidParameter;
+        if (int32_t(status) >= 0 && uint64_t(position.QuadPart) < size) {
+            const auto count = uint32_t((std::min)(uint64_t(ctx.r9.u32), size - uint64_t(position.QuadPart)));
+            if (!file->cachedWeaponFile->covers(uint64_t(position.QuadPart), count)) {
+                status = 0xc000003e; // STATUS_DATA_ERROR: requested bytes were not cached.
+                std::fprintf(stderr, "[Weapons] Uncached read '%ls' offset=%llu bytes=%u.\n",
+                    file->path.filename().c_str(), uint64_t(position.QuadPart), count);
+            }
+        }
+        if (int32_t(status) < 0) {
+            ioStatus(ios, status, 0); ctx.r3.u64 = status; return;
+        }
+    }
     HANDLE completion = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     if (!completion) { ioStatus(ios, 0xc0000017, 0); ctx.r3.u64 = 0xc0000017; return; }
     IO_STATUS_BLOCK result{};

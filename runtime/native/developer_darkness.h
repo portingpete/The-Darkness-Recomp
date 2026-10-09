@@ -17,5 +17,5 @@ struct DeveloperDarknessResult {
 // repairs a missing partner without adding duplicates. The save system may
 // retain these grants, including a partial inventory grant if creation fails.
 DeveloperDarknessResult applyDeveloperDarkness(PPCContext& ctx, uint8_t* base,
-    const DeveloperPlayerHandles& player, bool unlock, bool maximum);
+    const DeveloperPlayerHandles& player, bool unlock, bool maximum, uint32_t client = 0);
 }
