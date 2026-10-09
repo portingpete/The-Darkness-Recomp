@@ -365,6 +365,7 @@ float4 pixelMain(float4 p:SV_Position):SV_Target {
     check(d->CreateBuffer(&buffer,nullptr,&alphaTestConstants_),"alpha test constants");
     check(d->CreateBuffer(&buffer,nullptr,&colorLookupConstants_),"color lookup constants");
     check(d->CreateBuffer(&buffer,nullptr,&bloomConstants_),"bloom constants");
+    check(d->CreateBuffer(&buffer,nullptr,&shadowConstants_),"shadow constants");
     buffer.ByteWidth=32;check(d->CreateBuffer(&buffer,nullptr,&transferConstants_),"resolve constants");
     D3D11_SAMPLER_DESC sampler{};sampler.Filter=D3D11_FILTER_MIN_MAG_MIP_LINEAR;
     sampler.AddressU=sampler.AddressV=sampler.AddressW=D3D11_TEXTURE_ADDRESS_WRAP;sampler.MaxLOD=D3D11_FLOAT32_MAX;
@@ -1429,6 +1430,9 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
     struct BloomControl {float renderScale;uint32_t snap;uint32_t padding[2];};
     BloomControl bloomControl{float(scale_),0,{0,0}};
     static_assert(sizeof(bloomControl)==sizeof(uploadedBloom_));
+    struct ShadowControl {uint32_t scale;uint32_t padding[3];};
+    ShadowControl shadowControl{1,{0,0,0}};
+    static_assert(sizeof(shadowControl)==sizeof(uploadedShadow_));
     // Some geometric programs share the engine's "post" submission bucket.
     // Restrict enhanced filtering to known surface programs, not that bucket:
     // final composition, color LUTs, video, GUI and blur keep their own filters.
@@ -1578,6 +1582,15 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
         } else samplers[slot]=(cube || draw.material==Native::WorldMaterial::post ||
             draw.material==Native::WorldMaterial::fixed)?cubeSampler_.Get():wrapSampler_.Get();
         if(shadowProjector && slot==0) {
+            // Only a completed native atlas contains additional caster pixels.
+            // CPU textures retain the guest pitch even if their dimensions
+            // differ. Check the resource bound, not an optional CPU snapshot.
+            if(scale_>1 && texture.object && resolved!=resolved_.end()) {
+                D3D11_TEXTURE2D_DESC atlas{};resolved->second.texture->GetDesc(&atlas);
+                if(atlas.Width==texture.width*scale_ && atlas.Height==texture.height*scale_ &&
+                   atlas.ArraySize==1 && atlas.MipLevels==1)
+                    shadowControl.scale=scale_;
+            }
             // Xenon's tfetch2D reads point depths; getWeights2D interpolates
             // their comparison results. Filtering depths before comparing
             // creates hard edges and false occluders. Preserve the effective
@@ -1875,10 +1888,14 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
             updateConstants(context_.Get(),bloomConstants_.Get(),&bloomControl,sizeof(bloomControl));
             std::memcpy(uploadedBloom_.data(),&bloomControl,sizeof(bloomControl));
         }
+        if(!pixelConstantsUploaded_ || std::memcmp(uploadedShadow_.data(),&shadowControl,sizeof(shadowControl))) {
+            updateConstants(context_.Get(),shadowConstants_.Get(),&shadowControl,sizeof(shadowControl));
+            std::memcpy(uploadedShadow_.data(),&shadowControl,sizeof(shadowControl));
+        }
         pixelConstantsUploaded_=true;
         if(!pixelBuffersBound_) {
-            ID3D11Buffer* buffers[]{fragmentConstants_.Get(),textureScales_.Get(),alphaTestConstants_.Get(),colorLookupConstants_.Get(),bloomConstants_.Get()};
-            context_->PSSetConstantBuffers(0,5,buffers);pixelBuffersBound_=true;
+            ID3D11Buffer* buffers[]{fragmentConstants_.Get(),textureScales_.Get(),alphaTestConstants_.Get(),colorLookupConstants_.Get(),bloomConstants_.Get(),shadowConstants_.Get()};
+            context_->PSSetConstantBuffers(0,6,buffers);pixelBuffersBound_=true;
         }
         if(!bindingsValid_ || boundViews_!=views) {context_->PSSetShaderResources(0,16,views.data());boundViews_=views;}
         if(!bindingsValid_ || boundSamplers_!=samplers) {context_->PSSetSamplers(0,16,samplers.data());boundSamplers_=samplers;}

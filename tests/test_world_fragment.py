@@ -251,7 +251,7 @@ END''')
                 with self.assertRaisesRegex(ValueError, 'GUI fade output'):
                     compile_template(malformed, 'GUIFadeToWhite', 0)
 
-    def test_shadow_projector_uses_logical_texel_filter_at_native_scale(self):
+    def test_shadow_projector_retains_logical_filter_for_unscaled_and_cpu_atlases(self):
         source = (ROOT / 'Darkness/System/Gl/ARB_fragment_program/XREngine_ShadowProj.fp').read_text(encoding='latin-1')
         code, metadata = compile_source(select_template(source, 8))
         self.assertEqual(VARIANTS['XREngine_ShadowProj'], [8])
@@ -261,7 +261,7 @@ END''')
         self.assertIn('float4(1 - fraction.x, 1, 1, fraction.x)', code)
         self.assertIn('float4(1 - fraction.y, 1, 1, fraction.y)', code)
         self.assertIn('* weightX[x] * weightY[y]', code)
-        self.assertIn('return saturate(total * (1.0 / 9.0))', code)
+        self.assertIn('coverage = saturate(total * (1.0 / 9.0))', code)
         self.assertIn('texture0.SampleLevel(sampler0, uv, 0)', code)
         # Original ShadowMapStep is step(receiver, sampledDepth). Its result
         # is shadow coverage: cleared reversed depth (zero) must remain lit.

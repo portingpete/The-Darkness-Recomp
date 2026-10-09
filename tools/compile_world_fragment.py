@@ -337,13 +337,34 @@ float2 nativeColorLookupUv(float2 uv, uint slot) {
     if uses_pcf4x4:
         # FPInclude_Xenon TEXPCF4X42D compares sixteen point depths, then
         # applies getWeights2D's fractional outer weights. The weight sum is
-        # nine, not sixteen. Anchor taps to the logical atlas grid so a native
-        # 2x/3x depth map cannot move them independently of those weights.
+        # nine, not sixteen. At native resolution integrate the same box over
+        # every physical texel, rather than sparsely sampling logical centers.
+        # Otherwise moving casters alias despite the higher-resolution atlas.
         # FPInclude_Xenon ShadowMapStep is step(reference, sampledDepth):
         # reversed-depth occluders return one; a cleared zero texel returns
         # zero. The projector emits this as shadow coverage in red and 1-red
         # in alpha, so reversing the comparison darkens the empty atlas area.
-        source += '''float nativeShadow4x4(float4 position) {
+        source += '''cbuffer NativeShadow : register(b5) { uint shadowScale; uint3 shadowPadding; }
+float nativeShadow4x4(float4 position) {
+    float coverage = 0;
+    if (shadowScale > 1) {
+        float2 pitch = env[9].xy / shadowScale;
+        int width = 3 * (int)shadowScale;
+        float2 nativePixel = position.xy / pitch - 0.5 * width;
+        float2 nativeBase = floor(nativePixel);
+        float2 nativeFraction = frac(nativePixel);
+        float nativeTotal = 0;
+        [loop] for (int ny = 0; ny <= width; ++ny) {
+            float wy = ny == 0 ? 1 - nativeFraction.y : ny == width ? nativeFraction.y : 1;
+            [loop] for (int nx = 0; nx <= width; ++nx) {
+                float wx = nx == 0 ? 1 - nativeFraction.x : nx == width ? nativeFraction.x : 1;
+                float2 nativeUv = (nativeBase + float2(nx, ny) + 0.5) * pitch;
+                float nativeDepth = texture0.SampleLevel(sampler0, nativeUv, 0).r * sampleScale[0].x;
+                nativeTotal += (nativeDepth >= position.z ? 1.0 : 0.0) * wx * wy;
+            }
+        }
+        coverage = saturate(nativeTotal / (width * width));
+    } else {
     float2 pixel = position.xy / env[9].xy - 0.5;
     float2 base = floor(pixel);
     float2 fraction = frac(pixel);
@@ -357,7 +378,9 @@ float2 nativeColorLookupUv(float2 uv, uint slot) {
             total += (depth >= position.z ? 1.0 : 0.0) * weightX[x] * weightY[y];
         }
     }
-    return saturate(total * (1.0 / 9.0));
+        coverage = saturate(total * (1.0 / 9.0));
+    }
+    return coverage;
 }
 '''
     source += 'struct Fragment { float4 position : SV_Position; float4 tex[8] : TEXCOORD0; float4 color : COLOR0; };\n'
