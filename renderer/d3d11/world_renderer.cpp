@@ -899,7 +899,9 @@ void WorldRendererD3D11::histogram(const std::shared_ptr<Native::WorldQuery>& qu
     }
 }
 bool WorldRendererD3D11::pauseHistogram() {
-    if(!activeHistogram_.source)return false;
+    // An outer clear can already own the pause while another attachment grows.
+    // Only the scope that ends a live segment should resume the measurement.
+    if(!activeHistogram_.source || !activeHistogram_.query)return false;
     context_->End(activeHistogram_.query.Get());
     activeHistogram_.segments.push_back(std::move(activeHistogram_.query));return true;
 }

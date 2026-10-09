@@ -13,8 +13,9 @@ assets from The Darkness.
 `SMAAEmbedded.h` wraps the exact `SMAA.hlsl` text in a C++ raw string so the
 renderer can compile the official shader through an in-memory include. It
 requires no runtime shader files. When updating the pinned shader, regenerate
-the header by placing its text between `R"SMAA_UPSTREAM(` and
-`)SMAA_UPSTREAM"` in the `kSmaaHlsl` declaration.
+the header using `R"SMAA_UPSTREAM(` and `)SMAA_UPSTREAM"` for ASCII byte ranges
+in the `kSmaaHlsl` declaration. Preserve non-ASCII comment bytes with adjacent
+`"\xHH"` literals instead of decoding them with replacement characters.
 
 The integration uses SMAA 1x, the upstream `SMAA_PRESET_HIGH`, color edge
 detection, blending-weight calculation with the official area/search textures,

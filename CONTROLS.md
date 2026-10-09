@@ -4,9 +4,9 @@ Run `Launch.cmd` for audio, or `Launch.cmd mute` for a muted game.
 Keyboard/mouse play captures the cursor as soon as Continue or a confirmed New
 Game starts loading. Camera movement begins when the gameplay client is ready;
 mouse movement during loading is discarded. Escape and Alt-Tab release capture.
-The first connected controller uses the same local profile as keyboard and mouse,
+The first controller detected by the game uses the same local profile as keyboard and mouse,
 regardless of its Windows controller slot. It stays selected until disconnected;
-connect your preferred controller first when several controllers are available.
+start the game with only your preferred controller connected to choose it.
 Run `LaunchWithSettings.cmd` to choose video options and language before the game
 opens, then play with audio. It reads and saves `DarkRecomp.settings.ini`, so
 the pre-game launcher and in-game Video Settings share your choices.

@@ -77,7 +77,61 @@ static void worldMsaaContract(ID3D11Device* device,ID3D11DeviceContext* context)
         require(query->result->samples.load()==1152,"MSAA altered logical exposure samples");
         retainedDepthGrowth(renderer,8200+requested);
         retainedAttachmentPair(renderer,context,draw,8300+requested*10);
+        if(renderer.sampleCount()>1) {
+            // Keep these identities separate from every retained fixture above.
+            // A first partial color clear pauses the histogram; growing its
+            // later depth attachment must not pause/resume that query again.
+            const uint32_t colorId=0xF6001000u+requested*2,depthId=colorId+1;
+            WorldClear seedColor;seedColor.targets[0]=colorId;
+            seedColor.viewport={0,0,64,64};seedColor.flags=1;renderer.clear(seedColor);
+            WorldClear seedDepth;seedDepth.targets[4]=depthId;
+            seedDepth.viewport={0,0,32,32};seedDepth.flags=48;
+            seedDepth.depth=.75f;seedDepth.stencil=0xA5;renderer.clear(seedDepth);
+            auto nativeTriangle=draw;nativeTriangle.targets={colorId,0,0,0,0};
+            // Leave depth unbound so the first triangle cannot grow it before
+            // the combined partial clear reaches the nested helper path.
+            put(nativeTriangle.attributes.data()+92,0x01100000);
+            auto nestedQuery=std::make_shared<WorldQuery>();
+            nestedQuery->result=std::make_shared<WorldQueryResult>();
+            renderer.histogram(nestedQuery,true);
+            require(renderer.draw(nativeTriangle),"MSAA pre-clear histogram triangle");
+            WorldClear mixed; mixed.targets={colorId,0,0,0,depthId};
+            mixed.viewport={0,0,64,64};mixed.rectangle=std::array<int32_t,4>{4,4,16,16};
+            mixed.flags=49;mixed.color={1,0,0,1};mixed.depth=.25f;mixed.stencil=0x5A;
+            renderer.clear(mixed);
+            require(renderer.draw(nativeTriangle),"MSAA post-clear histogram triangle");
+            renderer.histogram(nestedQuery,false);context->Flush();
+            const auto nestedDeadline=GetTickCount64()+5000;
+            while(nestedQuery->result->samples.load()==UINT64_MAX && GetTickCount64()<nestedDeadline) {
+                renderer.pollHistograms();Sleep(1);
+            }
+            require(nestedQuery->result->samples.load()==2*1152,
+                    "MSAA mixed partial clear/growth corrupted the histogram or counted helper geometry");
+            ComPtr<ID3D11RenderTargetView> restoredColor;ComPtr<ID3D11DepthStencilView> restoredDepth;
+            context->OMGetRenderTargets(1,&restoredColor,&restoredDepth);
+            require(restoredColor && !restoredDepth,"MSAA post-clear draw lost its color-only target state");
+            const auto restoredPixels=renderer.readSurface(colorId,false);
+            const auto grownDepth=renderer.readSurface(depthId,true);
+            require(restoredPixels.size()==64*64*8 && grownDepth.size()==64*64*4,
+                    "MSAA mixed clear did not retain color extent and grow depth");
+            uint16_t trianglePixel[4]{},clearPixel[4]{};
+            std::memcpy(trianglePixel,restoredPixels.data()+(32*64+32)*8,8);
+            std::memcpy(clearPixel,restoredPixels.data()+(8*64+8)*8,8);
+            require(trianglePixel[0]==0x3800 && trianglePixel[1]==0x3800 && trianglePixel[2]==0,
+                    "MSAA post-clear draw lost its native shader or constants");
+            require(clearPixel[0]==0x3C00 && clearPixel[1]==0 && clearPixel[2]==0 && clearPixel[3]==0x3C00,
+                    "MSAA post-clear draw damaged the partial color clear");
+            uint32_t clearedDepth=0,retainedDepth=0,borderDepth=0;
+            std::memcpy(&clearedDepth,grownDepth.data()+(8*64+8)*4,4);
+            std::memcpy(&retainedDepth,grownDepth.data()+(20*64+20)*4,4);
+            std::memcpy(&borderDepth,grownDepth.data()+(48*64+48)*4,4);
+            require((clearedDepth>>24)==0x5A && std::abs(double(clearedDepth&0xFFFFFF)-4194304)<=1 &&
+                    (retainedDepth>>24)==0xA5 && std::abs(double(retainedDepth&0xFFFFFF)-12582911)<=1 && borderDepth==0,
+                    "MSAA mixed partial clear/growth changed retained depth/stencil or its new border");
+            std::printf("[MSAANestedClear] requested=%u active=%u logicalSamples=%llu retainedDepth=64x64\n",
+                requested,renderer.sampleCount(),static_cast<unsigned long long>(nestedQuery->result->samples.load()));
+        }
     }
     context->ClearState();
-    std::puts("WorldMSAA passed: 2x/4x/8x coverage, depth/stencil, live mode/scale retention, atlas growth and normalized exposure queries.");
+    std::puts("WorldMSAA passed: 2x/4x/8x coverage, depth/stencil, live mode/scale retention, atlas growth and normalized exposure queries including mixed partial clear/growth.");
 }
