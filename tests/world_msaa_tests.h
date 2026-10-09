@@ -22,21 +22,31 @@ static void worldMsaaContract(ID3D11Device* device,ID3D11DeviceContext* context)
     draw.attributes[124]=127;draw.attributes[125]=draw.attributes[126]=255;
     auto half=[](uint16_t h) {const unsigned e=(h>>10)&31,m=h&1023;
         return std::ldexp(double(e?1024+m:m),int(e?e:1)-25)*(h&0x8000?-1:1);};
-    std::vector<uint8_t> baseline;
+    std::vector<uint8_t> baseline,previousCoverage;
+    unsigned previousSamples=0;
     for(unsigned requested:{1u,2u,4u,8u}) {
         renderer.setSampleCount(requested);
         require(renderer.sampleCount()<=requested && renderer.sampleCount()>=1,"MSAA unsupported-count fallback");
         renderer.clear(clear);require(renderer.draw(draw),"MSAA color/depth triangle");
         const auto pixels=renderer.readSurface(8101,false),depth=renderer.readSurface(8102,true);
         require(pixels.size()==64*64*8 && depth.size()==64*64*4,"MSAA readback dimensions");
-        size_t partial=0;
+        size_t partial=0,different=0;
+        std::vector<uint16_t> edgeLevels;
         for(size_t at=0;at<pixels.size();at+=8) {uint16_t channels[4]{};std::memcpy(channels,pixels.data()+at,8);
             require(channels[0]==channels[1] && channels[2]==0,"MSAA introduced a color tint");
             const auto red=half(channels[0]);require(red>=0 && red<=.5,"MSAA color resolve overshoot");
             partial+=red>0 && red<.5;
+            if(red>0 && red<.5 && std::find(edgeLevels.begin(),edgeLevels.end(),channels[0])==edgeLevels.end())
+                edgeLevels.push_back(channels[0]);
+            if(previousCoverage.size()==pixels.size())different+=bool(std::memcmp(pixels.data()+at,previousCoverage.data()+at,8));
         }
         if(requested==1) {baseline=pixels;require(partial==0,"Off contains synthetic coverage");}
         else if(renderer.sampleCount()>1)require(partial>16 && pixels!=baseline,"MSAA did not create subpixel geometry coverage");
+        if(previousSamples>=2 && renderer.sampleCount()>previousSamples)
+            require(different>16,"Higher MSAA sample counts collapsed to identical edge coverage");
+        std::printf("[MSAAComparison] requested=%u active=%u partialPixels=%zu edgeLevels=%zu differentFrom%ux=%zu\n",
+                    requested,renderer.sampleCount(),partial,edgeLevels.size(),previousSamples,different);
+        previousCoverage=pixels;previousSamples=renderer.sampleCount();
         uint32_t center=0;std::memcpy(&center,depth.data()+(32*64+32)*4,4);
         require((center>>24)==127 && std::abs(double(center&0xffffff)-8388608)<=1,"MSAA lost depth/stencil");
 
