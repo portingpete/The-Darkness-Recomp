@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(DarkRecomp LANGUAGES CXX)
+project(DarkRecomp LANGUAGES CXX RC)
 if(NOT WIN32 OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     message(FATAL_ERROR "DarkRecomp requires native 64-bit Windows")
 endif()
@@ -11,7 +11,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Build-time only: parallelize source compilation within each target.
 # No runtime code change; speeds up the optimize+test loop on multi-core hosts.
 if(MSVC)
-    add_compile_options(/MP)
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:/MP>)
 endif()
 set(DARK_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated" CACHE PATH "Verified AOT output")
 option(DARK_ALLOW_INCOMPLETE "Compile explicit runtime traps for unresolved translation (diagnostics only)" OFF)
@@ -165,8 +165,13 @@ add_custom_command(OUTPUT "${DARK_SHADER_DIR}/engine_world_fragments.generated.h
 target_sources(DarkRuntime PRIVATE "${DARK_SHADER_DIR}/engine_world_fragments.generated.h" "${DARK_SHADER_DIR}/engine_world_fragment_bindings.generated.h")
 target_link_libraries(DarkRuntime PUBLIC DarkRecompPPC bcrypt dbghelp d3d11 dxgi xaudio2 ole32 xinput)
 target_compile_options(DarkRuntime PRIVATE /Zi)
+configure_file(app/windows/darkrecomp.rc.in "${CMAKE_CURRENT_BINARY_DIR}/darkrecomp.rc" @ONLY)
+set(DARK_ICON_RESOURCE "${CMAKE_CURRENT_BINARY_DIR}/darkrecomp.rc")
+set_source_files_properties("${DARK_ICON_RESOURCE}" PROPERTIES
+    OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/assets/windows/darkrecomp.ico")
 add_executable(DarkRecomp app/windows/native_main.cpp app/windows/display_settings.cpp
     app/windows/developer_tools_window.cpp app/windows/keyboard_settings.cpp app/windows/achievements_window.cpp)
+target_sources(DarkRecomp PRIVATE "${DARK_ICON_RESOURCE}")
 set(DARK_VIDEO_MENU "${CMAKE_BINARY_DIR}/native_assets/CubeWnd.pc.xcr")
 set(DARK_VIDEO_MENU_RUSSIAN "${CMAKE_BINARY_DIR}/native_assets/CubeWnd.pc.ru.xcr")
 set(DARK_VIDEO_ARCHIVE "${CMAKE_BINARY_DIR}/native_assets/GameContext_Create.pc.xdf")
@@ -201,6 +206,7 @@ function(stage_dark_xma target)
 endfunction()
 stage_dark_xma(DarkRecomp)
 add_executable(DarkRecompPreview WIN32 app/windows/preview_launcher.cpp)
+target_sources(DarkRecompPreview PRIVATE "${DARK_ICON_RESOURCE}")
 target_compile_definitions(DarkRecompPreview PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_link_libraries(DarkRecompPreview PRIVATE shell32)
 add_dependencies(DarkRecompPreview DarkRecomp)
@@ -210,6 +216,7 @@ add_executable(DarkRecompSettings WIN32
     runtime/native/graphics_settings.cpp
     runtime/native/fov_settings.cpp
     runtime/native/language_settings.cpp)
+target_sources(DarkRecompSettings PRIVATE "${DARK_ICON_RESOURCE}")
 target_include_directories(DarkRecompSettings PRIVATE "${CMAKE_SOURCE_DIR}")
 target_compile_definitions(DarkRecompSettings PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
 target_link_libraries(DarkRecompSettings PRIVATE user32 gdi32 shell32 comctl32)

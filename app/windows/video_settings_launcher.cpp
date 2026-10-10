@@ -1,4 +1,5 @@
 #include "display_settings.h"
+#include "resource.h"
 #include "runtime/native/fov_settings.h"
 
 #include <windows.h>
@@ -316,6 +317,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         WNDCLASSEXW windowClass{sizeof(windowClass)};
         windowClass.lpfnWndProc = launcherWindowProc;
         windowClass.hInstance = instance;
+        windowClass.hIcon = static_cast<HICON>(LoadImageW(instance,
+            MAKEINTRESOURCEW(IDI_DARKRECOMP), IMAGE_ICON,
+            GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_SHARED));
+        windowClass.hIconSm = static_cast<HICON>(LoadImageW(instance,
+            MAKEINTRESOURCEW(IDI_DARKRECOMP), IMAGE_ICON,
+            GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED));
         windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
         windowClass.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
         windowClass.lpszClassName = className;
