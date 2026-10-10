@@ -59,13 +59,23 @@ LaunchWithSettings.cmd before starting the game. Both save to the same settings
 file. In-game language changes take effect after restarting.
 
 UPDATING AN OLDER RELEASE
-Use LaunchWithUpdates.cmd to check GitHub before playing. It asks before
-installing a newer release, including prereleases, verifies the download,
-and keeps your game files, saves, achievements and settings. Close the game
-before updating. If the network is unavailable, you can still play.
-The updater prints the recovery folder containing replaced program files.
-It installs packaged releases. Fixes committed to GitHub become available
-through the updater after a new release with a higher version is published.
+Use LaunchWithUpdates.cmd to check GitHub before playing. It automatically
+rebuilds the latest main-branch commit, verifies the resulting program files,
+and keeps your game files, saves, achievements and settings. Commit updates need
+Git, Python 3.11+, CMake, and Visual Studio 2022 with C++ and Clang tools.
+The audio build also needs MSYS2 MinGW64 build tools at C:\msys64 and LLVM
+at C:\Program Files\LLVM (including llvm-lib.exe).
+Downloaded installs keep a separate source/build copy with your own dump;
+allow disk space for that copy and build outputs. Close the game before updating.
+The first build can take several minutes. If the network is unavailable, you can
+still play the installed version. The updater prints its recovery folder.
+Source checkouts must be clean and fast-forwardable; it preserves local edits.
+
+To update from v0.1.5 or earlier, extract this complete ZIP once. Older updater
+versions do not accept the newly added Russian-menu files.
+Use Launch.cmd to play without compiling. To continue checking only packaged
+releases, run:
+  powershell -NoProfile -ExecutionPolicy Bypass -File tools\update_release.ps1
 
 Close the game. Extract the new Windows ZIP into your existing game folder
 and replace the included program files. Keep your Darkness folder, saves

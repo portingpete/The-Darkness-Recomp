@@ -26,11 +26,21 @@ The GitHub **Source code** downloads are for building the project yourself.
 3. Double-click **Launch.cmd** to play with sound.
 
 Use **LaunchWithSettings.cmd** to choose settings and language before playing.
-Use **LaunchWithUpdates.cmd** to check GitHub for a newer release before playing.
-It asks before installing an update and keeps your game files, saves, achievements,
-and settings. Windows PowerShell is included with Windows; no extra tools are needed.
+Use **LaunchWithUpdates.cmd** to check for new commits on GitHub's `main` branch
+before playing. It rebuilds and installs the selected commit automatically,
+preserving game files, saves, achievements, and settings. Commit updates require
+Git, Python 3.11+, CMake, and Visual Studio 2022 with C++ and Clang tools installed.
+The audio build also requires MSYS2 MinGW64 build tools at `C:\msys64` and LLVM
+at `C:\Program Files\LLVM` (including `llvm-lib.exe`).
+For a downloaded installation, it keeps a separate source/build copy and copies
+your own dump there; allow space for another game copy and the compiler outputs.
+The first build can take several minutes. Source checkouts must be clean and able
+to fast-forward to `main`; local edits and divergent commits are preserved.
 
-No compiler, Python, or separate audio setup is needed for the Windows release.
+No compiler, Python, or separate audio setup is needed to play the Windows release.
+Use **Launch.cmd** for the installed build, or extract a newer release ZIP to
+update without building. The previous release-only updater remains available as
+`powershell -NoProfile -ExecutionPolicy Bypass -File tools\update_release.ps1`.
 Use 64-bit Windows 10/11 with a Direct3D 11-capable graphics device.
 See [START_HERE.txt](START_HERE.txt) for the folder layout and troubleshooting.
 An ISO alone is not enough; use an extracted dump of the supported game revision.
@@ -145,7 +155,8 @@ Darkness patches automatically. Existing checkouts from the old setup instructio
 are supported too. The first build needs an internet connection.
 
 You'll need 64-bit Windows, Git, Visual Studio 2022 with the **ClangCL** toolset,
-CMake 3.24+, Python 3.11+, and ~15 GB free. Output lands in
+CMake 3.24+, Python 3.11+, MSYS2 MinGW64 build tools at `C:\msys64`, LLVM at
+`C:\Program Files\LLVM`, and ~15 GB free. Output lands in
 `build_native/Release/`.
 
 The XMA audio build also requires MSYS2 at `C:\msys64` with MinGW64 GCC and
@@ -188,14 +199,23 @@ guide, **F2** toggle capture, **Esc** release).
 
 ## Updating a downloaded release
 
-Run **LaunchWithUpdates.cmd** to check for a newer GitHub release, including
-prereleases. Approve the update when prompted, or decline to play your installed
-version. Downloads and installed files are checked against SHA-256 hashes.
-The launcher installs packaged releases. Fixes committed to GitHub become
-available through it after a new release with a higher version is published.
-Close the game first. Recovery copies are kept in the folder printed by the
-updater. Network failures still let you play the installed version.
-The updater works with extracted releases; update source checkouts with Git.
+Run **LaunchWithUpdates.cmd** to build and install the latest official `main`
+commit before playing. It requires the build tools listed above and a complete
+supported game dump. The updater retains a separate source/build copy outside
+your installation, tests the build, and verifies the resulting package and files
+with SHA-256 hashes before installing. Close the game first. Recovery copies and
+build logs are kept in the folder printed by the updater. Network failures still
+let you play the installed version; build failures stop the update and leave the
+previous program files available through **Launch.cmd**.
+
+To install only published releases with no compiler, run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\update_release.ps1
+```
+
+When updating from v0.1.5, extract the new ZIP once to install the new launcher;
+the older updater does not recognize the added Russian menu files.
 
 Close the game, extract the new Windows ZIP into your existing game folder,
 and replace the included program files. Keep **Darkness/**, **saves/**, and
@@ -204,7 +224,10 @@ You do not need to rebuild.
 
 ## Updating a source build
 
-Pull the latest version and run the build again:
+**LaunchWithUpdates.cmd** also updates source checkouts. The checkout must be
+clean and able to fast-forward to official `main`; it preserves local commits
+and refuses divergent histories. It rebuilds and tests the selected commit before
+marking the installed program current. Alternatively, pull and build manually:
 
 ```powershell
 git pull --ff-only

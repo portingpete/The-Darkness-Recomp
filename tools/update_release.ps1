@@ -72,13 +72,14 @@ function Assert-ManagedPath([string]$Relative) {
         'LaunchStallProfiler.cmd', 'LaunchShadowCapture.cmd', 'Launch.sh', 'SetupLinux.cmd',
         'PlayLinux.cmd', 'START_HERE.txt', 'README.md', 'CONTROLS.md', 'RENDERING.md', 'STEAM_DECK.md', 'COPYING')
     $toolsFiles = @('tools/update_release.ps1', 'tools/add_steam_shortcut.py', 'tools/setup_linux.ps1',
-        'tools/setup_linux.py', 'tools/wsl_graphics.py')
+        'tools/setup_linux.py', 'tools/wsl_graphics.py', 'tools/update_commits.ps1')
+    $localizationFiles = @('assets/localization/README.md', 'assets/localization/native_menu_ru.json')
     $audioFiles = @('ThirdParty/README.txt', 'ThirdParty/audio/COPYING.LGPLv2.1',
         'ThirdParty/audio/COPYING.winpthreads', 'ThirdParty/audio/LICENSE.md', 'ThirdParty/audio/PROVENANCE.json',
         'ThirdParty/audio/ffmpeg-darkxma-upstream.tar.gz', 'ThirdParty/audio/ffmpeg-darkxma.patch',
         'ThirdParty/audio/build_xma_codec.py')
-    if ($rootFiles -ccontains $Relative -or $toolsFiles -ccontains $Relative -or $audioFiles -ccontains $Relative) { return }
-    if ($Relative -cmatch '^build_native/Release/(?:DarkRecomp(?:Preview|Settings)?\.exe|[A-Za-z0-9_.-]+\.dll|CubeWnd\.pc\.xcr(?:\.source\.sha256)?|GameContext_Create\.pc\.xdf)$') { return }
+    if ($rootFiles -ccontains $Relative -or $toolsFiles -ccontains $Relative -or $audioFiles -ccontains $Relative -or $localizationFiles -ccontains $Relative) { return }
+    if ($Relative -cmatch '^build_native/Release/(?:DarkRecomp(?:Preview|Settings)?\.exe|[A-Za-z0-9_.-]+\.dll|CubeWnd\.pc\.xcr(?:\.source\.sha256)?|CubeWnd\.pc\.ru\.xcr|GameContext_Create\.pc\.xdf)$') { return }
     throw "File is outside the release-owned paths: $Relative"
 }
 
@@ -124,6 +125,26 @@ function Assert-NoRunningGame([string]$Root) {
             throw 'Close the game and its settings window before updating.'
         }
     }
+}
+
+function Open-DarkRecompUpdateLock([string]$Root) {
+    # One external lock for both release and commit updates. A lock inside a
+    # source checkout would be untracked and make that checkout appear dirty.
+    $algorithm = [Security.Cryptography.SHA256]::Create()
+    try { $key = ([BitConverter]::ToString($algorithm.ComputeHash([Text.Encoding]::UTF8.GetBytes($Root.ToLowerInvariant())))).Replace('-', '') }
+    finally { $algorithm.Dispose() }
+    $lockPath = Join-Path ([IO.Path]::GetTempPath()) ("DarkRecomp-update-$key.lock")
+    $parent = Get-Item -LiteralPath ([IO.Path]::GetDirectoryName($lockPath)) -Force
+    while ($null -ne $parent) {
+        if ($parent.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Reparse point in update-lock ancestor: $($parent.FullName)" }
+        $parent = $parent.Parent
+    }
+    if (Test-Path -LiteralPath $lockPath) {
+        $item = Get-Item -LiteralPath $lockPath -Force
+        if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Unsafe update lock path.' }
+    }
+    try { return [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
+    catch { throw 'Another updater is using this installation. Wait for it to finish before updating or launching.' }
 }
 
 function Read-ReleaseManifest([string]$Path, [string]$ExpectedVersion = '') {
@@ -342,12 +363,7 @@ function Invoke-DarkRecompUpdate([string]$Root, [switch]$CheckOnly, [switch]$Acc
         } catch { Write-Host "Could not download release: $($_.Exception.Message)"; return 10 }
         $candidate = Expand-VerifiedRelease $archive $checksum $stage $release.tag_name
         Assert-NoReparseTree $Root
-        $lockPath = Join-Path $Root '.DarkRecomp-update.lock'
-        if (Test-Path -LiteralPath $lockPath) {
-            $lockItem = Get-Item -LiteralPath $lockPath -Force
-            if ($lockItem.PSIsContainer -or ($lockItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Unsafe update lock path.' }
-        }
-        $lock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+        $lock = Open-DarkRecompUpdateLock $Root
         $fresh = Read-ReleaseManifest (Join-Path $Root 'RELEASE.json')
         if ((Compare-ReleaseVersion $candidate.version $fresh.version) -le 0) { throw 'Installed release changed during this update; refusing a downgrade or reinstall.' }
         Install-VerifiedRelease $Root $stage $backup $fresh $candidate

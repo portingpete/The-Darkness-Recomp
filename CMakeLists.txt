@@ -319,6 +319,9 @@ if(BUILD_TESTING)
     add_test(NAME ReleaseUpdaterContract COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
         -File "${CMAKE_SOURCE_DIR}/tests/test_update_release.ps1")
     set_tests_properties(ReleaseUpdaterContract PROPERTIES TIMEOUT 120)
+    add_test(NAME CommitUpdaterContract COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+        -File "${CMAKE_SOURCE_DIR}/tests/test_update_commits.ps1")
+    set_tests_properties(CommitUpdaterContract PROPERTIES TIMEOUT 120)
     set_tests_properties(ReleasePackagingContract PROPERTIES TIMEOUT 60)
     add_subdirectory(tests/generator)
     add_test(NAME NativeCompilationRollback COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/test_native_stamp.py")
@@ -548,14 +551,30 @@ if(BUILD_TESTING)
     set_tests_properties(VideoSettingsContract PROPERTIES TIMEOUT 30)
     set_tests_properties(AudioDriverContract DispatcherContract PROPERTIES TIMEOUT 60)
     add_test(NAME XmaLifecycleContract COMMAND "$<TARGET_FILE:NativeTests>" "${CMAKE_SOURCE_DIR}/Darkness" "--xma-lifecycle")
-    add_test(NAME XmaBridgeContract COMMAND "$<TARGET_FILE:NativeTests>" "${CMAKE_SOURCE_DIR}/Darkness" "--xma-bridge" "${CMAKE_SOURCE_DIR}/build_native/run/xma-capture-000.bin")
+    # Captures contain data from the developer's game dump and are not shipped.
+    # Fresh source builds still run the live/staged decoder and lifecycle tests.
+    set(DARK_XMA_CAPTURE "${CMAKE_SOURCE_DIR}/build_native/run/xma-capture-000.bin"
+        CACHE FILEPATH "Private captured XMA test fixture (optional)")
+    if(EXISTS "${DARK_XMA_CAPTURE}")
+        add_test(NAME XmaBridgeContract COMMAND "$<TARGET_FILE:NativeTests>" "${CMAKE_SOURCE_DIR}/Darkness" "--xma-bridge" "${DARK_XMA_CAPTURE}")
+    else()
+        message(STATUS "Skipping captured XMA bridge test: no private ${DARK_XMA_CAPTURE}")
+    endif()
     add_test(NAME XmaDecodeLive COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/tests/check_xma_decode.py" "$<TARGET_FILE:NativeTests>" "${CMAKE_SOURCE_DIR}/Darkness" "--xma-submit-live")
     add_test(NAME XmaDecodeStaged COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/tests/check_xma_decode.py" "$<TARGET_FILE:NativeTests>" "${CMAKE_SOURCE_DIR}/Darkness" "--xma-submit-staged")
     add_test(NAME OriginalGameInflate COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/tests/check_inflate.py" "$<TARGET_FILE:NativeTests>" "${CMAKE_SOURCE_DIR}/Darkness")
-    set(FFMPEG_SHARED_ROOT "${CMAKE_SOURCE_DIR}/build_native/deps/ffmpeg-8.1.2-full_build-shared")
+    set(FFMPEG_SHARED_ROOT "${CMAKE_SOURCE_DIR}/build_native/deps/ffmpeg-8.1.2-full_build-shared"
+        CACHE PATH "Stock FFmpeg SDK for independent captured-XMA oracle tests (optional)")
+    if(EXISTS "${DARK_XMA_CAPTURE}" AND
+       EXISTS "${FFMPEG_SHARED_ROOT}/include/libavcodec/avcodec.h" AND
+       EXISTS "${FFMPEG_SHARED_ROOT}/lib/avcodec.lib" AND
+       EXISTS "${FFMPEG_SHARED_ROOT}/lib/avutil.lib" AND
+       EXISTS "${FFMPEG_SHARED_ROOT}/bin/avcodec-62.dll" AND
+       EXISTS "${FFMPEG_SHARED_ROOT}/bin/avutil-60.dll" AND
+       EXISTS "${FFMPEG_SHARED_ROOT}/bin/swresample-6.dll")
     add_executable(XmaAdapterTests tests/xma_adapter_tests.cpp runtime/native/xma_decoder.cpp)
     target_include_directories(XmaAdapterTests PRIVATE "${CMAKE_SOURCE_DIR}" "${FFMPEG_SHARED_ROOT}/include")
     target_link_directories(XmaAdapterTests PRIVATE "${FFMPEG_SHARED_ROOT}/lib")
@@ -570,15 +589,17 @@ if(BUILD_TESTING)
         "${FFMPEG_SHARED_ROOT}/bin/avutil-60.dll" "$<TARGET_FILE_DIR:XmaAdapterTests>/avutil-60.dll"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
         "${FFMPEG_SHARED_ROOT}/bin/swresample-6.dll" "$<TARGET_FILE_DIR:XmaAdapterTests>/swresample-6.dll")
-    add_test(NAME XmaAdapterContract COMMAND XmaAdapterTests
-        "${CMAKE_SOURCE_DIR}/build_native/run/xma-capture-000.bin")
+    add_test(NAME XmaAdapterContract COMMAND XmaAdapterTests "${DARK_XMA_CAPTURE}")
     add_executable(XmaRawTests tests/xma_raw_tests.cpp)
     target_include_directories(XmaRawTests PRIVATE "${CMAKE_SOURCE_DIR}" "${DARK_XMA_ROOT}/include")
     target_compile_definitions(XmaRawTests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
     target_link_libraries(XmaRawTests PRIVATE DarkXmaRaw)
     add_dependencies(XmaRawTests XmaAdapterTests)
     stage_dark_xma(XmaRawTests)
-    add_test(NAME XmaRawContract COMMAND XmaRawTests "${CMAKE_SOURCE_DIR}/build_native/run/xma-capture-000.bin")
+    add_test(NAME XmaRawContract COMMAND XmaRawTests "${DARK_XMA_CAPTURE}")
+    else()
+        message(STATUS "Skipping captured XMA oracle tests: private capture and stock FFmpeg test SDK required")
+    endif()
     add_executable(TestInputParserTests tests/test_input_parser_contract.cpp)
     target_include_directories(TestInputParserTests PRIVATE "${CMAKE_SOURCE_DIR}")
     target_compile_definitions(TestInputParserTests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)

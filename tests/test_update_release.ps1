@@ -68,6 +68,10 @@ function New-Archive([string]$Version = 'v1.1.0', [string]$Variant = '') {
         'README.md' = 'updated readme'
         'LaunchWithUpdates.cmd' = [IO.File]::ReadAllText((Join-Path (Split-Path -Parent $PSScriptRoot) 'LaunchWithUpdates.cmd')) + "`r`nrem changed launcher length`r`n"
         'tools/update_release.ps1' = "throw 'Replacement updater should run on the next launch only.'"
+        'tools/update_commits.ps1' = 'replacement commit updater'
+        'build_native/Release/CubeWnd.pc.ru.xcr' = 'Russian menu payload'
+        'assets/localization/README.md' = 'Russian translation guide'
+        'assets/localization/native_menu_ru.json' = '{"encoding":"cp1251"}'
     }
     if ($Variant -eq 'protected') { $files['saves/player.sav'] = 'attack' }
     $manifestVersion = $Version
@@ -157,6 +161,10 @@ $releaseList = @(
 )
 Assert-True ((Select-NewestRelease $releaseList 'v1.0.0').tag_name -eq 'v2.0.0-beta.2') 'Includes prereleases and sorts by semantic version'
 Assert-True ($null -eq (Select-NewestRelease $releaseList 'v2.0.0')) 'No downgrade'
+foreach ($relative in @('assets/localization/other.json', 'assets/localization/README.md.exe',
+    'build_native/Release/CubeWnd.pc.ru.xcr.source.sha256', 'tools/update_anything.ps1')) {
+    Assert-Throws { Assert-ManagedPath $relative } "Unrelated path remains excluded: $relative"
+}
 
 $bundle = New-Archive
 Set-TestRelease $bundle
@@ -180,9 +188,18 @@ Assert-True ((Invoke-DarkRecompUpdate -Root $root -NonInteractive) -eq 2) 'Nonin
 $script:NetworkFailure = $true
 Assert-True ((Invoke-DarkRecompUpdate -Root $root -AcceptUpdate) -eq 10) 'Network failure has fallback exit code'
 $script:NetworkFailure = $false
+$heldLock = Open-DarkRecompUpdateLock $root
+try { Assert-True ((Invoke-DarkRecompUpdate -Root $root -AcceptUpdate) -eq 20) 'Release updater honors the shared commit/release installation lock' }
+finally { $heldLock.Dispose() }
 Assert-True ((Invoke-DarkRecompUpdate -Root $root -AcceptUpdate) -eq 0) 'Verified update succeeds'
 Assert-True ((Read-ReleaseManifest (Join-Path $root 'RELEASE.json')).version -eq 'v1.1.0') 'Updated manifest installed'
 Assert-True ([IO.File]::ReadAllText((Join-Path $root 'README.md')) -eq 'updated readme') 'Updated file installed'
+foreach ($pair in @(@('build_native/Release/CubeWnd.pc.ru.xcr', 'Russian menu payload'),
+    @('assets/localization/README.md', 'Russian translation guide'),
+    @('assets/localization/native_menu_ru.json', '{"encoding":"cp1251"}'),
+    @('tools/update_commits.ps1', 'replacement commit updater'))) {
+    Assert-True ([IO.File]::ReadAllText((Join-Path $root $pair[0])) -ceq $pair[1]) "New managed payload installed: $($pair[0])"
+}
 Assert-True (!(Test-Path -LiteralPath (Join-Path $root 'Darkness/PUT_GAME_FILES_HERE.txt'))) 'Game placeholder omitted from update'
 Assert-Preserved $root
 Assert-True ((Invoke-DarkRecompUpdate -Root $root -AcceptUpdate) -eq 0) 'Same version is not reinstalled'
@@ -234,7 +251,10 @@ $files = [ordered]@{}
 foreach ($relative in @('Launch.cmd', 'build_native/Release/DarkRecomp.exe', 'build_native/Release/DarkRecompPreview.exe', 'README.md')) {
     $files[$relative] = [IO.File]::ReadAllText((Join-Path $root $relative))
 }
-$files['LaunchWithUpdates.cmd'] = [IO.File]::ReadAllText($launcherPath)
+# Exercise the legacy release mode with the same self-replacing CMD wrapper.
+# The default wrapper now invokes the commit updater, whose integration fixture
+# is tested independently in test_update_commits.ps1.
+$files['LaunchWithUpdates.cmd'] = [IO.File]::ReadAllText($launcherPath).Replace('tools\update_commits.ps1', 'tools\update_release.ps1')
 Set-TestRelease $bundle
 $recordsPath = Join-Path $testRoot 'process-releases.json'
 [IO.File]::WriteAllText($recordsPath, ($script:Releases | ConvertTo-Json -Depth 10))
