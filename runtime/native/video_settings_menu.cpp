@@ -6,6 +6,7 @@
 #include "video_settings_menu.h"
 #include "keyboard_menu.h"
 #include "keyboard_menu_guest.h"
+#include "input.h"
 #include "runtime.h"
 #include "ppc_recomp_shared.h"
 #include <algorithm>
@@ -18,11 +19,15 @@
 namespace DarkRecomp::Native {
 namespace {
 std::atomic<bool> exitGameRequested{false};
+std::atomic<bool> mouseSensitivitySavePending{false};
+std::atomic<bool> mouseSensitivitySaveFailed{false};
 }
 void initializeVideoSettingsMenu() noexcept {
     reportDisplaySettingsSave(true);
     endKeyboardMenu();
     exitGameRequested.store(false, std::memory_order_release);
+    mouseSensitivitySavePending.store(false);
+    mouseSensitivitySaveFailed.store(false);
 }
 bool activateNativeMenuAction(std::string_view action) noexcept {
     if (action == "darkrecomp.exit") exitGameRequested.store(true, std::memory_order_release);
@@ -30,6 +35,8 @@ bool activateNativeMenuAction(std::string_view action) noexcept {
     return true;
 }
 bool takeExitGameRequest() noexcept { return exitGameRequested.exchange(false, std::memory_order_acq_rel); }
+bool takeMouseSensitivitySaveRequest() noexcept { return mouseSensitivitySavePending.exchange(false); }
+void reportMouseSensitivitySave(bool saved) noexcept { mouseSensitivitySaveFailed.store(!saved); }
 
 namespace {
 template<size_t N> unsigned step(unsigned value, int direction, const std::array<unsigned, N>& choices) {
@@ -44,6 +51,16 @@ template<size_t N> unsigned step(unsigned value, int direction, const std::array
 
 bool changeVideoSetting(std::string_view action, int direction) noexcept {
     if (direction != -1 && direction != 1) return false;
+    if (action == "darkrecomp.mouse_sensitivity") {
+        auto& input = nativeInput();
+        const float current = input.mouseSensitivity();
+        const float next = stepMouseSensitivity(current, direction);
+        if (next != current) {
+            if (!input.setMouseSensitivity(next)) return false;
+            mouseSensitivitySavePending.store(true);
+        }
+        return true;
+    }
     if (action == "darkrecomp.language") {
         const auto next = step(unsigned(gameLanguageSetting()), direction,
             std::array{unsigned(GameLanguage::System), unsigned(GameLanguage::English), unsigned(GameLanguage::German),
@@ -82,7 +99,12 @@ bool changeVideoSetting(std::string_view action, int direction) noexcept {
 std::string videoSettingLabel(std::string_view action) {
     const auto settings = graphicsSettings();
     std::string result;
-    if (action == "darkrecomp.bloom") result = settings.bloom ? "On" : "Off";
+    if (action == "darkrecomp.mouse_sensitivity") {
+        char value[32]{};
+        std::snprintf(value, sizeof(value), "%.4gx", double(nativeInput().mouseSensitivity()));
+        result = value;
+    }
+    else if (action == "darkrecomp.bloom") result = settings.bloom ? "On" : "Off";
     else if (action == "darkrecomp.motionblur") result = settings.motionBlur ? "On" : "Off";
     else if (action == "darkrecomp.antialiasing") result = antialiasingModeLabel(settings.antialiasing);
     else if (action == "darkrecomp.anisotropy")
@@ -109,7 +131,8 @@ std::string videoSettingLabel(std::string_view action) {
         // The original TEXT callback sizes the button from its first label.
         // Keep the arrows sixteen small glyphs apart for every value, so its
         // native hit rectangle remains eight cells wide without overriding it.
-        if (displaySettingsSaveFailed()) result = "Save failed";
+        if (action == "darkrecomp.mouse_sensitivity" ? mouseSensitivitySaveFailed.load() : displaySettingsSaveFailed())
+            result = "Save failed";
         // Match the retail menu typography for every live setting value.
         for (char& glyph : result)
             if (glyph >= 'a' && glyph <= 'z') glyph = char(glyph - 'a' + 'A');

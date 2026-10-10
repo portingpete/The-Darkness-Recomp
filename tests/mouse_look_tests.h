@@ -366,6 +366,14 @@ static void testMouseLookContract(PPCContext& ctx) {
     check(input.setMouseSensitivity(10), "Maximum mouse sensitivity accepted");
     newEpoch(); input.mouseMotion(20, -10); tick();
     check(totals() == std::array<int64_t, 2>{800, 1600}, "Mouse sensitivity must scale physical distance linearly");
+    newEpoch(); input.mouseMotion(1000, -500); tick();
+    check(commands.size() > 1 && totals() == std::array<int64_t, 2>{40000, 80000},
+          "Maximum sensitivity must split fast mouse motion without clipping or wrapping");
+    const auto fastMaximumSensitivity = totals();
+    newEpoch();
+    for (unsigned i = 0; i < 100; ++i) { input.mouseMotion(10, -5); tick(); }
+    check(totals() == fastMaximumSensitivity,
+          "Maximum sensitivity must preserve distance across fast and slow delivery");
     check(input.setMouseSensitivity(1), "Default mouse sensitivity restored after scaling");
     newEpoch();
     memory->write32(client, 0x82081BF0);

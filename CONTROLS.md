@@ -172,8 +172,12 @@ In-game keyboard prompts follow the selected bindings.
 
 The original game's camera sensitivity controls the controller. Mouse look
 uses a separate, linear sensitivity and follows the game's inversion option.
-When launching `DarkRecomp.exe` directly, `--mouse-sensitivity 1.0` sets the
-mouse multiplier (0.1 to 10). Add `--mute --timeout-ms 0 --engine-preview` for a
+Open **Options > Controls > Mouse sensitivity** to adjust it from **0.1x to 10x**
+in 0.1x steps with Left/Right. Confirm or clicking the value increases it.
+Changes apply immediately and save between launches; the default is **1x**.
+The `--mouse-sensitivity` launch argument overrides the saved value for that run.
+For example, `Launch.cmd play --mouse-sensitivity 2` uses a 2x multiplier.
+Add `--mute --timeout-ms 0 --engine-preview` for a
 muted interactive run. The play modes supply the interactive flags; the default
 mode plays with sound instead of `--mute`.
 
