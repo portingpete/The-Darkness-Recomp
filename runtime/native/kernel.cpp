@@ -2025,6 +2025,48 @@ bool DarkRecomp::Native::fitLegacyMenuMatrix(uint32_t drawContext) {
     return true;
 }
 
+namespace {
+struct MovieBackdropMatrix {
+    uint32_t context = 0;
+    NativeVideoMode mode{};
+    std::array<uint32_t,16> original{}, fitted{};
+    std::array<uint32_t,6> canvas{};
+};
+thread_local MovieBackdropMatrix movieBackdropMatrix;
+constexpr std::array<uint32_t,6> movieCanvasOffsets{336, 340, 668, 672, 676, 680};
+}
+
+DarkRecomp::Native::FullscreenMovieBackdropScope::FullscreenMovieBackdropScope(
+    uint32_t drawContext, uint32_t caller, uint32_t rectangle, uint32_t color) {
+    const auto& pending = movieBackdropMatrix;
+    const auto mode = nativeVideoMode();
+    if (caller != 0x823A07A8 || !drawContext || pending.context != drawContext ||
+        mode.width != pending.mode.width || mode.height != pending.mode.height ||
+        !guestBufferWritable(drawContext, 684) || !guestBufferAccessible(rectangle, 16) ||
+        !guestBufferAccessible(color, 4) || memory->read32(color) != 0) return;
+    constexpr std::array<float,4> fullRectangle{0, 0, 640, 480};
+    for (unsigned i = 0; i < fullRectangle.size(); ++i)
+        if (memory->read32(rectangle + i * 4) != std::bit_cast<uint32_t>(fullRectangle[i])) return;
+    for (unsigned i = 0; i < pending.fitted.size(); ++i)
+        if (memory->read32(drawContext + 272 + i * 4) != pending.fitted[i]) return;
+    for (unsigned i = 0; i < pending.canvas.size(); ++i)
+        if (memory->read32(drawContext + movieCanvasOffsets[i]) != pending.canvas[i]) return;
+    context_ = drawContext;
+    fitted_ = {pending.fitted[0], pending.fitted[12]};
+    // Use the exact original rebuild, avoiding rounding from an inverse fit.
+    // Only these two words were changed by fitLegacyMenuMatrix.
+    memory->write32(drawContext + 272, pending.original[0]);
+    memory->write32(drawContext + 320, pending.original[12]);
+    movieBackdropMatrix.context = 0;
+}
+
+DarkRecomp::Native::FullscreenMovieBackdropScope::~FullscreenMovieBackdropScope() {
+    if (context_) {
+        memory->write32(context_ + 272, fitted_[0]);
+        memory->write32(context_ + 320, fitted_[1]);
+    }
+}
+
 bool DarkRecomp::Native::fitTitleTextMatrix(uint32_t drawContext) {
     const auto mode = nativeVideoMode();
     if (!drawContext || uint64_t(mode.width) * 9 >= uint64_t(mode.height) * 16 ||
@@ -2113,11 +2155,27 @@ extern "C" PPC_FUNC(__imp__sub_823471F8);
 PPC_FUNC(sub_823471F8) {
     StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, 0x823471F8u, uint32_t(ctx.lr));
     const uint32_t caller = uint32_t(ctx.lr), drawContext = ctx.r3.u32;
+    movieBackdropMatrix.context = 0;
     __imp__sub_823471F8(ctx, base);
+    // 823A0490 paints Special_000000 over (0,0,640,480) at 823A07A8,
+    // then draws the YUV movie separately. Remember this exact original canvas
+    // so only that existing black backdrop can cover the ultrawide margins.
+    const bool movieCanvas = caller == 0x823A06A0 && guestBufferAccessible(drawContext, 684);
+    if (movieCanvas)
+        for (unsigned i = 0; i < movieBackdropMatrix.original.size(); ++i)
+            movieBackdropMatrix.original[i] = memory->read32(drawContext + 272 + i * 4);
     // Original 823F9630 rebuilds this canvas exclusively for the player fade,
     // paints (0,0,640,480), then resets it. Its native width/640 scale must
     // cover the whole display; fitting it like a menu leaves ultrawide gaps.
     const bool fitted = caller != 0x823F98F0 && fitLegacyMenuMatrix(drawContext);
+    if (movieCanvas && fitted) {
+        movieBackdropMatrix.context = drawContext;
+        movieBackdropMatrix.mode = nativeVideoMode();
+        for (unsigned i = 0; i < movieBackdropMatrix.fitted.size(); ++i)
+            movieBackdropMatrix.fitted[i] = memory->read32(drawContext + 272 + i * 4);
+        for (unsigned i = 0; i < movieBackdropMatrix.canvas.size(); ++i)
+            movieBackdropMatrix.canvas[i] = memory->read32(drawContext + movieCanvasOffsets[i]);
+    }
     static thread_local uint32_t seen[24]{};
     static thread_local unsigned count = 0;
     if (count < 24 && std::find(seen, seen+count, caller) == seen+count) {
@@ -2131,6 +2189,7 @@ extern "C" PPC_FUNC(__imp__sub_82347448);
 PPC_FUNC(sub_82347838) {
     StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, 0x82347838u, uint32_t(ctx.lr));
     const uint32_t drawContext = ctx.r3.u32;
+    FullscreenMovieBackdropScope movieBackdrop(drawContext, uint32_t(ctx.lr), ctx.r5.u32, ctx.r6.u32);
     const auto mode = nativeVideoMode();
     // Only the original game-message picture painter. Mode 1 resolves a world
     // texture; other callers and authored image sizes keep their own layout.
