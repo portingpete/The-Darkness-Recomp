@@ -10,6 +10,7 @@
 #include "achievements_window.h"
 #include "developer_resolution_shortcut.h"
 #include "keyboard_settings.h"
+#include "mouse_settings.h"
 #include "runtime/native/keyboard_menu.h"
 #include "display_options.h"
 #include "display_window.h"
@@ -143,6 +144,8 @@ int wmain(int argc, wchar_t** argv) {
     uint32_t windowWidth = 0, windowHeight = 0, renderHeight = 720;
     float commandLineFov = 0;
     bool overrideFov = false;
+    float commandLineMouseSensitivity = kDefaultMouseSensitivity;
+    bool overrideMouseSensitivity = false;
     GameLanguage commandLineLanguage = GameLanguage::System;
     bool overrideLanguage = false;
     bool overrideFps = false, overrideFullscreen = false, overrideRenderHeight = false;
@@ -203,11 +206,14 @@ int wmain(int argc, wchar_t** argv) {
             else { renderHeight = value; overrideRenderHeight = true; }
         }
         else if (arg == L"--mouse-sensitivity" && i + 1 < argc) {
+            const wchar_t* text = argv[++i];
             wchar_t* end = nullptr;
-            const float value = float(wcstod(argv[++i], &end));
-            if (!end || *end || !nativeInput().setMouseSensitivity(value)) {
+            const float value = float(wcstod(text, &end));
+            if (!end || end == text || *end || !isValidMouseSensitivity(value)) {
                 fputs("Mouse sensitivity must be between 0.1 and 10.\n", stderr); return 1;
             }
+            commandLineMouseSensitivity = value;
+            overrideMouseSensitivity = true;
         }
         else if (arg == L"--preview-frame" && i + 1 < argc) previewFrame = argv[++i];
         else {
@@ -242,6 +248,10 @@ int wmain(int argc, wchar_t** argv) {
         initializeVideoSettingsMenu();
         initializeMenuPointer();
         nativeInput().setKeyboardBindings(DarkRecomp::loadKeyboardBindings(settingsPath));
+        nativeInput().setMouseSensitivity(overrideMouseSensitivity ? commandLineMouseSensitivity
+                                                                 : DarkRecomp::loadMouseSensitivity(settingsPath));
+        std::printf("[MouseSettings] Sensitivity=%.6g source=%s\n", double(nativeInput().mouseSensitivity()),
+                    overrideMouseSensitivity ? "command-line" : "saved");
         initializeDeveloperTools();
         targetFps = activeGraphics.frameRateLimit;
         fullscreen = activeGraphics.fullscreen;
@@ -485,6 +495,12 @@ int wmain(int argc, wchar_t** argv) {
             if (!developerTools.isOpen() && !keyboardMenuInputBlocked()) achievements.update();
             mouse.updateGameplayCapture(!developerTools.isOpen() && !achievements.isOpen());
             KeyboardMenuSaveRequest keyboardSave;
+            if (takeMouseSensitivitySaveRequest()) {
+                const auto value = nativeInput().mouseSensitivity();
+                const bool saved = DarkRecomp::saveMouseSensitivity(settingsPath, value);
+                reportMouseSensitivitySave(saved);
+                std::printf("[MouseSettings] Sensitivity=%.6g save=%u\n", double(value), unsigned(saved));
+            }
             if (takeKeyboardMenuSaveRequest(keyboardSave)) {
                 const bool saved = DarkRecomp::saveKeyboardBindings(settingsPath, keyboardSave.bindings) &&
                                    nativeInput().setKeyboardBindings(keyboardSave.bindings);

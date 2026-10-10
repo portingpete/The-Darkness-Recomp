@@ -8,6 +8,7 @@
 #include <mutex>
 #include <thread>
 #include "keyboard_bindings.h"
+#include "mouse_sensitivity.h"
 
 namespace DarkRecomp::Native {
 class Memory;
@@ -36,7 +37,7 @@ enum class PromptInputSource : uint8_t { KeyboardMouse = 0, Controller = 1 };
 // follows Win32 (down). Only the gameplay look boundary consumes this batch.
 struct MouseLookDelta {
     int64_t x = 0, y = 0;
-    float sensitivity = 1;
+    float sensitivity = kDefaultMouseSensitivity;
     uint64_t epoch = 0;
 };
 
@@ -77,6 +78,7 @@ public:
     // Before its first signal, released capture permits startup menu input.
     void setGuestMenuActive(bool active);
     bool setMouseSensitivity(float sensitivity);
+    float mouseSensitivity();
     KeyboardBindings keyboardBindings();
     bool setKeyboardBindings(const KeyboardBindings& bindings);
     void suppressMenuActivationKeys();
@@ -142,7 +144,7 @@ private:
     bool mouseLook_ = false, escapePauses_ = false, guestMenuActive_ = false;
     bool gameplayCapturePrepared_ = false, gameplayCaptureRequested_ = false, loadingCapture_ = false;
     bool guestMenuContextKnown_ = false;
-    float mouseSensitivity_ = 1;
+    float mouseSensitivity_ = kDefaultMouseSensitivity;
     int64_t mouseX_ = 0, mouseY_ = 0;
     uint64_t mouseEpoch_ = 0;
     bool mousePending_ = false;

@@ -289,6 +289,14 @@ def add_pc_menu_actions(r, translations=None):
     index = next(i for i, n in enumerate(children) if r.decode(n)[0] == "WINDOW"
                  and dict(r.decode(c) for c in n.children).get("RGN") == "1, 11, 10, 1")
     children.insert(index, window("CubeButton", "nc, KEYBOARD BINDINGS", "0,9,20,1", "darkrecomp.keybindings"))
+    # The retail controller settings end at row 15. Keep their option bindings
+    # and keyboard navigation intact, then add an independent mouse multiplier
+    # using the same native value button and sizing as the PC video settings.
+    children.extend([
+        window("CubeText", "sc, MOUSE SENSITIVITY", "1,17,10,1"),
+        window("CubeButton", "sc, < " + "1.0X".center(12) + " >", "11,17,8,1",
+               "darkrecomp.mouse_sensitivity", always_paint=True),
+        window("CubeText", "sc, LEFT/RIGHT: CHANGE; CONFIRM: NEXT", "0,19,20,1")])
     r.set_children(controls, children)
 
     original_root_count = len(r.roots)

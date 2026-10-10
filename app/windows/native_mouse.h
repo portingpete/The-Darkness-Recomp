@@ -109,7 +109,7 @@ public:
                     L"Menus: move the cursor and click an item, or use arrows and E / Space.\n"
                     L"Esc or Backspace goes back.\n"
                     L"Space also skips the intro videos. Inversion uses the game options.\n"
-                    L"Mouse sensitivity: launch with --mouse-sensitivity 1.0 (0.1 to 10).",
+                    L"Options > Controls > Mouse sensitivity: adjust mouse look (0.1 to 10).",
                     L"The Darkness - Keyboard and mouse controls", MB_OK);
                 return true;
             }
