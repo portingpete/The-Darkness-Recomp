@@ -6,6 +6,7 @@
 #include "runtime/native/input.h"
 #include "native_mouse.h"
 #include "native_shutdown.h"
+#include "resource.h"
 #include "developer_tools_window.h"
 #include "achievements_window.h"
 #include "developer_resolution_shortcut.h"
@@ -288,12 +289,18 @@ int wmain(int argc, wchar_t** argv) {
             requestedSize = {uint32_t(monitor.rcMonitor.right - monitor.rcMonitor.left),
                              uint32_t(monitor.rcMonitor.bottom - monitor.rcMonitor.top)};
         }
-        WNDCLASSW windowClass{};
+        WNDCLASSEXW windowClass{sizeof(windowClass)};
         windowClass.lpfnWndProc = NativeWindowProc;
         windowClass.hInstance = GetModuleHandleW(nullptr);
+        windowClass.hIcon = static_cast<HICON>(LoadImageW(windowClass.hInstance,
+            MAKEINTRESOURCEW(IDI_DARKRECOMP), IMAGE_ICON,
+            GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_SHARED));
+        windowClass.hIconSm = static_cast<HICON>(LoadImageW(windowClass.hInstance,
+            MAKEINTRESOURCEW(IDI_DARKRECOMP), IMAGE_ICON,
+            GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED));
         windowClass.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
         windowClass.lpszClassName = L"DarkRecompNativeWindow";
-        RegisterClassW(&windowClass);
+        RegisterClassExW(&windowClass);
         NativeDisplaySize restoredSize = requestedSize;
         if (fullscreen) {
             const float scale = (std::min)({1.f, 1280.f / requestedSize.width, 720.f / requestedSize.height});

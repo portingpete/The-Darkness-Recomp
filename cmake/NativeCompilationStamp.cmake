@@ -15,7 +15,7 @@ function(dark_enable_native_compilation_stamp)
         if(NOT native_target STREQUAL "DarkRecompPPC" AND
            (native_type STREQUAL "STATIC_LIBRARY" OR native_type STREQUAL "EXECUTABLE"))
             add_dependencies("${native_target}" VerifyNativeInputs)
-            target_compile_options("${native_target}" PRIVATE "/FI${stamp}")
+            target_compile_options("${native_target}" PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:/FI${stamp}>")
         endif()
     endforeach()
 endfunction()

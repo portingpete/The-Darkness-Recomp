@@ -1,0 +1,3 @@
+#include "@CMAKE_CURRENT_SOURCE_DIR@/app/windows/resource.h"
+
+IDI_DARKRECOMP ICON "@CMAKE_CURRENT_SOURCE_DIR@/assets/windows/darkrecomp.ico"
