@@ -186,7 +186,7 @@ def localized_text(text, region, translations):
 
     if value.startswith("< ") and value.endswith(" >"):
         original = value[2:-2].strip()
-        translated = original if re.fullmatch(r"\d+(?:%|P|X)?", original) else lookup(original)
+        translated = original if re.fullmatch(r"\d+(?:\.\d+)?(?:%|P|X)?", original) else lookup(original)
         value = "< " + translated.center(12) + " >"
     elif value.startswith("[") and value.endswith("]"):
         original = value[1:-1].strip()
