@@ -577,9 +577,18 @@ static void testInputContract(PPCContext& ctx) {
         }
         check(totalX==1200 && totalY==-600,"Frame or SDK polling rate changed mouse distance");
     }
-    check(!input.setMouseSensitivity(0) && !input.setMouseSensitivity(INFINITY) &&
-          !input.setMouseSensitivity(NAN) && input.setMouseSensitivity(2),"Invalid mouse sensitivity accepted");
+    check(input.setMouseSensitivity(0.1f) && input.consumeMouseLook().sensitivity==0.1f,
+          "Minimum mouse sensitivity rejected or lost");
+    check(input.setMouseSensitivity(10) && input.consumeMouseLook().sensitivity==10,
+          "Maximum mouse sensitivity rejected or lost");
+    check(!input.setMouseSensitivity(0) && !input.setMouseSensitivity(0.09f) &&
+          !input.setMouseSensitivity(10.1f) && !input.setMouseSensitivity(100) && !input.setMouseSensitivity(INFINITY) &&
+          !input.setMouseSensitivity(-INFINITY) && !input.setMouseSensitivity(NAN),
+          "Out-of-range or non-finite mouse sensitivity accepted");
+    check(input.consumeMouseLook().sensitivity==10,"Rejected mouse sensitivity changed the active multiplier");
+    check(input.setMouseSensitivity(2),"Valid mouse sensitivity rejected");
     input.mouseMotion(8,-4);
+    check(input.mouseSensitivity()==2,"Reading mouse sensitivity changed the active multiplier");
     const auto sensitive=input.consumeMouseLook();
     check(sensitive.x==8 && sensitive.y==-4 && sensitive.sensitivity==2,"Mouse sensitivity lost or applied to device counts");
     check(input.setMouseSensitivity(1),"Cannot restore mouse sensitivity");

@@ -175,9 +175,12 @@ class VideoMenu(unittest.TestCase):
                 edited, = [n for n in after.roots if after.decode(n) == ("WINDOW", name)]
                 previous = [tree(before, n) for n in original.children]
                 added = [n for n in edited.children if tree(after, n) not in previous]
-                self.assertEqual(len(added), 1)
+                self.assertEqual(len(added), 4 if name == "options_controller" else 1)
                 self.assertEqual([tree(after, n) for n in edited.children if n not in added], previous)
-                props = dict(after.decode(n) for n in added[0].children)
+                entry, = [n for n in added if dict(after.decode(c) for c in n.children).get("SCRIPT_PRESSED") ==
+                          ("darkrecomp.keybindings" if name == "options_controller"
+                           else "cg_submenu('darkrecomp_exit_confirm')")]
+                props = dict(after.decode(n) for n in entry.children)
                 self.assertEqual(props["CLASSNAME"], "CubeButton")
                 self.assertEqual(props["SCRIPT_PRESSED"], "darkrecomp.keybindings" if name == "options_controller"
                                  else "cg_submenu('darkrecomp_exit_confirm')")
@@ -192,6 +195,42 @@ class VideoMenu(unittest.TestCase):
             actions = [dict(after.decode(p) for p in n.children).get("SCRIPT_PRESSED")
                        for n in confirm.children if after.decode(n)[0] == "WINDOW"]
             self.assertEqual([a for a in actions if a], ["cg_prevmenu()", "darkrecomp.exit"])
+
+    def test_mouse_sensitivity_is_separate_and_fits_controls_page(self):
+        for (before, _), (after, _) in zip(registries(self.source), registries(self.output)):
+            source, = [n for n in before.roots if before.decode(n) == ("WINDOW", "options_controller")]
+            page, = [n for n in after.roots if after.decode(n) == ("WINDOW", "options_controller")]
+            self.assertEqual([before.decode(c) for c in source.children if before.decode(c)[0] != "WINDOW"],
+                             [after.decode(c) for c in page.children if after.decode(c)[0] != "WINDOW"])
+            controls = [dict(after.decode(c) for c in n.children) for n in page.children
+                        if after.decode(n)[0] == "WINDOW"]
+            label, = [c for c in controls if c.get("TEXT") == "sc, MOUSE SENSITIVITY"]
+            button, = [c for c in controls if c.get("SCRIPT_PRESSED") == "darkrecomp.mouse_sensitivity"]
+            help_text, = [c for c in controls if c.get("TEXT") == "sc, LEFT/RIGHT: CHANGE; CONFIRM: NEXT"]
+            self.assertEqual(label["RGN"], "1,17,10,1")
+            self.assertEqual(button["RGN"], "11,17,8,1")
+            self.assertEqual(button["CLASSNAME"], "CubeButton")
+            self.assertEqual(button["ALWAYSPAINT"], "1")
+            self.assertEqual(button["TEXT"], "sc, < " + "1.0X".center(12) + " >")
+            self.assertEqual(len(button["TEXT"][4:]), 16)
+            self.assertNotIn("OPTION", button, "mouse multiplier must not reuse the controller option")
+            self.assertEqual(help_text["RGN"], "0,19,20,1")
+            for added in (label, button, help_text):
+                x, y, width, height = map(int, added["RGN"].split(","))
+                self.assertLessEqual(x + width, 20)
+                self.assertLessEqual(y + height, 20)
+                self.assertLessEqual(len(added["TEXT"][4:]), width * 2)
+                for other in controls:
+                    if other is added:
+                        continue
+                    ox, oy, ow, oh = map(int, other["RGN"].split(","))
+                    self.assertTrue(x + width <= ox or ox + ow <= x or y + height <= oy or oy + oh <= y,
+                                    f"mouse setting overlaps {other}")
+            actions = [c for c in controls if c.get("CLASSNAME") in ("CubeButton", "CubeOptionButton")]
+            self.assertEqual(actions[-1], button)
+            keyboard, = [c for c in actions if c.get("SCRIPT_PRESSED") == "darkrecomp.keybindings"]
+            invert, = [c for c in actions if c.get("OPTION") == "OPT\\CONTROLLER_INVERTYAXIS"]
+            self.assertLess(actions.index(keyboard), actions.index(invert))
 
     def test_generated_visible_menu_text_uses_caps(self):
         for (before, _), (after, _) in zip(registries(self.source), registries(self.output)):

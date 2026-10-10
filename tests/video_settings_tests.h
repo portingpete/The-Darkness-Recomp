@@ -4,6 +4,7 @@
 #include "runtime/native/fov_settings.h"
 #include "runtime/native/language_settings.h"
 #include "runtime/native/native_menu_text.h"
+#include "runtime/native/input.h"
 #include <fstream>
 #include <utility>
 
@@ -197,6 +198,74 @@ static void testVideoSettings(PPCContext& ctx) {
     check(!graphicsSettings().motionBlur && takeDisplaySettingsSaveRequest() &&
           videoSettingLabel("darkrecomp.motionblur").find("OFF") != std::string::npos,
           "native Motion Blur row did not disable/persist");
+    // The Controls menu uses the same original value-button callbacks.
+    auto& mouseInput = nativeInput();
+    const float previousMouseSensitivity = mouseInput.mouseSensitivity();
+    const auto beforeMouseGraphics = graphicsSettings();
+    const auto beforeMouseFov = fieldOfViewSetting();
+    check(mouseInput.setMouseSensitivity(1), "seed mouse sensitivity menu fixture");
+    string(block + 0x3800, "darkrecomp.mouse_sensitivity");
+    call = ctx; call.r3.u64 = button; call.r4.u64 = block + 0x3200;
+    call.r5.u64 = block + 0x3000; call.r6.u64 = block + 0x3800;
+    sub_8239F0E0(call, base);
+    takeMouseSensitivitySaveRequest();
+    takeDisplaySettingsSaveRequest();
+    key(227);
+    check(mouseInput.mouseSensitivity() == 1.1f && takeMouseSensitivitySaveRequest() &&
+          videoSettingLabel("darkrecomp.mouse_sensitivity").find("1.1X") != std::string::npos,
+          "Right did not adjust mouse sensitivity or request persistence");
+    key(227 | 0x8000);
+    check(mouseInput.mouseSensitivity() == 1.1f && !takeMouseSensitivitySaveRequest(),
+          "release changed mouse sensitivity twice");
+    key(226);
+    check(mouseInput.mouseSensitivity() == 1 && takeMouseSensitivitySaveRequest(),
+          "Left did not decrease mouse sensitivity");
+    key(228);
+    check(mouseInput.mouseSensitivity() == 1.1f && takeMouseSensitivitySaveRequest(),
+          "Confirm did not adjust mouse sensitivity");
+    call = ctx; call.r3.u64 = button;
+    sub_823981D8(call, base);
+    check(mouseInput.mouseSensitivity() == 1.2f && call.r3.u32 == 1 && takeMouseSensitivitySaveRequest(),
+          "mouse pressed callback did not adjust mouse sensitivity");
+    mouseInput.setMouseSensitivity(std::nextafter(10.f, 0.f));
+    key(227);
+    check(mouseInput.mouseSensitivity() == 10 && takeMouseSensitivitySaveRequest(),
+          "mouse step skipped the maximum");
+    key(227);
+    check(mouseInput.mouseSensitivity() == 10 && !takeMouseSensitivitySaveRequest(),
+          "maximum mouse sensitivity changed or requested a redundant save");
+    key(226);
+    check(mouseInput.mouseSensitivity() == 9.9f && takeMouseSensitivitySaveRequest(), "fine mouse step failed");
+    mouseInput.setMouseSensitivity(0.1f);
+    key(226);
+    check(mouseInput.mouseSensitivity() == 0.1f && !takeMouseSensitivitySaveRequest(),
+          "minimum mouse sensitivity wrapped or requested a redundant save");
+    mouseInput.setMouseSensitivity(10);
+    key(227);
+    check(mouseInput.mouseSensitivity() == 10 && !takeMouseSensitivitySaveRequest(),
+          "maximum mouse sensitivity wrapped or requested a redundant save");
+    check(!changeVideoSetting("darkrecomp.mouse_sensitivity", 0) &&
+          !changeVideoSetting("darkrecomp.mouse_sensitivity", 2) && mouseInput.mouseSensitivity() == 10 &&
+          !takeMouseSensitivitySaveRequest(), "invalid direction changed or persisted mouse sensitivity");
+    reportMouseSensitivitySave(false);
+    const auto failedMouseLabel = videoSettingLabel("darkrecomp.mouse_sensitivity");
+    check(failedMouseLabel.find("SAVE FAILED") != std::string::npos && failedMouseLabel.size() - 4 == 16,
+          "mouse save failure is invisible or changes value-button width");
+    initializeNativeMenuText(true, 1);
+    const auto russianFailedMouseLabel = videoSettingLabel("darkrecomp.mouse_sensitivity");
+    check(russianFailedMouseLabel != failedMouseLabel &&
+          russianFailedMouseLabel.find(nativeMenuText("SAVE FAILED")) != std::string::npos &&
+          russianFailedMouseLabel.size() - 4 == 16,
+          "Russian mouse save failure is untranslated or changes value-button width");
+    reportMouseSensitivitySave(true);
+    check(videoSettingLabel("darkrecomp.mouse_sensitivity").find("10X") != std::string::npos,
+          "Russian menu changed the numeric mouse multiplier");
+    initializeNativeMenuText(false, 1);
+    const auto mouseLabel = videoSettingLabel("darkrecomp.mouse_sensitivity");
+    check(mouseLabel.find("10X") != std::string::npos && mouseLabel.size() - 4 == 16 &&
+          graphicsSettings() == beforeMouseGraphics && fieldOfViewSetting() == beforeMouseFov &&
+          !takeDisplaySettingsSaveRequest(), "mouse setting altered graphics preferences or value-button width");
+    mouseInput.setMouseSensitivity(previousMouseSensitivity);
     string(block + 0x3500, "darkrecomp.antialiasing");
     call = ctx;
     call.r3.u64 = button; call.r4.u64 = block + 0x3200;

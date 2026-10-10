@@ -544,10 +544,14 @@ void NativeInput::setGuestMenuActive(bool active) {
     wheelNext_ = 0;
 }
 bool NativeInput::setMouseSensitivity(float sensitivity) {
-    if (!std::isfinite(sensitivity) || sensitivity < .1f || sensitivity > 10.f) return false;
+    if (!isValidMouseSensitivity(sensitivity)) return false;
     std::lock_guard lock(mutex_);
     mouseSensitivity_ = sensitivity;
     return true;
+}
+float NativeInput::mouseSensitivity() {
+    std::lock_guard lock(mutex_);
+    return mouseSensitivity_;
 }
 void NativeInput::suppressMenuActivationKeysLocked() {
     const bool held = heldKeys_ || wheelPending_ || wheelButton_;
