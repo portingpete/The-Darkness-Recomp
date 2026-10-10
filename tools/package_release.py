@@ -14,7 +14,7 @@ BINARIES = (
     'avcodec-darkxma-62.dll', 'avutil-darkxma-60.dll', 'libwinpthread-1.dll',
     'CubeWnd.pc.xcr', 'CubeWnd.pc.ru.xcr', 'CubeWnd.pc.xcr.source.sha256', 'GameContext_Create.pc.xdf',
 )
-DOCUMENTS = ('Launch.cmd', 'LaunchWithSettings.cmd', 'LaunchStallProfiler.cmd', 'Launch.sh', 'SetupLinux.cmd', 'PlayLinux.cmd', 'START_HERE.txt', 'README.md', 'CONTROLS.md', 'RENDERING.md', 'STEAM_DECK.md', 'COPYING',
+DOCUMENTS = ('Launch.cmd', 'LaunchWithSettings.cmd', 'LaunchWithUpdates.cmd', 'LaunchStallProfiler.cmd', 'Launch.sh', 'SetupLinux.cmd', 'PlayLinux.cmd', 'START_HERE.txt', 'README.md', 'CONTROLS.md', 'RENDERING.md', 'STEAM_DECK.md', 'COPYING',
              'assets/localization/README.md', 'assets/localization/native_menu_ru.json')
 LINUX_SETUP_TOOLS = ('setup_linux.ps1', 'setup_linux.py', 'wsl_graphics.py')
 CRT_REQUIRED = ('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')
@@ -37,6 +37,8 @@ def find_crt(root: Path) -> Path:
 
 def collect_files(root: Path, crt: Path) -> dict[str, Path]:
     files = {name: root / name for name in DOCUMENTS}
+    files['tools/update_release.ps1'] = root / 'tools/update_release.ps1'
+    files['tools/update_commits.ps1'] = root / 'tools/update_commits.ps1'
     files['tools/add_steam_shortcut.py'] = root / 'tools/add_steam_shortcut.py'
     for name in LINUX_SETUP_TOOLS:
         files[f'tools/{name}'] = root / 'tools' / name
@@ -68,12 +70,27 @@ def package(root: Path, crt: Path, output: Path, version: str, revision: str) ->
     checksum = archive.with_suffix('.zip.sha256')
     if archive.exists() or checksum.exists():
         raise FileExistsError(f'Refusing to overwrite an existing release: {archive}')
+    notices = (
+        'Audio: FFmpeg (LGPL-2.1-or-later), with source, patch, build script,\r\n'
+        'provenance and license notices in audio/. The build script is also\r\n'
+        'available under tools/ at the source revision in RELEASE.json.\r\n'
+        'libwinpthread-1.dll: license in audio/COPYING.winpthreads.\r\n'
+        'Microsoft Visual C++ runtime DLLs: redistributed unmodified from\r\n'
+        'the Visual Studio x64 CRT redistributable directory.\r\n'
+        'The Darkness Recomp: GPLv3; see COPYING and the source in RELEASE.json.\r\n'
+    ).encode('utf-8')
+    # Keep the combined notice at the path understood by older updaters.
+    # Preserve SMAA's attribution and full license alongside the executable.
+    notices += (b'\r\nSMAA 1x: iryoku/smaa, pinned source and lookup tables in '
+                b'third_party/smaa at the source revision in RELEASE.json.\r\n\r\n')
+    notices += (root / 'third_party/smaa/LICENSE.txt').read_bytes()
     manifest = {
         'version': version, 'commit': revision,
         'source': f'https://github.com/portingpete/The-Darkness-Recomp/tree/{revision}',
         'sha256': {name: hashlib.sha256(path.read_bytes()).hexdigest()
                    for name, path in sorted(files.items())},
     }
+    manifest['sha256']['ThirdParty/README.txt'] = hashlib.sha256(notices).hexdigest()
     with zipfile.ZipFile(archive, 'x', zipfile.ZIP_DEFLATED, compresslevel=9) as bundle:
         for name, path in sorted(files.items()):
             if name == 'Launch.sh':
@@ -90,14 +107,7 @@ def package(root: Path, crt: Path, output: Path, version: str, revision: str) ->
                         'Copy ALL files and folders from your own extracted Xbox 360 dump here.\r\n'
                         'See START_HERE.txt beside Launch.cmd for the required folder layout.\r\n')
         bundle.writestr('RELEASE.json', json.dumps(manifest, indent=2) + '\n')
-        bundle.writestr('ThirdParty/README.txt',
-                        'Audio: FFmpeg (LGPL-2.1-or-later), with source, patch, build script,\r\n'
-                        'provenance and license notices in audio/. The build script is also\r\n'
-                        'available under tools/ at the source revision in RELEASE.json.\r\n'
-                        'libwinpthread-1.dll: license in audio/COPYING.winpthreads.\r\n'
-                        'Microsoft Visual C++ runtime DLLs: redistributed unmodified from\r\n'
-                        'the Visual Studio x64 CRT redistributable directory.\r\n'
-                        'The Darkness Recomp: GPLv3; see COPYING and the source in RELEASE.json.\r\n')
+        bundle.writestr('ThirdParty/README.txt', notices)
     with zipfile.ZipFile(archive) as bundle:
         if bundle.testzip() is not None:
             raise RuntimeError('Release ZIP verification failed.')

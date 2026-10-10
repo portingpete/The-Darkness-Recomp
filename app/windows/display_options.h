@@ -27,15 +27,16 @@ inline bool parseDisplayDimension(std::wstring_view text, uint32_t& result) {
 inline NativeDisplaySize renderSizeForDisplay(NativeDisplaySize output, uint32_t requestedHeight = 720) {
     if (!output.width || !output.height || !requestedHeight) return {};
     // Keep host targets bounded; the guest sees these dimensions divided by
-    // nativeResolutionScale, with an even logical extent on both axes.
+    // nativeResolutionScale. The original camera rounds its viewport to four
+    // logical pixels, so keep both extents aligned before publishing the mode.
     uint64_t height = (std::min)(requestedHeight, DarkRecomp::Native::kMaximumRenderHeight);
     uint64_t width = (uint64_t(output.width) * height + output.height / 2) / output.height;
     if (width > 4096) { height = height * 4096 / width; width = 4096; }
     for (;;) {
-        const uint64_t alignment = 2 * nativeResolutionScale({uint32_t(width), uint32_t(height)});
+        const uint64_t alignment = 4 * nativeResolutionScale({uint32_t(width), uint32_t(height)});
         width = (std::max)(alignment, width / alignment * alignment);
         height = (std::max)(alignment, height / alignment * alignment);
-        if (2 * nativeResolutionScale({uint32_t(width), uint32_t(height)}) == alignment)
+        if (4 * nativeResolutionScale({uint32_t(width), uint32_t(height)}) == alignment)
             return {uint32_t(width), uint32_t(height)};
     }
 }

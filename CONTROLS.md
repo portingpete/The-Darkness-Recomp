@@ -1,9 +1,12 @@
 # Native keyboard and mouse controls
 
 Run `Launch.cmd` for audio, or `Launch.cmd mute` for a muted game.
-The first connected controller uses the same local profile as keyboard and mouse,
+Keyboard/mouse play captures the cursor as soon as Continue or a confirmed New
+Game starts loading. Camera movement begins when the gameplay client is ready;
+mouse movement during loading is discarded. Escape and Alt-Tab release capture.
+The first controller detected by the game uses the same local profile as keyboard and mouse,
 regardless of its Windows controller slot. It stays selected until disconnected;
-connect your preferred controller first when several controllers are available.
+start the game with only your preferred controller connected to choose it.
 Run `LaunchWithSettings.cmd` to choose video options and language before the game
 opens, then play with audio. It reads and saves `DarkRecomp.settings.ini`, so
 the pre-game launcher and in-game Video Settings share your choices.
@@ -21,6 +24,20 @@ and a **Close** button. Progress is saved locally in
 Normal launchers record lightweight slow-frame timings in their runtime log.
 Automatic screenshots are disabled during normal play; use the preview executable's
 `--capture-frames` option when diagnostic BMP captures are specifically needed.
+
+Use `LaunchStallProfiler.cmd` to identify runtime hitches while playing with sound
+and your saved settings. Close the game after reproducing the hitch, then open the
+newest `build_native/run/desktop-*/runtime.log`. `[STALL]` lines report frames over
+16.67 ms, runtime/HLE calls over 2 ms, and the largest contributors to a slow
+frame. `[WAIT]` lines include duration, thread ID, guest PC/caller, function, and
+the waited object or fence when available. Sections cover guest code, rendering,
+audio, file I/O, waits, and Present. Profiling starts disabled; the launcher enables
+`DARKRECOMP_STALL_PROFILE=1` only for its run. Extra game arguments are accepted.
+Frame totals include normal pacing and VSync waits. Contributors use exclusive
+wall time and show the frame thread separately from workers; concurrent worker
+times can sum to more than the frame total. `pending=1` identifies a call still
+in progress at the frame boundary. `dropped` or `incomplete_thread_intervals`
+indicates that a bounded buffer or snapshot could not retain every observation.
 
 For a requested rendering-stutter diagnostic, use `Launch.cmd render-profile`.
 It records active render-thread instruction samples and their rendering phase in
@@ -43,7 +60,7 @@ The internal render height defaults to 720 pixels. Video Settings offers 360p,
 while keeping the original console allocations within their limits. Changes
 apply after restarting the game. `--windowed --width 2560 --height 1080` selects
 a window size and aspect ratio. Internal rendering supports up to 4096 x 2160,
-preserving aspect at the width limit and rounding to even guest dimensions.
+preserving aspect at the width limit and rounding to supported game dimensions.
 
 Open **F5** and check **Enable F6 resolution shortcut**, then press **F6** during
 play to switch between **720p and 1440p** without reloading the level. The shortcut
@@ -71,7 +88,8 @@ Open **Options > Video Settings** for the game's native graphics rows:
 - **Resolution:** 360p, 480p, 720p, 1080p, 1440p or 2160p; requires a restart.
 - **Display:** windowed or borderless fullscreen.
 - **Motion blur:** Off (default) or On.
-- **Antialiasing:** Off (default) or FXAA; smooths edges immediately and saves automatically.
+- **Antialiasing:** Off (default), FXAA, SMAA, MSAA 2x, MSAA 4x, or MSAA 8x.
+  Applies immediately and saves automatically.
 - **Language:** System, English, German, French, Spanish, or Italian; requires a restart.
 - **Texture filtering:** Original, 2x, 4x, 8x, or **16x anisotropic (default)**.
   Applies immediately to world textures while preserving the original UI and effects sampling.
@@ -117,7 +135,9 @@ Their Russian strings are in `assets/localization/native_menu_ru.json`; see
 [the translation guide](assets/localization/README.md) for editing and rebuilding.
 
 In menus, move the cursor over a choice and click to select it. The game releases
-mouse capture while a menu is open. Click inside gameplay to capture the mouse;
+mouse capture while a menu is open and captures it automatically when keyboard/mouse
+gameplay starts or resumes. Controller menu navigation leaves the mouse released.
+After a manual release or Alt-Tab, click inside gameplay to recapture the mouse;
 that first gameplay click only captures it.
 Press **F1** for the controls guide, **F2** to toggle capture, or **Escape**
 to pause and release the cursor. Alt-Tab, loss of focus, and closing the window

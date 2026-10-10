@@ -5,6 +5,7 @@
 #include "runtime/native/language_settings.h"
 #include "runtime/native/native_menu_text.h"
 #include <fstream>
+#include <utility>
 
 // Read through the guest's real file imports, including the startup archive.
 // A correct loose registry alone cannot affect the prefetched pause menu.
@@ -63,7 +64,7 @@ static void testVideoSettings(PPCContext& ctx) {
     initializeNativeMenuText(false, 1);
     initializeVideoSettingsMenu();
     check(!graphicsSettings().motionBlur, "motion blur must default to Off");
-    check(!graphicsSettings().antialiasing, "antialiasing must default to Off");
+    check(graphicsSettings().antialiasing == AntialiasingMode::Off, "antialiasing must default to Off");
     check(graphicsSettings().brightnessPercent == 100, "brightness must default to neutral");
     for (unsigned bits = 0; bits < 16; ++bits) {
         for (const auto name : {"XREngine_Final5", "XREngine_Final4"}) {
@@ -81,13 +82,21 @@ static void testVideoSettings(PPCContext& ctx) {
     for (const GraphicsSettings s : {GraphicsSettings{0,180,false,false,false,false}, GraphicsSettings{1000,720,true,true,true,true},
                                    GraphicsSettings{60,1080,true,false,false,true}, GraphicsSettings{60,1440,false,true,true,false},
                                    GraphicsSettings{1000,2160,true,true,true,true}})
-        for (bool aa : {false, true}) {
+        for (const auto aa : {AntialiasingMode::Off, AntialiasingMode::FXAA, AntialiasingMode::SMAA,
+                              AntialiasingMode::MSAA2x, AntialiasingMode::MSAA4x, AntialiasingMode::MSAA8x}) {
             auto selected = s; selected.antialiasing = aa;
-            for (unsigned brightness : {50u, 95u, 100u, 200u}) {
-                selected.brightnessPercent = brightness;
-                check(setGraphicsSettings(selected) && graphicsSettings() == selected, "graphics packing boundary corrupted another setting");
-            }
+            for (unsigned brightness : {50u, 95u, 100u, 200u})
+                for (unsigned anisotropy : {1u, 2u, 4u, 8u, 16u}) {
+                    selected.brightnessPercent = brightness;
+                    selected.anisotropyLevels = anisotropy;
+                    check(setGraphicsSettings(selected) && graphicsSettings() == selected,
+                          "graphics packing boundary corrupted antialiasing, brightness or filtering");
+                }
         }
+    for (const auto [mode, samples] : {std::pair{AntialiasingMode::Off, 1u}, {AntialiasingMode::FXAA, 1u},
+                                      {AntialiasingMode::SMAA, 1u}, {AntialiasingMode::MSAA2x, 2u},
+                                      {AntialiasingMode::MSAA4x, 4u}, {AntialiasingMode::MSAA8x, 8u}})
+        check(antialiasingSampleCount(mode) == samples, "antialiasing mode has the wrong world sample count");
     setGraphicsSettings({1000,720,true,true,true,true});
     auto invalid = graphicsSettings(); invalid.frameRateLimit = 1001;
     check(!setGraphicsSettings(invalid) && graphicsSettings().frameRateLimit == 1000, "invalid cap changed settings");
@@ -99,6 +108,11 @@ static void testVideoSettings(PPCContext& ctx) {
         invalid = graphicsSettings(); invalid.brightnessPercent = brightness;
         const auto saved = graphicsSettings();
         check(!setGraphicsSettings(invalid) && graphicsSettings() == saved, "invalid brightness changed settings");
+    }
+    for (unsigned mode : {6u, 7u, 255u}) {
+        invalid = graphicsSettings(); invalid.antialiasing = AntialiasingMode(mode);
+        const auto saved = graphicsSettings();
+        check(!setGraphicsSettings(invalid) && graphicsSettings() == saved, "invalid antialiasing mode changed settings");
     }
     setGraphicsSettings({});
 
@@ -190,22 +204,52 @@ static void testVideoSettings(PPCContext& ctx) {
     sub_8239F0E0(call, base);
     const auto beforeAA = graphicsSettings();
     takeDisplaySettingsSaveRequest();
-    key(227);
-    auto expectedAA = beforeAA; expectedAA.antialiasing = true;
-    check(graphicsSettings() == expectedAA && takeDisplaySettingsSaveRequest() &&
-          videoSettingLabel("darkrecomp.antialiasing").find("FXAA") != std::string::npos,
-          "native antialiasing row did not enable/persist FXAA independently");
-    key(227 | 0x8000);
-    check(graphicsSettings() == expectedAA && !takeDisplaySettingsSaveRequest(), "release toggled antialiasing twice");
-    key(226);
-    check(graphicsSettings() == beforeAA && takeDisplaySettingsSaveRequest() &&
-          videoSettingLabel("darkrecomp.antialiasing").find("OFF") != std::string::npos,
-          "native antialiasing row did not disable/persist FXAA");
+    check(!changeVideoSetting("darkrecomp.antialiasing", 0) &&
+          !changeVideoSetting("darkrecomp.antialiasing", 2) && graphicsSettings() == beforeAA &&
+          !takeDisplaySettingsSaveRequest(), "invalid antialiasing direction changed or persisted settings");
+    auto expectedAA = beforeAA;
+    const auto checkAALabel = [&](const char* label) {
+        check(videoSettingLabel("darkrecomp.antialiasing").find(label) != std::string::npos,
+              "native antialiasing label does not match its selected mode");
+    };
+    for (const auto [mode, label] : {std::pair{AntialiasingMode::FXAA, "FXAA"}, {AntialiasingMode::SMAA, "SMAA"},
+                                    {AntialiasingMode::MSAA2x, "MSAA 2X"}, {AntialiasingMode::MSAA4x, "MSAA 4X"},
+                                    {AntialiasingMode::MSAA8x, "MSAA 8X"}, {AntialiasingMode::Off, "OFF"}}) {
+        key(227);
+        expectedAA.antialiasing = mode;
+        check(graphicsSettings() == expectedAA && takeDisplaySettingsSaveRequest(),
+              "Right skipped an antialiasing mode, failed to wrap or changed another setting");
+        checkAALabel(label);
+        key(227 | 0x8000); key(227 | 0x8000);
+        check(graphicsSettings() == expectedAA && !takeDisplaySettingsSaveRequest(),
+              "repeated release messages advanced antialiasing again");
+    }
+    for (const auto [mode, label] : {std::pair{AntialiasingMode::MSAA8x, "MSAA 8X"}, {AntialiasingMode::MSAA4x, "MSAA 4X"},
+                                    {AntialiasingMode::MSAA2x, "MSAA 2X"}, {AntialiasingMode::SMAA, "SMAA"},
+                                    {AntialiasingMode::FXAA, "FXAA"}, {AntialiasingMode::Off, "OFF"}}) {
+        key(226);
+        expectedAA.antialiasing = mode;
+        check(graphicsSettings() == expectedAA && takeDisplaySettingsSaveRequest(),
+              "Left skipped an antialiasing mode, failed to wrap or changed another setting");
+        checkAALabel(label);
+        key(226 | 0x8000);
+        check(graphicsSettings() == expectedAA && !takeDisplaySettingsSaveRequest(),
+              "Left release advanced antialiasing again");
+    }
     key(228);
-    check(graphicsSettings() == expectedAA, "Confirm did not enable FXAA");
+    expectedAA.antialiasing = AntialiasingMode::FXAA;
+    check(graphicsSettings() == expectedAA && takeDisplaySettingsSaveRequest(), "Confirm did not advance to FXAA");
+    key(228 | 0x8000);
+    check(graphicsSettings() == expectedAA && !takeDisplaySettingsSaveRequest(), "Confirm release advanced antialiasing again");
     call = ctx; call.r3.u64 = button; call.r4.u64 = message;
     sub_823981D8(call, base);
-    check(graphicsSettings() == beforeAA, "mouse/pressed callback did not disable FXAA");
+    expectedAA.antialiasing = AntialiasingMode::SMAA;
+    check(graphicsSettings() == expectedAA && takeDisplaySettingsSaveRequest(), "mouse/pressed callback did not advance to SMAA");
+    memory->write32(button + 84, 0);
+    key(227);
+    check(graphicsSettings() == expectedAA && !takeDisplaySettingsSaveRequest(), "inactive row advanced antialiasing");
+    memory->write32(button + 84, 1);
+    setGraphicsSettings(beforeAA);
     const auto before = graphicsSettings();
     while(takeDisplaySettingsSaveRequest()) {}
     check(!changeVideoSetting("darkrecomp.gamma", -1) && !changeVideoSetting("darkrecomp.gamma", 1) &&

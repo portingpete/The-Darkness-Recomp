@@ -206,7 +206,8 @@ END''')
             source = (directory / (name + '.fp')).read_text(encoding='latin-1')
             for flags in variants:
                 if (name == 'XREngine_CCFuser' and flags == 2 or
-                        name == 'XREngine_Final5' and flags & 4):
+                        name == 'XREngine_Final5' and flags & 4 or
+                        name == 'GUIFadeToWhite' and flags == 0):
                     continue
                 with self.subTest(name=name, flags=flags):
                     self.assertEqual(compile_template(source, name, flags, includes),
@@ -217,12 +218,50 @@ END''')
             self.assertEqual(compile_template(source, name + '_other', flags),
                              compile_source(select_template(source, flags)))
 
-    def test_shadow_projector_uses_logical_texel_filter_at_native_scale(self):
+    def test_gui_fade_keeps_source_rgb_with_original_neutral_fade_and_alpha(self):
+        path = ROOT / 'Darkness/System/Gl/ARB_fragment_program/GUIFadeToWhite.fp'
+        source = path.read_text(encoding='latin-1')
+        original, original_metadata = compile_source(source)
+        code, metadata = compile_template(source, 'GUIFadeToWhite', 0)
+        fade = 'oCol.xyz = ((c0.xxxx) * (p1.zzzz) + (t0) * (1 - (p1.zzzz))).xyz;\n'
+        self.assertEqual(code.count(fade), 1)
+        # Strip the RGB override to recover the original shader byte for byte:
+        # samples, timers and alpha survive; RGB keeps the original neutral fade
+        # over the unboosted source instead of the colored four-tap boost.
+        self.assertEqual(code.replace(fade, ''), original)
+        self.assertEqual(metadata['instruction_count'], original_metadata['instruction_count'] + 1)
+        self.assertEqual(metadata['native_adjustment'], 'source_rgb_with_original_gui_fade')
+        self.assertEqual(metadata['textures'], original_metadata['textures'])
+        self.assertEqual(compile_template(source, 'GUIFadeToWhite_other', 0),
+                         (original, original_metadata))
+        # main() decodes raw asset bytes, preserving CRLF; read_text normalizes
+        # newlines. Both explicit styles and the raw asset must opt in identically.
+        for label, variant in (('LF', source), ('CRLF', source.replace('\n', '\r\n')),
+                               ('raw asset', path.read_bytes().decode('latin-1'))):
+            with self.subTest(newlines=label):
+                self.assertEqual(compile_template(variant, 'GUIFadeToWhite', 0), (code, metadata))
+                self.assertEqual(compile_source(variant), (original, original_metadata))
+        boost = 'MAD r0, r0, p1.y, t0;'
+        fade = 'LRP oCol, p1.z, c0.xxxx, r0;'
+        for newline in ('\n', '\r\n'):
+            variant = source.replace('\n', newline)
+            for malformed in (variant.replace(boost, ''), variant.replace(boost, boost + boost),
+                              variant.replace(fade, ''), variant.replace(fade, fade + fade),
+                              variant.replace(boost + newline + fade, fade + newline + boost)):
+                with self.assertRaisesRegex(ValueError, 'GUI fade output'):
+                    compile_template(malformed, 'GUIFadeToWhite', 0)
+
+    def test_shadow_projector_retains_logical_filter_for_unscaled_and_cpu_atlases(self):
         source = (ROOT / 'Darkness/System/Gl/ARB_fragment_program/XREngine_ShadowProj.fp').read_text(encoding='latin-1')
         code, metadata = compile_source(select_template(source, 8))
         self.assertEqual(VARIANTS['XREngine_ShadowProj'], [8])
         self.assertEqual(metadata['textures'], {0: '2D', 1: '2D'})
-        self.assertIn('position.xy + env[9].xy * float2(x - 1.5, y - 1.5)', code)
+        self.assertIn('position.xy / env[9].xy - 0.5', code)
+        self.assertIn('(base + float2(x - 1, y - 1) + 0.5) * env[9].xy', code)
+        self.assertIn('float4(1 - fraction.x, 1, 1, fraction.x)', code)
+        self.assertIn('float4(1 - fraction.y, 1, 1, fraction.y)', code)
+        self.assertIn('* weightX[x] * weightY[y]', code)
+        self.assertIn('coverage = saturate(total * (1.0 / 9.0))', code)
         self.assertIn('texture0.SampleLevel(sampler0, uv, 0)', code)
         # Original ShadowMapStep is step(receiver, sampledDepth). Its result
         # is shadow coverage: cleared reversed depth (zero) must remain lit.

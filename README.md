@@ -10,8 +10,8 @@ renderer — no emulation at runtime.
 
 Playable today: full gameplay, mouse look + controller input, video settings
 (resolution, FOV, original Xbox gamma calibration and color profiles, bloom,
-frame cap, VSync, 16x texture filtering), keyboard remapping, cursor menu selection,
-XMA audio, and saves.
+frame cap, VSync, FXAA/SMAA/MSAA antialiasing, 16x texture filtering), keyboard
+remapping, cursor menu selection, XMA audio, and saves.
 
 ## Download and play
 
@@ -26,8 +26,21 @@ The GitHub **Source code** downloads are for building the project yourself.
 3. Double-click **Launch.cmd** to play with sound.
 
 Use **LaunchWithSettings.cmd** to choose settings and language before playing.
+Use **LaunchWithUpdates.cmd** to check for new commits on GitHub's `main` branch
+before playing. It rebuilds and installs the selected commit automatically,
+preserving game files, saves, achievements, and settings. Commit updates require
+Git, Python 3.11+, CMake, and Visual Studio 2022 with C++ and Clang tools installed.
+The audio build also requires MSYS2 MinGW64 build tools at `C:\msys64` and LLVM
+at `C:\Program Files\LLVM` (including `llvm-lib.exe`).
+For a downloaded installation, it keeps a separate source/build copy and copies
+your own dump there; allow space for another game copy and the compiler outputs.
+The first build can take several minutes. Source checkouts must be clean and able
+to fast-forward to `main`; local edits and divergent commits are preserved.
 
-No compiler, Python, or separate audio setup is needed for the Windows release.
+No compiler, Python, or separate audio setup is needed to play the Windows release.
+Use **Launch.cmd** for the installed build, or extract a newer release ZIP to
+update without building. The previous release-only updater remains available as
+`powershell -NoProfile -ExecutionPolicy Bypass -File tools\update_release.ps1`.
 Use 64-bit Windows 10/11 with a Direct3D 11-capable graphics device.
 See [START_HERE.txt](START_HERE.txt) for the folder layout and troubleshooting.
 An ISO alone is not enough; use an extracted dump of the supported game revision.
@@ -47,7 +60,9 @@ keyboard and mouse bindings, and Exit Game. Their translation source is
 See [the translation guide](assets/localization/README.md) to improve the wording
 and rebuild the menus.
 
-Click the game window to capture the mouse. **F1** shows controls, **F2** toggles
+The mouse captures automatically when keyboard/mouse gameplay starts or resumes
+after a menu. Click the game window to recapture after a manual release or Alt-Tab.
+**F1** shows controls, **F2** toggles
 capture, and **Esc** releases it. Graphics options are in **Options > Video Settings**
 and in the video settings launcher. Both use the same saved settings.
 Click menu choices to select them; the mouse wheel also changes choices and **E** confirms.
@@ -56,7 +71,7 @@ achievement list. Unlocks from gameplay are stored in
 **saves/achievements.dat** and persist between launches. The list uses your game
 dump's achievement text and selected language; multiplayer achievements require
 their original gameplay conditions. Xbox Live synchronization is unavailable.
-Use **Options > Controls > Keyboard bindings** to remap gameplay keys.
+Use **Options > Controls > Keyboard bindings** to remap gameplay keys and mouse buttons.
 The four-page game menu supports primary/secondary keys, clear, defaults, and Save/Cancel.
 **Exit Game** in the pause or main menu closes the game after confirmation.
 Press **F5** to open developer tools for mission selection, player speed,
@@ -140,7 +155,8 @@ Darkness patches automatically. Existing checkouts from the old setup instructio
 are supported too. The first build needs an internet connection.
 
 You'll need 64-bit Windows, Git, Visual Studio 2022 with the **ClangCL** toolset,
-CMake 3.24+, Python 3.11+, and ~15 GB free. Output lands in
+CMake 3.24+, Python 3.11+, MSYS2 MinGW64 build tools at `C:\msys64`, LLVM at
+`C:\Program Files\LLVM`, and ~15 GB free. Output lands in
 `build_native/Release/`.
 
 The XMA audio build also requires MSYS2 at `C:\msys64` with MinGW64 GCC and
@@ -152,6 +168,7 @@ The XMA audio build also requires MSYS2 at `C:\msys64` with MinGW64 GCC and
 |---|---|
 | `Launch.cmd` | Play with sound |
 | `LaunchWithSettings.cmd` | Choose settings and language, then play with sound |
+| `LaunchWithUpdates.cmd` | Check for updates, then play with sound |
 | `LaunchStallProfiler.cmd` | Play with sound and record runtime stalls in the runtime log |
 | `Launch.cmd mute` | Play muted |
 | `Launch.cmd preview` | Engine preview build (muted by default) |
@@ -170,8 +187,9 @@ your saved game settings. Profiling is disabled by default; set
 `tools/run_native.py --stall-profile` for a bounded development run. Build with
 `-DDARK_STALL_PROFILER=OFF` to exclude the profiler completely.
 
-Click the game window to capture the mouse (**F1** controls guide, **F2**
-toggle capture, **Esc** release).
+The mouse captures automatically when keyboard/mouse gameplay starts or resumes
+after a menu. Click to recapture after a manual release or Alt-Tab (**F1** controls
+guide, **F2** toggle capture, **Esc** release).
 
 ## Docs
 
@@ -181,6 +199,24 @@ toggle capture, **Esc** release).
 
 ## Updating a downloaded release
 
+Run **LaunchWithUpdates.cmd** to build and install the latest official `main`
+commit before playing. It requires the build tools listed above and a complete
+supported game dump. The updater retains a separate source/build copy outside
+your installation, tests the build, and verifies the resulting package and files
+with SHA-256 hashes before installing. Close the game first. Recovery copies and
+build logs are kept in the folder printed by the updater. Network failures still
+let you play the installed version; build failures stop the update and leave the
+previous program files available through **Launch.cmd**.
+
+To install only published releases with no compiler, run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\update_release.ps1
+```
+
+When updating from v0.1.5, extract the new ZIP once to install the new launcher;
+the older updater does not recognize the added Russian menu files.
+
 Close the game, extract the new Windows ZIP into your existing game folder,
 and replace the included program files. Keep **Darkness/**, **saves/**, and
 **DarkRecomp.settings.ini** to preserve your game files, progress, and settings.
@@ -188,7 +224,10 @@ You do not need to rebuild.
 
 ## Updating a source build
 
-Pull the latest version and run the build again:
+**LaunchWithUpdates.cmd** also updates source checkouts. The checkout must be
+clean and able to fast-forward to official `main`; it preserves local commits
+and refuses divergent histories. It rebuilds and tests the selected commit before
+marking the installed program current. Alternatively, pull and build manually:
 
 ```powershell
 git pull --ff-only
@@ -240,3 +279,5 @@ ctest --test-dir build_native -C Release --output-on-failure
 GPLv3 — see [COPYING](COPYING), matching the upstream
 [UnleashedRecomp](https://github.com/hedge-dev/UnleashedRecomp) /
 [XenonRecomp](https://github.com/hedge-dev/XenonRecomp) toolchain this port builds on.
+
+Development includes assistance from OpenAI Codex.

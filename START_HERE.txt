@@ -9,6 +9,8 @@ THE DARKNESS RECOMP - START HERE
 
      Launch.cmd
      LaunchWithSettings.cmd
+     LaunchWithUpdates.cmd
+     LaunchStallProfiler.cmd
      Darkness\
        default.xex
        Content\
@@ -57,13 +59,31 @@ LaunchWithSettings.cmd before starting the game. Both save to the same settings
 file. In-game language changes take effect after restarting.
 
 UPDATING AN OLDER RELEASE
+Use LaunchWithUpdates.cmd to check GitHub before playing. It automatically
+rebuilds the latest main-branch commit, verifies the resulting program files,
+and keeps your game files, saves, achievements and settings. Commit updates need
+Git, Python 3.11+, CMake, and Visual Studio 2022 with C++ and Clang tools.
+The audio build also needs MSYS2 MinGW64 build tools at C:\msys64 and LLVM
+at C:\Program Files\LLVM (including llvm-lib.exe).
+Downloaded installs keep a separate source/build copy with your own dump;
+allow disk space for that copy and build outputs. Close the game before updating.
+The first build can take several minutes. If the network is unavailable, you can
+still play the installed version. The updater prints its recovery folder.
+Source checkouts must be clean and fast-forwardable; it preserves local edits.
+
+To update from v0.1.5 or earlier, extract this complete ZIP once. Older updater
+versions do not accept the newly added Russian-menu files.
+Use Launch.cmd to play without compiling. To continue checking only packaged
+releases, run:
+  powershell -NoProfile -ExecutionPolicy Bypass -File tools\update_release.ps1
+
 Close the game. Extract the new Windows ZIP into your existing game folder
 and replace the included program files. Keep your Darkness folder, saves
 folder, and DarkRecomp.settings.ini. They contain your game, progress, and
 settings, and are not supplied or overwritten by this release.
 
 IF IT DOESN'T START
-- Extract the whole ZIP. Keep both launchers and build_native together.
+- Extract the whole ZIP. Keep the launchers and build_native together.
 - If the launcher lists missing files, check step 2 above.
 - If the game reports "default.xex differs from the supported AOT revision",
   your dump uses a different revision or a modified executable. Include your
@@ -72,6 +92,10 @@ IF IT DOESN'T START
 - If the game closes after launch, look in build_native\run for the newest
   desktop-* folder and its runtime.log. Include that log when reporting the
   problem at https://github.com/portingpete/The-Darkness-Recomp/issues.
+- To diagnose a hitch, use LaunchStallProfiler.cmd, reproduce the slowdown,
+  and close the game. The newest desktop-*\runtime.log contains [STALL] and
+  [WAIT] timing reports plus the largest slow-frame contributors. It uses your
+  saved settings, and profiling is disabled again on an ordinary launch.
 
 More controls and launcher options: CONTROLS.md
 Downloads: https://github.com/portingpete/The-Darkness-Recomp/releases

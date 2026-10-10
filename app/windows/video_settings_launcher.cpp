@@ -18,6 +18,7 @@ namespace {
 namespace fs = std::filesystem;
 using DarkRecomp::Native::GraphicsSettings;
 using DarkRecomp::Native::GameLanguage;
+using DarkRecomp::Native::AntialiasingMode;
 
 constexpr int kPlayButton = IDOK;
 constexpr int kCancelButton = IDCANCEL;
@@ -175,8 +176,10 @@ void populateChoices(Launcher& launcher) {
     addChoice(rows[Display], L"Borderless fullscreen", 1);
     addChoice(rows[MotionBlur], L"Off", 0);
     addChoice(rows[MotionBlur], L"On", 1);
-    addChoice(rows[Antialiasing], L"Off", 0);
-    addChoice(rows[Antialiasing], L"FXAA", 1);
+    for (unsigned value = 0; value <= unsigned(AntialiasingMode::MSAA8x); ++value) {
+        const auto label = antialiasingModeLabel(AntialiasingMode(value));
+        addChoice(rows[Antialiasing], std::wstring(label.begin(), label.end()), value);
+    }
     addChoice(rows[TextureFiltering], L"Original", 1);
     for (unsigned level : {2u, 4u, 8u, 16u})
         addChoice(rows[TextureFiltering], std::to_wstring(level) + L"x anisotropic", level);
@@ -194,7 +197,7 @@ void populateChoices(Launcher& launcher) {
     selectValue(launcher, Resolution, settings.renderHeight);
     selectValue(launcher, Display, settings.fullscreen);
     selectValue(launcher, MotionBlur, settings.motionBlur);
-    selectValue(launcher, Antialiasing, settings.antialiasing);
+    selectValue(launcher, Antialiasing, unsigned(settings.antialiasing));
     selectValue(launcher, TextureFiltering, settings.anisotropyLevels);
     selectValue(launcher, Language, unsigned(launcher.language));
 }
@@ -241,7 +244,7 @@ void saveAndLaunch(HWND window, Launcher& launcher) {
     settings.renderHeight = unsigned(chosenValue(launcher, Resolution));
     settings.fullscreen = chosenValue(launcher, Display) != 0;
     settings.motionBlur = chosenValue(launcher, MotionBlur) != 0;
-    settings.antialiasing = chosenValue(launcher, Antialiasing) != 0;
+    settings.antialiasing = AntialiasingMode(unsigned(chosenValue(launcher, Antialiasing)));
     settings.anisotropyLevels = unsigned(chosenValue(launcher, TextureFiltering));
     const auto language = GameLanguage(unsigned(chosenValue(launcher, Language)));
 

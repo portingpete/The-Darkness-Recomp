@@ -13,8 +13,8 @@ remains 720. Video Settings now offers 360p, 480p, 720p, 1080p, 1440p and
 2160p. A 3440x1440 display can render at 3440x1440 when 1440p is selected;
 a 3840x2160 display can render at 3840x2160 when 2160p is selected. Dimensions
 are capped at 4096 pixels wide and 2160 high, preserving aspect when the width
-limit is reached and rounding to even guest dimensions. Internal resolution
-changes apply on restart.
+limit is reached and rounding to four-pixel guest viewport boundaries. Internal
+resolution changes apply on restart.
 
 After enabling **F6 resolution shortcut** in the F5 developer panel, F6 switches
 native rasterization between 720p and 1440p during play when the
@@ -43,6 +43,24 @@ resolved-texture sampling and exposure histogram normalization.
 new edge coverage inside logical pixels and retains it through resolve/present.
 Startup captures at 3440x1440 and 3840x2160 also exercise the original game.
 
+Shadow projectors retain the original Xenon fractional comparison filter and its
+three-texel box footprint. At native scales two and three, resolved shadow atlases
+contribute every physical depth texel covered by that box, with fractional weights
+at its edges. Sampling only the logical texel centers discarded additional caster
+coverage and caused moving shadows to shimmer despite higher-resolution maps.
+Unscaled atlases and CPU textures retain the original sixteen comparisons and
+normalization by nine. Depths are compared before their results are blended,
+preserving shadow softness, reversed depth, texture addressing and border depths.
+The original caster bias is retained. GPU contracts sweep fractional vertical,
+horizontal, diagonal and corner edges at scales one, two and three on hardware
+and WARP, including rasterized caster coverage inside logical texels and switches
+between resolved atlases and CPU textures.
+
+A 2560x1440 in-game Jackie monologue capture exercises this projector. The
+earlier fractional-filter repair removed coverage quantization to 1/16. Native
+atlas integration also uses the distinct caster depths and partial coverage that
+the logical-center filter skipped.
+
 The original selected display mode retains its logical resolution identifiers
 while its allocation extents change before buffer creation. The engine then
 uses those dimensions for both the perspective projection and CPU visibility
@@ -64,6 +82,14 @@ world textures and internal scene buffers. Presentation fits the existing scene
 without cropping or stretching. Restart to change the internal aspect ratio;
 `--width W --height H` selects an explicit aspect and window size. See
 [CONTROLS.md](CONTROLS.md) for launcher and input options.
+
+Tentacle menus retain the original gray fade, destination-alpha mask and
+radial/additive lighting, including the warm floating glow around the tentacles.
+`GUIFadeToWhite` uses unboosted source RGB as the fade's backdrop while keeping the
+original fade timer and alpha arithmetic. Scaled color-cube copies use point
+sampling to prevent pink contamination while the original color lookup keeps its
+interpolation. Hardware and WARP contracts cover source color, the gray glow,
+the reveal mask and retained light extraction.
 
 Options > Video Settings uses the original CubeMenu and CubeButton classes.
 `tools/compile_video_menu.py` builds private `CubeWnd.pc.xcr` and
@@ -196,6 +222,29 @@ also clears the glow bit. Existing shader permutations preserve exposure and
 color mapping. Velocity generation, radial Darkness effects and the original
 shader assets remain intact. The original captured draw metadata is unchanged;
 the selected shader's reflected texture mask controls its actual bindings.
+
+At 1440p and 4K, bloom retains the original 720p sampling footprint. The
+sixteen-tap `XRUtil_ShrinkTexture8` filter and seventeen-tap
+`XREngine_GaussClamped` filter sample a cached logical-size floating-point
+view of resolved color data, averaging every 2x2 or 3x3 physical pixel block.
+Their output is evaluated at logical pixel centers, and Final5 filters its
+bloom input on that same grid. Original weights, offsets, atlas clamps,
+exposure and fetch exponents remain intact. This prevents gaps between taps
+from dropping small highlights or producing patterned halos. Each resolve
+invalidates the logical view; resolution changes discard it. Helper draws
+are excluded from exposure histogram queries. CPU images, point samplers,
+scene detail and the sharp component of the damage effect keep their existing
+sampling. Hardware and WARP bloom contracts cover fine-light phases and
+independent filter oracles at 720p, 1440p and 4K.
+
+Lamp coronas also use the original flare visibility callback. Its Xbox query
+fallback supplied a nearly zero count to the native game, suppressing the
+flare before bloom. The native renderer now measures the original colorless,
+depth-tested patch asynchronously and feeds completed logical pixel counts
+back to the callback. Flare IDs have separate result owners from exposure
+histograms; pending measurements retain the last completion, including zero.
+Tests verify visible, partial and hidden patches, unchanged scene color/depth,
+and ordered completion at every supported rendering scale.
 
 The FOV preference remains portable;
 `--fov` overrides it for the current run. Values are horizontal degrees at

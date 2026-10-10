@@ -79,6 +79,14 @@ struct WorldSurfaceTargets {
         return slot<targets.size()?surfaceBindings[slot].key(targets[slot],slot==4):0;
     }
 };
+// Completed Xenos user-plane state. Coefficients are already transformed by
+// original 82249250 into the guest vertex shader's homogeneous output space.
+struct WorldClipPlanes {
+    uint32_t control=0;
+    std::array<EngineVector,6> planes{};
+    uint32_t enabledMask() const noexcept {return (control&0x10000u)?0u:control&63u;}
+    bool cullOnly() const noexcept {return (control&0x20000u)!=0;}
+};
 struct WorldDraw : WorldSurfaceTargets {
     WorldGeometry geometry;
     WorldVertexOptions options;
@@ -89,6 +97,7 @@ struct WorldDraw : WorldSurfaceTargets {
     std::string fragmentName;
     uint32_t fragmentFlags=0;
     EngineVector depthRange{0,1,0,0};
+    WorldClipPlanes clipPlanes;
     // Lit projected decals use env[0..33]; retain the complete supported bank.
     std::array<EngineVector,64> fragmentConstants{};
     std::array<uint16_t,16> textureIds{};
@@ -109,6 +118,7 @@ struct WorldResolve : WorldSurfaceTargets {
     int exponent=0;
 };
 bool snapshotWorldTexture(uint8_t*,uint32_t object,WorldTexture&) noexcept;
+bool snapshotWorldClipPlanes(uint8_t*,uint32_t device,WorldClipPlanes&) noexcept;
 bool snapshotWorldResolve(uint8_t*,uint32_t device,uint32_t flags,uint32_t rectangle,uint32_t destination,
                           uint32_t offset,uint32_t color,float depth,uint32_t stencil,uint32_t face,uint32_t mip,WorldResolve&) noexcept;
 struct WorldClear : WorldSurfaceTargets {

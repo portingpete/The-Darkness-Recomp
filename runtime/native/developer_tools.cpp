@@ -168,7 +168,7 @@ bool processDeveloperTools(PPCContext& ctx, uint8_t* base, uint32_t client, bool
     const auto player = updateDeveloperPlayer(call, base, client, speed, invincible, enabled, noclip);
     if (unlockDarkness || maxDarkness) {
         const auto handles = resolveDeveloperPlayer(call, base, client);
-        const auto darkness = applyDeveloperDarkness(call, base, handles, unlockDarkness, maxDarkness);
+        const auto darkness = applyDeveloperDarkness(call, base, handles, unlockDarkness, maxDarkness, client);
         publish(request, canLoad, player.hasActivePlayer, darkness.status, false, true);
     } else publish(request, canLoad, player.hasActivePlayer, player.status, player.applied, true);
     return false;

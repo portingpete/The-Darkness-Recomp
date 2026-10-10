@@ -55,7 +55,9 @@ bool changeVideoSetting(std::string_view action, int direction) noexcept {
     auto settings = graphicsSettings();
     if (action == "darkrecomp.bloom") settings.bloom = !settings.bloom;
     else if (action == "darkrecomp.motionblur") settings.motionBlur = !settings.motionBlur;
-    else if (action == "darkrecomp.antialiasing") settings.antialiasing = !settings.antialiasing;
+    else if (action == "darkrecomp.antialiasing")
+        settings.antialiasing = AntialiasingMode(step(unsigned(settings.antialiasing), direction,
+            std::array{0u, 1u, 2u, 3u, 4u, 5u}));
     else if (action == "darkrecomp.anisotropy")
         settings.anisotropyLevels = step(settings.anisotropyLevels, direction, std::array{1u, 2u, 4u, 8u, 16u});
     else if (action == "darkrecomp.brightness")
@@ -82,7 +84,7 @@ std::string videoSettingLabel(std::string_view action) {
     std::string result;
     if (action == "darkrecomp.bloom") result = settings.bloom ? "On" : "Off";
     else if (action == "darkrecomp.motionblur") result = settings.motionBlur ? "On" : "Off";
-    else if (action == "darkrecomp.antialiasing") result = settings.antialiasing ? "FXAA" : "Off";
+    else if (action == "darkrecomp.antialiasing") result = antialiasingModeLabel(settings.antialiasing);
     else if (action == "darkrecomp.anisotropy")
         result = settings.anisotropyLevels == 1 ? "Original" : std::to_string(settings.anisotropyLevels) + "x";
     else if (action == "darkrecomp.brightness") result = std::to_string(settings.brightnessPercent) + "%";

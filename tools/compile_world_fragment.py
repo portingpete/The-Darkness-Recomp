@@ -1,6 +1,7 @@
 """Translate hash-pinned original world fragment sources to native HLSL.
 
 Preserves register numbers, texture dimensionality/slots and masked lanes.
+The named tentacle GUI fade preserves the revealed background's source RGB.
 Unknown syntax/opcodes fail the build. Assets are never rewritten.
 """
 from pathlib import Path
@@ -334,22 +335,52 @@ float2 nativeColorLookupUv(float2 uv, uint slot) {
 }
 '''
     if uses_pcf4x4:
-        # The guest's four-by-four taps are spaced in logical shadow texels.
-        # env[9] retains that pitch while the native depth map grows by 2x/3x.
+        # FPInclude_Xenon TEXPCF4X42D compares sixteen point depths, then
+        # applies getWeights2D's fractional outer weights. The weight sum is
+        # nine, not sixteen. At native resolution integrate the same box over
+        # every physical texel, rather than sparsely sampling logical centers.
+        # Otherwise moving casters alias despite the higher-resolution atlas.
         # FPInclude_Xenon ShadowMapStep is step(reference, sampledDepth):
         # reversed-depth occluders return one; a cleared zero texel returns
         # zero. The projector emits this as shadow coverage in red and 1-red
         # in alpha, so reversing the comparison darkens the empty atlas area.
-        source += '''float nativeShadow4x4(float4 position) {
+        source += '''cbuffer NativeShadow : register(b5) { uint shadowScale; uint3 shadowPadding; }
+float nativeShadow4x4(float4 position) {
+    float coverage = 0;
+    if (shadowScale > 1) {
+        float2 pitch = env[9].xy / shadowScale;
+        int width = 3 * (int)shadowScale;
+        float2 nativePixel = position.xy / pitch - 0.5 * width;
+        float2 nativeBase = floor(nativePixel);
+        float2 nativeFraction = frac(nativePixel);
+        float nativeTotal = 0;
+        [loop] for (int ny = 0; ny <= width; ++ny) {
+            float wy = ny == 0 ? 1 - nativeFraction.y : ny == width ? nativeFraction.y : 1;
+            [loop] for (int nx = 0; nx <= width; ++nx) {
+                float wx = nx == 0 ? 1 - nativeFraction.x : nx == width ? nativeFraction.x : 1;
+                float2 nativeUv = (nativeBase + float2(nx, ny) + 0.5) * pitch;
+                float nativeDepth = texture0.SampleLevel(sampler0, nativeUv, 0).r * sampleScale[0].x;
+                nativeTotal += (nativeDepth >= position.z ? 1.0 : 0.0) * wx * wy;
+            }
+        }
+        coverage = saturate(nativeTotal / (width * width));
+    } else {
+    float2 pixel = position.xy / env[9].xy - 0.5;
+    float2 base = floor(pixel);
+    float2 fraction = frac(pixel);
+    float4 weightX = float4(1 - fraction.x, 1, 1, fraction.x);
+    float4 weightY = float4(1 - fraction.y, 1, 1, fraction.y);
     float total = 0;
     [unroll] for (int y = 0; y < 4; ++y) {
         [unroll] for (int x = 0; x < 4; ++x) {
-            float2 uv = position.xy + env[9].xy * float2(x - 1.5, y - 1.5);
+            float2 uv = (base + float2(x - 1, y - 1) + 0.5) * env[9].xy;
             float depth = texture0.SampleLevel(sampler0, uv, 0).r * sampleScale[0].x;
-            total += depth >= position.z ? 1.0 : 0.0;
+            total += (depth >= position.z ? 1.0 : 0.0) * weightX[x] * weightY[y];
         }
     }
-    return total * (1.0 / 16.0);
+        coverage = saturate(total * (1.0 / 9.0));
+    }
+    return coverage;
 }
 '''
     source += 'struct Fragment { float4 position : SV_Position; float4 tex[8] : TEXCOORD0; float4 color : COLOR0; };\n'
@@ -363,7 +394,25 @@ def compile_template(source, name, flags, includes=None):
     # have no lookup at all. Keep their generated HLSL byte-for-byte unchanged.
     lookup_slot = (1 if name == 'XREngine_CCFuser' and flags == 2 else
                    2 if name == 'XREngine_Final5' and flags & 4 else None)
-    return compile_source(select_template(source, flags, includes), lookup_slot)
+    selected = select_template(source, flags, includes)
+    source_rgb_gui_fade = name == 'GUIFadeToWhite' and flags == 0
+    if source_rgb_gui_fade:
+        # This original program draws the background through the tentacle GUI's
+        # destination-alpha mask. Fade the unboosted source RGB to the original
+        # neutral gray so menu lights survive and the fully open reveal matches
+        # the settled background. Keep the original samples, constants and alpha
+        # calculation; the original asset is unchanged.
+        boost = 'MAD r0, r0, p1.y, t0;'
+        fade = 'LRP oCol, p1.z, c0.xxxx, r0;'
+        original_tail = re.compile(re.escape(boost) + r'(\r?\n)' + re.escape(fade))
+        if (selected.count(boost) != 1 or selected.count(fade) != 1 or
+                len(original_tail.findall(selected)) != 1):
+            raise ValueError('Unexpected original GUI fade output')
+        selected = original_tail.sub(lambda match: match[0] + match[1] + 'LRP oCol.xyz, p1.z, c0.xxxx, t0;', selected)
+    shader, metadata = compile_source(selected, lookup_slot)
+    if source_rgb_gui_fade:
+        metadata['native_adjustment'] = 'source_rgb_with_original_gui_fade'
+    return shader, metadata
 
 
 def compile_fixed(source):

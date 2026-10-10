@@ -36,11 +36,19 @@ int main() {
             check(loadGraphicsSettings(path) == GraphicsSettings{120,720,true,true,false} && loadFieldOfView(path) == 114,
                   "unsafe saved resolution did not recover independently");
         }
-        for (const auto requested : {720u, 1080u, 1440u}) {
-            const auto render = renderSizeForDisplay({3440,1440}, requested);
-            check(render.width == requested * 3440 / 1440 && render.height == requested,
-                  "supported native resolution was silently downscaled");
+        for (const NativeDisplaySize expected : {NativeDisplaySize{1720,720}, {2576,1080}, {3440,1440}}) {
+            const auto render = renderSizeForDisplay({3440,1440}, expected.height);
+            check(render.width == expected.width && render.height == expected.height,
+                  "supported native resolution did not preserve the aligned guest viewport");
         }
+        // The physical ultrawide display hits the host width cap at 2160p.
+        // The former even-only mode was 1364x570, while the original camera
+        // produced 1364x568 and every startup video draw failed the native gate.
+        const auto cappedUltrawide = renderSizeForDisplay({3440,1440}, 2160);
+        const auto cappedScale = nativeResolutionScale(cappedUltrawide);
+        check(cappedUltrawide.width == 4092 && cappedUltrawide.height == 1704 && cappedScale == 3 &&
+              cappedUltrawide.width / cappedScale == 1364 && cappedUltrawide.height / cappedScale == 568,
+              "capped ultrawide mode differs from the original fullscreen camera viewport");
         const auto native4k = renderSizeForDisplay({3840,2160}, 2160);
         check(native4k.width == 3840 && native4k.height == 2160, "4K resolution was silently downscaled");
         const auto superwide = renderSizeForDisplay({5120,1440}, 2160);
@@ -49,8 +57,8 @@ int main() {
             for (uint32_t height = 180; height <= 2160; ++height) {
                 const auto render = renderSizeForDisplay(output, height);
                 const auto scale = nativeResolutionScale(render);
-                check(scale >= 1 && scale <= 3 && render.width % (2 * scale) == 0 && render.height % (2 * scale) == 0,
-                      "native scaling did not retain exact integer edges and even guest dimensions");
+                check(scale >= 1 && scale <= 3 && render.width % (4 * scale) == 0 && render.height % (4 * scale) == 0,
+                      "native scaling did not retain exact integer edges and four-pixel guest viewports");
                 check(render.width / scale <= 2560 && render.height / scale <= 720,
                       "native scaling exceeded the guest allocation limits");
             }
@@ -60,21 +68,42 @@ int main() {
             check(saveDisplaySettings(path,114,high) && loadGraphicsSettings(path)==high,
                   "high internal resolution did not persist");
         }
-        const GraphicsSettings custom{137, 719, true, false, false, true, true};
+        const GraphicsSettings custom{137, 719, true, false, false, true, AntialiasingMode::FXAA};
         check(saveDisplaySettings(path, 93.125f, custom), "save custom graphics values");
         check(loadGraphicsSettings(path) == custom && loadFieldOfView(path) == 93.125f,
               "complete graphics round trip including bloom, motion blur and antialiasing");
-        auto aaOff = custom; aaOff.antialiasing = false;
+        check(GraphicsSettings{}.antialiasing == AntialiasingMode::Off, "antialiasing must default to Off");
+        for (const auto mode : {AntialiasingMode::Off, AntialiasingMode::FXAA, AntialiasingMode::SMAA,
+                               AntialiasingMode::MSAA2x, AntialiasingMode::MSAA4x, AntialiasingMode::MSAA8x}) {
+            auto selected = custom; selected.antialiasing = mode;
+            check(saveDisplaySettings(path, 93.125f, selected) && loadGraphicsSettings(path) == selected &&
+                  loadFieldOfView(path) == 93.125f, "antialiasing mode did not persist independently");
+            wchar_t savedMode[16]{};
+            GetPrivateProfileStringW(L"Display", L"Antialiasing", L"missing", savedMode, 16, path.c_str());
+            check(std::wstring_view(savedMode) == std::to_wstring(unsigned(mode)),
+                  "antialiasing did not save the stable numeric mode");
+        }
+        auto aaOff = custom; aaOff.antialiasing = AntialiasingMode::Off;
         check(saveDisplaySettings(path, 93.125f, aaOff) && loadGraphicsSettings(path) == aaOff,
               "antialiasing Off did not persist independently");
-        check(saveDisplaySettings(path, 93.125f, custom), "restore FXAA");
+        check(WritePrivateProfileStringW(L"Display", L"Antialiasing", L"1", path.c_str()) &&
+              loadGraphicsSettings(path) == custom, "legacy antialiasing 1 must retain FXAA");
+        check(WritePrivateProfileStringW(L"Display", L"Antialiasing", L"0", path.c_str()) &&
+              loadGraphicsSettings(path) == aaOff, "legacy antialiasing 0 must retain Off");
         check(WritePrivateProfileStringW(L"Display", L"Antialiasing", nullptr, path.c_str()), "remove antialiasing for legacy settings");
         check(loadGraphicsSettings(path) == aaOff, "legacy settings must default antialiasing to Off");
-        for (const auto bad : {L"-1", L"2", L"FXAA", L"42949672960"}) {
+        for (const auto bad : {L"-1", L"6", L"255", L"FXAA", L"1.0", L"42949672960"}) {
             WritePrivateProfileStringW(L"Display", L"Antialiasing", bad, path.c_str());
             check(loadGraphicsSettings(path) == aaOff, "invalid antialiasing did not fall back independently");
         }
         check(saveDisplaySettings(path, 93.125f, custom), "restore FXAA after invalid values");
+        check(setGraphicsSettings(custom), "select valid antialiasing before invalid-mode checks");
+        for (unsigned mode : {6u, 7u, 255u}) {
+            auto invalid = custom; invalid.antialiasing = AntialiasingMode(mode);
+            check(!validGraphicsSettings(invalid) && !setGraphicsSettings(invalid) && graphicsSettings() == custom &&
+                  !saveDisplaySettings(path, 90, invalid) && loadGraphicsSettings(path) == custom &&
+                  loadFieldOfView(path) == 93.125f, "invalid antialiasing mode partially applied settings");
+        }
         check(GraphicsSettings{}.anisotropyLevels == 16, "new settings must default to 16x anisotropic filtering");
         for (unsigned levels : {1u, 2u, 4u, 8u, 16u}) {
             auto selected = custom; selected.anisotropyLevels = levels;

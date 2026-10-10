@@ -1,9 +1,11 @@
 #pragma once
 #include "runtime/native/developer_missions.h"
+#include "runtime/native/menu_pointer.h"
 #include <cstring>
 
 extern "C" PPC_FUNC(__imp__sub_820C5D30);
 extern "C" PPC_FUNC(__imp__sub_820F68D8);
+extern "C" PPC_FUNC(__imp__sub_82102D38);
 
 namespace DeveloperUpdateFixture {
 constexpr uint32_t noOpAddress = 0x827AAB08;
@@ -62,6 +64,29 @@ static void testDeveloperUpdate(PPCContext& ctx) {
     memory->write32(0x82A690F8, systemObject);
     PPC_LOOKUP_FUNC(base, noOpAddress) = originalStep;
     PPC_LOOKUP_FUNC(base, applicationStepAddress) = originalStep;
+    // Original820F4460 installs CubeFrontEnd at application+3672;
+    // original8237CAC8 stores the application back-reference at FrontEnd+24.
+    // Keep a different CWorldData reference at +60 to catch using that field.
+    const auto frontend = fixture + 0x3000, worldData = fixture + 0x5000;
+    memory->write32(application + 60, worldData);
+    memory->write32(application + 3672, frontend);
+    memory->write32(frontend, 0x82071A10);
+    memory->write32(frontend + 24, application);
+    check(guestGameplayLoadFrontend(base, application) == frontend,
+          "Accepted load confused CWorldData with its owning CubeFrontEnd");
+    memory->write32(frontend + 24, manager);
+    check(guestGameplayLoadFrontend(base, application) == 0,
+          "Foreign frontend accepted the application's load request");
+    memory->write32(frontend + 24, application);
+    memory->write32(frontend, unrelatedTable);
+    check(guestGameplayLoadFrontend(base, application) == 0,
+          "Unrelated frontend type accepted a gameplay load");
+    memory->write32(frontend, 0x82071A10);
+    memory->write32(application + 3672, 0xfffffffcu);
+    check(guestGameplayLoadFrontend(base, application) == 0,
+          "Malformed frontend address reached a load ownership read");
+    memory->write32(application + 60, 0);
+    memory->write32(application + 3672, 0);
     // The console service exists, while app+60 remains uninitialized. The
     // original general update exits before platform/heap work, but the outer
     // Mod update still executes both manager+84 and application+172 callbacks.
@@ -137,8 +162,12 @@ static void testDeveloperUpdate(PPCContext& ctx) {
     // The original preload callback sets its byte before deferred loading.
     memory->write32(application, 0x82055458);
     auto flagCall = input;
+    auto expectedFlagCall = input;
+    __imp__sub_82102D38(expectedFlagCall, base);
     sub_82102D38(flagCall, base);
-    check(PPC_LOAD_U8(application + 4908) == 1, "original preload callback did not set its application flag");
+    check(PPC_LOAD_U8(application + 4908) == 1 &&
+          std::memcmp(&flagCall, &expectedFlagCall, sizeof(flagCall)) == 0,
+          "Preload capture hook changed the original flag or returned PPC context");
     originalCalls = 0; actual = input;
     sub_820C5D30(actual, base);
     check(originalCalls == 2 && !developerSnapshot().canLoadMission &&

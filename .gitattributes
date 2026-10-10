@@ -9,3 +9,8 @@ tools/wsl_graphics.py text eol=lf
 *.cmake text eol=lf
 CMakeLists.txt text eol=lf
 tools/patches/*.patch text eol=lf whitespace=-blank-at-eol
+# Keep the pinned SMAA source/lookup text and its embedded copy unchanged.
+third_party/smaa/AreaTex.h text eol=lf whitespace=-blank-at-eol
+third_party/smaa/SearchTex.h text eol=lf whitespace=-blank-at-eol
+third_party/smaa/SMAA.hlsl text eol=lf whitespace=-blank-at-eol
+third_party/smaa/SMAAEmbedded.h text eol=lf whitespace=-blank-at-eol

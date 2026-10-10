@@ -2,6 +2,7 @@
 #include "renderer/engine/simple_mesh.h"
 #include "renderer/engine/display_gamma.h"
 #include "world_renderer.h"
+#include "smaa_d3d11.h"
 #include <d3d11.h>
 #include <dxgi.h>
 #include <wrl/client.h>
@@ -22,6 +23,7 @@ class EnginePreviewD3D11 {
     Ptr<ID3D11RenderTargetView> presentationTarget_;
     Ptr<ID3D11VertexShader> presentationVs_;
     Ptr<ID3D11PixelShader> presentationPs_, antialiasingPs_;
+    std::unique_ptr<SmaaD3D11> smaa_;
     Ptr<ID3D11Buffer> presentationConstants_;
     Ptr<ID3D11Buffer> displayGammaBuffer_;
     Ptr<ID3D11ShaderResourceView> displayGammaView_, calibratedSource_;

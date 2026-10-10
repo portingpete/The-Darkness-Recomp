@@ -369,17 +369,17 @@ static void partialClears(WorldRendererD3D11& renderer,ID3D11DeviceContext* cont
     require(query->result->samples.load()==3*1152,"Clear helper geometry contaminated exposure queries or lost a resumed segment");
     std::puts("Rectangular clears passed: all7 color/depth/stencil masks,35 clipped/empty/full regions, HDR pixels, retained borders, and resumed GPU queries.");
 }
-static void retainedDepthGrowth(WorldRendererD3D11& renderer) {
+static void retainedDepthGrowth(WorldRendererD3D11& renderer,uint32_t identity=701) {
     // An atlas first visits its left tile, then a tile extending the retained
     // allocation. Earlier depth and every stencil bit must survive the growth.
-    WorldClear base;base.targets={0,0,0,0,701};base.viewport={0,0,64,32};base.flags=48;
+    WorldClear base;base.targets={0,0,0,0,identity};base.viewport={0,0,64,32};base.flags=48;
     base.depth=.25f;base.stencil=0x35;renderer.clear(base);
     auto patch=base;patch.rectangle=std::array<int32_t,4>{4,7,20,23};patch.depth=.75f;patch.stencil=0xCA;
-    renderer.clear(patch);const auto before=renderer.readSurface(701,true);
+    renderer.clear(patch);const auto before=renderer.readSurface(identity,true);
     require(before.size()==64*32*4,"Depth growth fixture extent");
     auto next=base;next.viewport={64,0,32,64};next.rectangle=std::array<int32_t,4>{64,0,96,64};
     next.depth=.5f;next.stencil=0x96;renderer.clear(next);
-    const auto after=renderer.readSurface(701,true);
+    const auto after=renderer.readSurface(identity,true);
     require(after.size()==96*64*4,"Depth growth did not retain the new atlas extent");
     for(unsigned y=0;y<64;++y)for(unsigned x=0;x<96;++x) {
         uint32_t actual=0;std::memcpy(&actual,after.data()+(y*96+x)*4,4);
@@ -395,11 +395,10 @@ static void retainedDepthGrowth(WorldRendererD3D11& renderer) {
         } else require(actual==0,"Depth growth left uninitialized pixels outside the old atlas and new tile");
     }
 }
-static void retainedAttachmentPair(WorldRendererD3D11& renderer,ID3D11DeviceContext* context,const WorldDraw& queryDraw) {
+static void retainedAttachmentPair(WorldRendererD3D11& renderer,ID3D11DeviceContext* context,const WorldDraw& queryDraw,uint32_t identity=711) {
     // Exercise larger depth, larger color, and crossed width/height histories.
     // All must retain the union without discarding either attachment's pixels.
     const std::array<std::array<uint32_t,4>,3> extents{{{64,64,96,80},{96,80,64,64},{96,64,64,80}}};
-    uint32_t identity=711;
     for(const auto& e:extents) {
         const uint32_t colorId=identity++,depthId=identity++;
         WorldClear color;color.targets={colorId,0,0,0,0};color.viewport={0,0,e[0],e[1]};color.flags=1;
@@ -960,6 +959,7 @@ static void immediateCanonicalContract(WorldRendererD3D11& renderer) {
 #include "world_projected_texture_tests.h"
 #include "world_material_tests.h"
 #include "world_image_initialization_tests.h"
+#include "world_clip_plane_tests.h"
 #include "world_video_tests.h"
 #include "world_shadow_projection_tests.h"
 #include "world_shadow_bias_tests.h"
@@ -967,8 +967,13 @@ static void immediateCanonicalContract(WorldRendererD3D11& renderer) {
 #include "world_shadow_volume_tests.h"
 #include "world_shadow_capture_tests.h"
 #include "world_color_lookup_tests.h"
+#include "world_gui_fade_tests.h"
+#include "bloom_resolution_tests.h"
+#include "darkness_arm_bloom_tests.h"
+#include "flare_visibility_tests.h"
 #include "world_resolve_fringe_tests.h"
 static void shadowExtrusionRasterPass(WorldRendererD3D11& renderer,const WorldDraw& seed,unsigned scale);
+#include "world_msaa_tests.h"
 static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
     context->ClearState();WorldRendererD3D11 renderer(device,context);
     WorldClear clear;clear.targets={1,0,0,0,2};clear.viewport={0,0,64,64};clear.flags=49;renderer.clear(clear);
@@ -1542,6 +1547,7 @@ static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
     transparentMeshPass(renderer,1);
     projectedTexturePass(renderer,1);
     waterMaterialPass(renderer,1);
+    worldClipPlanePass(renderer,1);
     worldVideoPass(renderer,1);
     projectedMarkPass(renderer,1);
     shadowProjectionPass(renderer,histogramDraw,1);
@@ -1591,7 +1597,10 @@ static void passes(ID3D11Device* device,ID3D11DeviceContext* context) {
         require(matched,"Resolve/present lost native subpixel edge coverage");
         std::printf("PhysicalRaster%u: %u covered pixels, %u mixed logical edge blocks retained through resolve/present.\n",scale,physicalCoverage,mixedBlocks);
         alphaCoveragePass(scaled,histogramDraw,scale);
-        if(scale==2)transparentMeshPass(scaled,scale);
+        if(scale==2) {
+            transparentMeshPass(scaled,scale);
+            worldClipPlanePass(scaled,scale);
+        }
         projectedTexturePass(scaled,scale);
         waterMaterialPass(scaled,scale);
         worldVideoPass(scaled,scale);
@@ -1780,18 +1789,22 @@ static void worldRendererDebugContract(ID3D11Device* device) {
 int main(int argc,char** argv) {
     ComPtr<ID3D11Device> device;
     try {
-        bool warp=false,cpuOnly=false,colorGradeOnly=false,resolutionSwitchOnly=false,frontbufferOnly=false;
+        bool warp=false,cpuOnly=false,colorGradeOnly=false,guiFadeOnly=false,resolutionSwitchOnly=false,frontbufferOnly=false,clipPlanesOnly=false,bloomOnly=false,armBloomOnly=false;
         for(int i=1;i<argc;++i) {
             if(std::strcmp(argv[i],"--warp")==0)warp=true;
             else if(std::strcmp(argv[i],"--cpu-only")==0)cpuOnly=true;
             else if(std::strcmp(argv[i],"--color-grade-only")==0)colorGradeOnly=true;
+            else if(std::strcmp(argv[i],"--gui-fade-only")==0)guiFadeOnly=true;
             else if(std::strcmp(argv[i],"--resolution-switch-only")==0)resolutionSwitchOnly=true;
             else if(std::strcmp(argv[i],"--frontbuffer-only")==0)frontbufferOnly=true;
-            else throw std::runtime_error("Unknown argument; expected --warp, --cpu-only, --color-grade-only, --resolution-switch-only or --frontbuffer-only");
+            else if(std::strcmp(argv[i],"--clip-planes-only")==0)clipPlanesOnly=true;
+            else if(std::strcmp(argv[i],"--bloom-only")==0)bloomOnly=true;
+            else if(std::strcmp(argv[i],"--arm-bloom-only")==0)armBloomOnly=true;
+            else throw std::runtime_error("Unknown argument; expected --warp, --cpu-only, --color-grade-only, --gui-fade-only, --resolution-switch-only, --frontbuffer-only, --clip-planes-only, --bloom-only or --arm-bloom-only");
         }
-        require(unsigned(cpuOnly)+unsigned(colorGradeOnly)+unsigned(resolutionSwitchOnly)+unsigned(frontbufferOnly)<=1,
+        require(unsigned(cpuOnly)+unsigned(colorGradeOnly)+unsigned(guiFadeOnly)+unsigned(resolutionSwitchOnly)+unsigned(frontbufferOnly)+unsigned(clipPlanesOnly)+unsigned(bloomOnly)+unsigned(armBloomOnly)<=1,
             "Focused contract modes are mutually exclusive");
-        if(!colorGradeOnly && !resolutionSwitchOnly && !frontbufferOnly) {
+        if(!colorGradeOnly && !guiFadeOnly && !resolutionSwitchOnly && !frontbufferOnly && !clipPlanesOnly && !bloomOnly && !armBloomOnly) {
             constantCopyContract();lightingValidationContract();promptWorldContract();
             formats();paletteUsageContract();paletteArithmeticContract();worldPositionUsageContract();worldWaterUsageContract();worldShadowInputContract();
             worldVertexValidationContract();immediateIndexOwnershipContract();
@@ -1803,12 +1816,31 @@ int main(int argc,char** argv) {
         ComPtr<ID3D11DeviceContext> context;const D3D_FEATURE_LEVEL level=D3D_FEATURE_LEVEL_11_0;
         const auto deviceFlags=GetEnvironmentVariableA("DARK_D3D_DEBUG",nullptr,0)?D3D11_CREATE_DEVICE_DEBUG:0;
         check(D3D11CreateDevice(nullptr,warp?D3D_DRIVER_TYPE_WARP:D3D_DRIVER_TYPE_HARDWARE,nullptr,deviceFlags,&level,1,D3D11_SDK_VERSION,&device,nullptr,&context),"D3D device");
+        if(armBloomOnly) {
+            darknessArmBloomContract(device.Get(),context.Get());
+            worldRendererDebugContract(device.Get());context->ClearState();
+            std::printf("DarknessArmBloomContract passed: %s.\n",warp?"WARP":"hardware");
+            return 0;
+        }
+        if(bloomOnly) {
+            bloomResolutionContract(device.Get(),context.Get());
+            flareVisibilityContract(device.Get(),context.Get());
+            worldRendererDebugContract(device.Get());context->ClearState();
+            std::printf("WorldBloomResolutionContract passed: %s.\n",warp?"WARP":"hardware");
+            return 0;
+        }
         if(colorGradeOnly) {
             colorGradeChainContract(device.Get(),context.Get());
             colorGradeChainContract(device.Get(),context.Get(),26,4);
             colorGradeEligibilityContract(device.Get(),context.Get());
             worldRendererDebugContract(device.Get());context->ClearState();
             std::printf("WorldColorGradeContract passed: %s.\n",warp?"WARP":"hardware");
+            return 0;
+        }
+        if(guiFadeOnly) {
+            worldGuiFadeContract(device.Get(),context.Get());
+            worldRendererDebugContract(device.Get());context->ClearState();
+            std::printf("WorldGuiFadeContract passed: %s.\n",warp?"WARP":"hardware");
             return 0;
         }
         if(resolutionSwitchOnly) {
@@ -1821,6 +1853,15 @@ int main(int argc,char** argv) {
             worldFrontbufferPrecisionContract(device.Get(),context.Get());
             worldRendererDebugContract(device.Get());context->ClearState();
             std::printf("WorldFrontbufferPrecisionContract passed: %s.\n",warp?"WARP":"hardware");
+            return 0;
+        }
+        if(clipPlanesOnly) {
+            for(unsigned scale:{1u,2u}) {
+                context->ClearState();WorldRendererD3D11 renderer(device.Get(),context.Get(),scale);
+                worldClipPlanePass(renderer,scale);
+            }
+            worldRendererDebugContract(device.Get());context->ClearState();
+            std::printf("WorldClipPlaneContract passed: %s.\n",warp?"WARP":"hardware");
             return 0;
         }
         std::vector<WorldVertex> vertices(7);
@@ -1974,9 +2015,13 @@ int main(int argc,char** argv) {
         format19GpuContract(device.Get(),context.Get());
         shadowExtrusionGpuContract(device.Get(),context.Get());
         passes(device.Get(),context.Get());
+        worldMsaaContract(device.Get(),context.Get());
         colorGradeChainContract(device.Get(),context.Get());
         colorGradeChainContract(device.Get(),context.Get(),26,4);
         colorGradeEligibilityContract(device.Get(),context.Get());
+        bloomResolutionContract(device.Get(),context.Get());
+        darknessArmBloomContract(device.Get(),context.Get());
+        flareVisibilityContract(device.Get(),context.Get());
         resolutionSwitchContract(device.Get(),context.Get());
         worldFrontbufferPrecisionContract(device.Get(),context.Get());
         budgetContract(device.Get(),context.Get());

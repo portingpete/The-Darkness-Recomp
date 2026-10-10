@@ -49,9 +49,14 @@ class ReleaseTests(unittest.TestCase):
             (deps / name).write_bytes(b'codec source')
         (self.root / 'tools').mkdir()
         (self.root / 'tools/build_xma_codec.py').write_bytes(b'build script')
+        (self.root / 'tools/update_release.ps1').write_bytes((ROOT / 'tools/update_release.ps1').read_bytes())
+        (self.root / 'tools/update_commits.ps1').write_bytes((ROOT / 'tools/update_commits.ps1').read_bytes())
         (self.root / 'tools/add_steam_shortcut.py').write_bytes((ROOT / 'tools/add_steam_shortcut.py').read_bytes())
         for name in release.LINUX_SETUP_TOOLS:
             (self.root / 'tools' / name).write_bytes((ROOT / 'tools' / name).read_bytes())
+        (self.root / 'third_party/smaa').mkdir(parents=True)
+        (self.root / 'third_party/smaa/LICENSE.txt').write_bytes(
+            (ROOT / 'third_party/smaa/LICENSE.txt').read_bytes())
 
     def game_files(self):
         game = self.root / 'Darkness'
@@ -86,6 +91,9 @@ class ReleaseTests(unittest.TestCase):
             for name in ('assets/localization/README.md', 'assets/localization/native_menu_ru.json'):
                 self.assertEqual(bundle.read(name), (ROOT / name).read_bytes())
             self.assertEqual(bundle.read('LaunchWithSettings.cmd'), (ROOT / 'LaunchWithSettings.cmd').read_bytes())
+            self.assertEqual(bundle.read('LaunchWithUpdates.cmd'), (ROOT / 'LaunchWithUpdates.cmd').read_bytes())
+            self.assertEqual(bundle.read('tools/update_release.ps1'), (ROOT / 'tools/update_release.ps1').read_bytes())
+            self.assertEqual(bundle.read('tools/update_commits.ps1'), (ROOT / 'tools/update_commits.ps1').read_bytes())
             self.assertEqual(bundle.read('LaunchStallProfiler.cmd'), (ROOT / 'LaunchStallProfiler.cmd').read_bytes())
             self.assertIn('Launch.sh', names)
             self.assertIn('SetupLinux.cmd', names)
@@ -100,10 +108,34 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(bundle.read('tools/add_steam_shortcut.py'), (ROOT / 'tools/add_steam_shortcut.py').read_bytes())
             self.assertIn('START_HERE.txt', names)
             manifest = json.loads(bundle.read('RELEASE.json'))
+            self.assertIn((ROOT / 'third_party/smaa/LICENSE.txt').read_bytes(),
+                          bundle.read('ThirdParty/README.txt'))
             self.assertEqual(manifest['commit'], 'abc123')
             for name, expected in manifest['sha256'].items():
                 self.assertEqual(hashlib.sha256(bundle.read(name)).hexdigest(), expected)
         self.assertIn(hashlib.sha256(path.read_bytes()).hexdigest(), path.with_suffix('.zip.sha256').read_text())
+        if os.name == 'nt':
+            # Exercise the real PowerShell reader against the Python packager,
+            # including generated notices and Launch.sh's Unix file mode.
+            stage = self.root / 'update-stage'
+            stage.mkdir()
+            def ps_quote(value):
+                return "'" + str(value).replace("'", "''") + "'"
+            command = (
+                "$ErrorActionPreference = 'Stop'; "
+                f". {ps_quote(ROOT / 'tools/update_release.ps1')} -LibraryOnly; "
+                f"Expand-VerifiedRelease {ps_quote(path)} "
+                f"{ps_quote(path.with_suffix('.zip.sha256'))} "
+                f"{ps_quote(stage)} 'v0.1.1' | Out-Null"
+            )
+            result = subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy',
+                                     'Bypass', '-Command', command], capture_output=True,
+                                    text=True, timeout=30,
+                                    creationflags=subprocess.CREATE_NO_WINDOW)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual((stage / 'LaunchWithUpdates.cmd').read_bytes(),
+                             (ROOT / 'LaunchWithUpdates.cmd').read_bytes())
+            self.assertFalse((stage / 'Darkness').exists())
 
     def test_incomplete_package_is_rejected(self):
         (self.bin / 'avcodec-darkxma-62.dll').unlink()

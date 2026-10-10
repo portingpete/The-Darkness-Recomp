@@ -64,8 +64,15 @@ public:
     void setSettingsOpen(bool open);
     // True when native input consumes an edge before host shortcuts.
     bool windowMessage(HWND window, UINT message, WPARAM key, LPARAM detail);
-    void setMouseLookEnabled(bool enabled);
+    void setMouseLookEnabled(bool enabled, bool waitForClient = false);
     bool mouseLookEnabled();
+    // Accepted loads lock the Win32 cursor before a gameplay client exists.
+    // Relative motion stays disabled until its first eligible input tick.
+    void requestGameplayMouseCapture();
+    void publishGameplayMouseCaptureRequest();
+    bool takeGameplayMouseCaptureRequest();
+    void cancelGameplayMouseCaptureRequest();
+    bool completeLoadingMouseCapture();
     // The original client owns dialogue/menu focus independently of capture.
     // Before its first signal, released capture permits startup menu input.
     void setGuestMenuActive(bool active);
@@ -133,6 +140,7 @@ private:
     std::array<bool, XUSER_MAX_COUNT> waitForControllerRelease_{};
     std::array<uint64_t, XUSER_MAX_COUNT> controllerFreshAfter_{};
     bool mouseLook_ = false, escapePauses_ = false, guestMenuActive_ = false;
+    bool gameplayCapturePrepared_ = false, gameplayCaptureRequested_ = false, loadingCapture_ = false;
     bool guestMenuContextKnown_ = false;
     float mouseSensitivity_ = 1;
     int64_t mouseX_ = 0, mouseY_ = 0;

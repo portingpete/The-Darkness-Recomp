@@ -319,7 +319,7 @@ int wmain(int argc, wchar_t** argv) {
         }); developerToolsWindow = &developerTools;
         AchievementsWindow achievements(window, mouse); achievementsWindow = &achievements;
         ClearMouseWindow clearMouseWindow;
-        puts("[Input] Native Win32 keyboard/raw mouse ready. Click to capture, Esc releases, F1 controls, F5 developer tools; optional F6 720p/1440p shortcut starts disabled. WASD=move; E=use; R=reload; captured Space=jump; menu Space=confirm/skip.");
+        puts("[Input] Native Win32 keyboard/raw mouse ready. Keyboard/mouse gameplay captures automatically after menus; click to recapture after manual release/Alt-Tab. Esc releases, F1 controls, F5 developer tools; optional F6 720p/1440p shortcut starts disabled. WASD=move; E=use; R=reload; captured Space=jump; menu Space=confirm/skip.");
         if (!testInputPath.empty())
             puts("[InputTest] Opt-in script active: '<key> [<holdMs 1..10000>]' (bare menu 250ms, I/J/K/L 2000ms; 116=F5 panel,117=gated F6), 'mouse <dx> <dy>', 'capture', '0' inspect; 'dev open|close|status|defaults', 'dev mission <ID>', 'dev speed <preset>', 'dev invincible|noclip|resolution on|off', 'dev darkness unlock|max', 'dev capture <absolute BMP path>'; an invalid line blocks later commands until fixed; release lines report poll/nonneutral/change deltas.");
 
@@ -483,7 +483,7 @@ int wmain(int argc, wchar_t** argv) {
             }
             if (message.message == WM_QUIT) break;
             if (!developerTools.isOpen() && !keyboardMenuInputBlocked()) achievements.update();
-            if (guestMenuPointerActive()) mouse.release();
+            mouse.updateGameplayCapture(!developerTools.isOpen() && !achievements.isOpen());
             KeyboardMenuSaveRequest keyboardSave;
             if (takeKeyboardMenuSaveRequest(keyboardSave)) {
                 const bool saved = DarkRecomp::saveKeyboardBindings(settingsPath, keyboardSave.bindings) &&
@@ -553,7 +553,7 @@ int wmain(int argc, wchar_t** argv) {
                     if (selected.frameRateLimit != activeGraphics.frameRateLimit)
                         framePacer.setFrameRate(selected.frameRateLimit);
                     if (selected.fullscreen != displayWindow.fullscreen()) {
-                        mouse.release(); displayWindow.toggleFullscreen();
+                        mouse.suspend(); displayWindow.toggleFullscreen();
                     }
                     // Menu resolution changes still apply at startup. F6 only
                     // changes integer raster scale while retaining guest layout.

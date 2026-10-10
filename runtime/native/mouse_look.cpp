@@ -91,6 +91,8 @@ PPC_FUNC(sub_823FC650) {
         stream.quantizer.reset();
         return;
     }
+    if (DarkRecomp::Native::nativeInput().completeLoadingMouseCapture() && probeEnabled())
+        std::fprintf(stderr, "[MouseCaptureClientReady] tick=%llu client=%08X\n", GetTickCount64(), client);
     if (!delta.x && !delta.y) return;
     const ScopedMathMode mathMode;
     // The sign of the original vertical sensitivity carries the invert option;

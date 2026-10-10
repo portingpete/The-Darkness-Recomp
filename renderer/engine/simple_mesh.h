@@ -194,6 +194,11 @@ void previewObserveDisplayGamma(uint8_t*,uint32_t ramp,bool piecewise);
 void previewBeginHistogram(unsigned bin);
 void previewEndHistogram();
 bool previewReadHistogram(unsigned bin,uint64_t& samples);
+// Original flare visibility callbacks use u16 IDs independently of exposure
+// bins and read the latest completed logical-pixel count without blocking.
+void previewBeginFlare(unsigned id);
+void previewEndFlare();
+bool previewReadFlare(unsigned id,uint64_t& samples);
 // A bounded wait lets the window consume a late frame immediately instead of
 // adding another display-period delay. Zero retains nonblocking behavior.
 struct PreviewFramePart {bool first=true,last=true;};

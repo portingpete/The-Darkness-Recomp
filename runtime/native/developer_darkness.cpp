@@ -4,6 +4,9 @@
 #include "ppc_recomp_shared.h"
 #include <algorithm>
 #include <array>
+#include <cstdio>
+#include <exception>
+#include <map>
 
 namespace DarkRecomp::Native {
 namespace {
@@ -56,6 +59,16 @@ bool currentPlayer(uint8_t* base, const DeveloperPlayerHandles& player) {
 
 bool object(uint8_t* base, uint32_t address, size_t bytes, bool writable = false) {
     return !(address & 3) && mapped(base, address, bytes, writable);
+}
+
+uint32_t method(uint8_t* base, uint32_t address, uint32_t offset) {
+    if (!object(base, address, 4)) return 0;
+    const auto table = PPC_LOAD_U32(address);
+    if (!object(base, table, size_t(offset) + 4)) return 0;
+    const auto function = PPC_LOAD_U32(table + offset);
+    return !(function & 3) && function >= PPC_CODE_BASE &&
+        uint64_t(function) < uint64_t(PPC_CODE_BASE) + PPC_CODE_SIZE &&
+        PPC_LOOKUP_FUNC(base, function) ? function : 0;
 }
 
 bool array(uint8_t* base, uint32_t address, uint32_t limit, uint32_t& data, uint32_t& count) {
@@ -114,11 +127,243 @@ uint32_t findItem(PPCContext& ctx, uint8_t* base, uint32_t inventory, uint32_t n
     return call.r3.u32;
 }
 
-bool grantAncientWeapons(PPCContext& ctx, uint8_t* base, const DeveloperPlayerHandles& player) {
+bool clientAncientResources(PPCContext& ctx, uint8_t* base, const DeveloperPlayerHandles& player,
+    uint32_t client, uint32_t resources, const std::array<uint16_t, 2>& models) {
+    if (!client) return true; // Direct progression callers may have no renderer.
+    if (!object(base, client, 604) ||
+        (PPC_LOAD_U32(client) != 0x820807E0 && PPC_LOAD_U32(client) != 0x82081BF0) ||
+        (PPC_LOAD_U32(client + 516) & 0x20) ||
+        PPC_LOAD_U32(client + 536) != PPC_LOAD_U16(player.actor + 368)) return false;
+    const auto target = PPC_LOAD_U32(client + 432);
+    const auto renderer = PPC_LOAD_U32(client + 600);
+    if (!object(base, target, 88, true) || PPC_LOAD_U32(target) != 0x82070780 ||
+        !PPC_LOAD_U32(resources + 80) || PPC_LOAD_U32(target + 80) != PPC_LOAD_U32(resources + 80) ||
+        !object(base, renderer, 376) || !method(base, renderer, 48) || !method(base, renderer, 52)) return false;
+    uint32_t sourceData, sourceCount, targetData, targetCount;
+    if (!array(base, PPC_LOAD_U32(resources + 12), 32768, sourceData, sourceCount) ||
+        !array(base, PPC_LOAD_U32(target + 12), 32768, targetData, targetCount) ||
+        !models[0] || !models[1] || models[0] >= sourceCount || models[1] >= sourceCount) return false;
+    if (!PPC_LOAD_U32(sourceData + models[0] * 4) || !PPC_LOAD_U32(sourceData + models[1] * 4)) return false;
+    struct PendingPrecache {
+        uint32_t source = 0, target = 0, provider = 0;
+        std::map<uint32_t, uint32_t> additions;
+    };
+    static thread_local PendingPrecache pending;
+    const auto provider = PPC_LOAD_U32(resources + 80);
+    if (pending.source != resources || pending.target != target || pending.provider != provider)
+        pending = {resources, target, provider, {}};
+    const auto first = (std::min)({targetCount, uint32_t(models[0]), uint32_t(models[1])});
+    std::fprintf(stderr, "[Weapons] Preparing client resources: server=%08x client=%08x counts=%u/%u models=%u/%u renderer=%08x.\n",
+        resources, target, sourceCount, targetCount, models[0], models[1], renderer);
+    // Retail's fixed-ID client receiver (824A7C48) runs only during world
+    // loading. Late server additions do not reach its frozen client table.
+    // Preserve the existing SmartRefs and append empty slots through the same
+    // TArray helper used by ordinary resource registration.
+    if (target != resources && targetCount < sourceCount) {
+        auto call = ctx; call.r3.u64 = target + 8; call.r4.u64 = sourceCount;
+        PPCSafeIndirect(call, base, 0x82346CE0);
+        if (!array(base, PPC_LOAD_U32(target + 12), 32768, targetData, targetCount) ||
+            targetCount < sourceCount) return false;
+    }
+    auto frame = ctx;
+    frame.r1.u32 -= 0x100;
+    PPC_STORE_U32(frame.r1.u32, ctx.r1.u32);
+    const auto name = frame.r1.u32 + 80;
+    for (uint32_t i = 0; i < sourceCount; ++i) {
+        const auto resource = PPC_LOAD_U32(sourceData + i * 4);
+        if (!resource) continue;
+        if (!object(base, resource, 36, true)) return false;
+        if (PPC_LOAD_U32(resource + 16) & 0x10000000) continue;
+        const auto existing = PPC_LOAD_U32(targetData + i * 4);
+        // Both contexts use the same provider, whose normalized name lookup
+        // returns the already retained global resource. Never replace a
+        // conflicting client ID or copy a borrowed pointer without retaining it.
+        if (existing && i >= first && existing != resource) return false;
+        if (!existing) {
+            PPC_STORE_U32(name, 0x82065568); PPC_STORE_U32(name + 4, 0);
+            struct ReleaseName {
+                PPCContext frame;
+                uint8_t* base;
+                uint32_t name;
+                ~ReleaseName() { frame.r3.u64 = name; sub_821F8AD0(frame, base); }
+            } releaseName{frame, base, name};
+            auto call = frame;
+            call.r3.u64 = name; call.r4.u64 = resources; call.r5.u64 = i;
+            PPCSafeIndirect(call, base, 0x82342548);
+            const auto narrow = method(base, name, 20);
+            if (!narrow) return false;
+            call = frame; call.r3.u64 = name;
+            PPCSafeIndirect(call, base, narrow);
+            const auto text = call.r3.u32;
+            bool terminated = false;
+            for (uint32_t n = 0; text && n < 2048; ++n) {
+                if (uint64_t(text) + n > UINT32_MAX || !mapped(base, text + n, 1, false)) return false;
+                if (!PPC_LOAD_U8(text + n)) { terminated = n != 0; break; }
+            }
+            if (!terminated) return false;
+            call = frame; call.r3.u64 = target; call.r4.u64 = i;
+            call.r5.u64 = text; call.r6.s64 = int8_t(PPC_LOAD_U8(resource + 17));
+            PPCSafeIndirect(call, base, 0x82342600);
+            if (!array(base, PPC_LOAD_U32(target + 12), 32768, targetData, targetCount) ||
+                i >= targetCount || PPC_LOAD_U32(targetData + i * 4) != resource) return false;
+            pending.additions[i] = resource;
+        }
+    }
+    // Metadata loading alone does not populate the mesh's vertex-buffer IDs,
+    // primitive cache or material images. Use CWRes_Model's original virtual
+    // precache, with the same CXR engine supplied by client preload 8249E448.
+    const auto modelToken = PPC_LOAD_U32(0x82A45900);
+    std::array<bool, 2> prepared{};
+    for (uint32_t i = 0; i < sourceCount; ++i) {
+        const auto resource = PPC_LOAD_U32(targetData + i * 4);
+        // An interrupted registration may already have retained an earlier
+        // projectile dependency without reaching the warm pass. Remember those
+        // IDs until completion; revalidate both tables before using them.
+        if (i < first) {
+            const auto added = pending.additions.find(i);
+            if (added == pending.additions.end() || added->second != resource ||
+                PPC_LOAD_U32(sourceData + i * 4) != resource) continue;
+        }
+        if (!resource) continue;
+        if (!object(base, resource, 36)) return false;
+        if (PPC_LOAD_U32(resource + 16) & 0x10000000) continue;
+        const auto type = method(base, resource, 0);
+        if (!type) return false;
+        auto call = frame; call.r3.u64 = resource;
+        PPCSafeIndirect(call, base, type);
+        auto descriptor = call.r3.u32;
+        for (unsigned depth = 0; descriptor && depth < 64; ++depth) {
+            if (!object(base, descriptor, 12)) return false;
+            if (PPC_LOAD_U32(descriptor) == modelToken) {
+                const auto precache = method(base, resource, 68);
+                if (!precache) return false;
+                call = frame; call.r3.u64 = resource; call.r4.u64 = renderer;
+                PPCSafeIndirect(call, base, precache);
+                if (i == models[0]) prepared[0] = true;
+                if (i == models[1]) prepared[1] = true;
+                break;
+            }
+            descriptor = PPC_LOAD_U32(descriptor + 8);
+        }
+    }
+    const bool complete = prepared[0] && prepared[1] &&
+        PPC_LOAD_U32(targetData + models[0] * 4) == PPC_LOAD_U32(sourceData + models[0] * 4) &&
+        PPC_LOAD_U32(targetData + models[1] * 4) == PPC_LOAD_U32(sourceData + models[1] * 4);
+    if (complete) pending.additions.clear();
+    return complete;
+}
+
+bool repairAncientResources(PPCContext& ctx, uint8_t* base, const DeveloperPlayerHandles& player,
+    uint32_t resources, uint32_t item, uint32_t name) {
+    if (!object(base, item, 960, true) || PPC_LOAD_U32(item) != 0x8206C5B0 ||
+        PPC_LOAD_U32(item + 16) != player.server) return false;
+    const auto ready = [&] { return PPC_LOAD_U16(item + 466) && int16_t(PPC_LOAD_U16(item + 636)) > 0; };
+    if (ready() && PPC_LOAD_U32(item + 340) && PPC_LOAD_U32(item + 344)) return true;
+    const bool repairEffects = !ready();
+
+    // A previous late grant may already be in the inventory. Reuse the retail
+    // template lookup/precache/key parser (82332D48), replaying only missing
+    // resources so weapon IDs, ammunition, flags and equipped clones survive.
+    auto frame = ctx;
+    frame.r1.u32 -= 0x100;
+    PPC_STORE_U32(frame.r1.u32, ctx.r1.u32);
+    const auto reference = frame.r1.u32 + 80;
+    PPC_STORE_U32(reference, 0);
+    auto call = frame;
+    call.r3.u64 = reference; call.r4.u64 = name; call.r5.u64 = player.server;
+    PPCSafeIndirect(call, base, 0x823328E8);
+    struct ReleaseTemplate {
+        PPCContext frame;
+        uint8_t* base;
+        uint32_t reference;
+        ~ReleaseTemplate() {
+            frame.r3.u64 = reference;
+            PPCSafeIndirect(frame, base, 0x820CBBC8);
+        }
+    } releaseTemplate{frame, base, reference};
+    const auto registry = PPC_LOAD_U32(reference);
+    if (!object(base, registry, 4)) return false;
+    const auto table = PPC_LOAD_U32(registry);
+    if (!object(base, table, 68)) return false;
+    call = frame;
+    call.r3.u64 = item; call.r4.u64 = registry; call.r5.u64 = resources; call.r6.u64 = player.server;
+    PPCSafeIndirect(call, base, PPC_LOAD_U32(0x8206C5B0 + 32));
+    call = frame; call.r3.u64 = registry;
+    PPCSafeIndirect(call, base, PPC_LOAD_U32(table + 52));
+    const auto count = call.r3.u32;
+    if (count > 4096) return false;
+    for (uint32_t i = 0; i < count; ++i) {
+        call = frame; call.r3.u64 = registry; call.r4.u64 = i;
+        PPCSafeIndirect(call, base, PPC_LOAD_U32(table + 64));
+        const auto key = call.r3.u32;
+        if (!object(base, key, 4) || !object(base, PPC_LOAD_U32(key), 432)) return false;
+        call = frame; call.r3.u64 = key;
+        PPCSafeIndirect(call, base, PPC_LOAD_U32(PPC_LOAD_U32(key) + 428));
+        const auto hash = call.r3.u32;
+        const bool missing = ((hash == 0x0FF1EEF1 || hash == 0x0E326DE1) && !PPC_LOAD_U16(item + 466)) ||
+            (hash == 0x713CE1A9 && int16_t(PPC_LOAD_U16(item + 636)) <= 0) ||
+            (hash == 0x86314D73 && !PPC_LOAD_U32(item + 340)) ||
+            ((hash == 0x1562BFDF || hash == 0xC5F42FDC) && !PPC_LOAD_U32(item + 344)) ||
+            (hash == 0xA7C1B409 && repairEffects);
+        if (!missing) continue;
+        call = frame; call.r3.u64 = item; call.r4.u64 = hash; call.r5.u64 = key;
+        PPCSafeIndirect(call, base, PPC_LOAD_U32(0x8206C5B0 + 44));
+    }
+    return ready() && PPC_LOAD_U32(item + 340) && PPC_LOAD_U32(item + 344);
+}
+
+bool grantAncientWeapons(PPCContext& ctx, uint8_t* base, const DeveloperPlayerHandles& player,
+    uint32_t client, std::string& failure) {
     uint32_t inventory;
     if (!inventoryReady(ctx, base, player, inventory)) return false;
-    for (const auto name : kAncientNames) {
-        if (findItem(ctx, base, inventory, name)) continue;
+    const auto resources = PPC_LOAD_U32(player.server + 432);
+    if (!object(base, resources, 84, true) || PPC_LOAD_U32(resources) != 0x82070780) return false;
+    // Early maps do not cache the late-game guns. Supply their owned cached
+    // files before asking the original resource provider to load the template.
+    // Activation lasts for this runtime so deferred model reads still work.
+    try {
+        memory->enableDeveloperWeaponAssets(ctx, base);
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "[Weapons] Darkness grant assets unavailable: %s.\n", error.what());
+        failure = "Darkness gun grant incomplete: " + std::string(error.what());
+        if (!failure.ends_with('.')) failure += '.';
+        failure += " Grants may be autosaved.";
+        return false;
+    }
+    // World loading freezes the resource registry. Retail dynamic spawning
+    // (822A6410, 822B19C8) temporarily permits additions while evaluating an
+    // object's template, then restores the original flags. Without that scope,
+    // a late Ancient grant silently stores zero model/animation/effect IDs.
+    const auto resourceFlags = PPC_LOAD_U32(resources + 24);
+    struct RestoreResources {
+        uint8_t* base;
+        uint32_t resources, flags;
+        ~RestoreResources() { PPC_STORE_U32(resources + 24, flags); }
+    } restoreResources{base, resources, resourceFlags};
+    PPC_STORE_U32(resources + 24, resourceFlags & ~1u);
+    const auto repairPair = [&](uint32_t item, uint32_t name) {
+        if (!repairAncientResources(ctx, base, player, resources, item, name)) return false;
+        const auto cloneId = PPC_LOAD_U32(item + 896);
+        if (cloneId == UINT32_MAX) return true;
+        // Equipped replicas have their own parsed resources. Resolve the
+        // recorded ID in category2 through the retail lookup, without replacing
+        // either item or changing the inventory's equip/identity bookkeeping.
+        const auto categories = PPC_LOAD_U32(inventory + 24);
+        const auto category = PPC_LOAD_U32(PPC_LOAD_U32(categories + 24) + 8);
+        auto call = ctx; call.r3.u64 = category; call.r4.u64 = cloneId;
+        sub_8232A800(call, base);
+        const auto clone = call.r3.u32;
+        return !clone || (PPC_LOAD_U32(clone + 320) == (7 | 0x200) &&
+            repairAncientResources(ctx, base, player, resources, clone, name));
+    };
+    std::array<uint16_t, 2> models{};
+    for (size_t i = 0; i < kAncientNames.size(); ++i) {
+        const auto name = kAncientNames[i];
+        if (const auto item = findItem(ctx, base, inventory, name)) {
+            if (!repairPair(item, name)) return false;
+            models[i] = PPC_LOAD_U16(item + 466);
+            continue;
+        }
         auto call = ctx;
         // Retail giveall821279E4 grants only these templates with this ABI.
         // Their authored unique/forceequipright/left rules create and equip
@@ -129,21 +374,30 @@ bool grantAncientWeapons(PPCContext& ctx, uint8_t* base, const DeveloperPlayerHa
         PPCSafeIndirect(call, base, kGrantItem);
         // The helper's return value is not an inventory-success boolean.
         // Verify the actual original lookup, including its removed-item filter.
-        if (!currentPlayer(base, player) || !inventoryReady(ctx, base, player, inventory) ||
-            !findItem(ctx, base, inventory, name)) return false;
+        if (!currentPlayer(base, player) || !inventoryReady(ctx, base, player, inventory)) return false;
+        const auto item = findItem(ctx, base, inventory, name);
+        if (!item || !repairPair(item, name)) return false;
+        models[i] = PPC_LOAD_U16(item + 466);
+    }
+    if (!clientAncientResources(ctx, base, player, client, resources, models)) {
+        failure = "Darkness gun client resources incomplete. Retry with an active player. Grants may be autosaved.";
+        std::fprintf(stderr, "[Weapons] Client resource preparation failed: client=%08x serverContext=%08x.\n", client, resources);
+        return false;
     }
     return true;
 }
 }
 
 DeveloperDarknessResult applyDeveloperDarkness(PPCContext& ctx, uint8_t* base,
-    const DeveloperPlayerHandles& player, bool unlock, bool maximum) {
+    const DeveloperPlayerHandles& player, bool unlock, bool maximum, uint32_t client) {
     if (!unlock && !maximum) return {};
     if (!currentPlayer(base, player))
         return {false, "Darkness grants require an active player."};
     const auto state = player.state;
-    if (unlock && !grantAncientWeapons(ctx, base, player))
-        return {false, "Darkness gun grant incomplete. Retry with an active player inventory. Grants may be autosaved."};
+    std::string failure;
+    if (unlock && !grantAncientWeapons(ctx, base, player, client, failure))
+        return {false, failure.empty() ?
+            "Darkness gun grant incomplete. Retry with an active player inventory. Grants may be autosaved." : std::move(failure)};
     // Read after the original inventory/equip helper, which sets its own dirty
     // flags. Retaining a pre-call value here would erase those engine updates.
     uint32_t dirty = PPC_LOAD_U32(state + kDirty);

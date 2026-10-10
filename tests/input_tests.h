@@ -234,6 +234,62 @@ static void testInputContract(PPCContext& ctx) {
           releasedPointer.valid && !releasedPointer.leftDown && releasedPointer.presses == pressedPointer.presses &&
           releasedPointer.x == 120 && releasedPointer.y == 110,
           "Quick click must retain one press and its own client coordinates after release");
+    {
+        // Panel/focus cancellation deliberately suppresses held controllers. Keep
+        // those cases separate from the later fresh-controller hotplug contract.
+        NativeInput input({fixtureInputState, fixtureInputCapabilities, fixtureInputVibration, fixtureInputTicks});
+        HWND window = CreateWindowExW(0, wc.lpszClassName, L"Loading capture contract", 0, 0,0,0,0,
+                                     HWND_MESSAGE, nullptr, wc.hInstance, nullptr);
+        check(window != nullptr, "Cannot create loading capture test window");
+        SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&input));
+        input.attachWindow(window);
+        SendMessageW(window, WM_SETFOCUS, 0, 0);
+        SendMessageW(window, WM_MOUSEMOVE, 0, MAKELPARAM(25, 50));
+        input.requestGameplayMouseCapture();
+        check(!input.takeGameplayMouseCaptureRequest(), "Capture was published during root construction");
+        input.publishGameplayMouseCaptureRequest();
+        check(input.takeGameplayMouseCaptureRequest() && !input.takeGameplayMouseCaptureRequest(),
+              "Accepted load request must cross to the window thread exactly once");
+        input.requestGameplayMouseCapture(); input.cancelGameplayMouseCaptureRequest();
+        input.publishGameplayMouseCaptureRequest();
+        check(!input.takeGameplayMouseCaptureRequest(), "Explicit release retained a queued load capture");
+        input.requestGameplayMouseCapture();
+        SendMessageW(window, WM_KILLFOCUS, 0, 0);
+        input.requestGameplayMouseCapture();
+        SendMessageW(window, WM_SETFOCUS, 0, 0);
+        input.publishGameplayMouseCaptureRequest();
+        check(!input.takeGameplayMouseCaptureRequest(), "Focus loss or a background load queued later capture");
+        input.requestGameplayMouseCapture(); input.setSettingsOpen(true);
+        input.requestGameplayMouseCapture(); input.setSettingsOpen(false);
+        input.publishGameplayMouseCaptureRequest();
+        check(!input.takeGameplayMouseCaptureRequest(), "Native panel retained or queued a load capture");
+        input.requestGameplayMouseCapture(); input.publishGameplayMouseCaptureRequest();
+        SendMessageW(window, WM_KILLFOCUS, 0, 0); SendMessageW(window, WM_SETFOCUS, 0, 0);
+        check(!input.takeGameplayMouseCaptureRequest(), "Focus loss retained an already published load capture");
+        input.requestGameplayMouseCapture(); input.setMouseLookEnabled(false);
+        input.publishGameplayMouseCaptureRequest();
+        check(!input.takeGameplayMouseCaptureRequest(), "Capture release during construction was republished later");
+        input.setMouseLookEnabled(false, true);
+        check(!input.mouseLookEnabled() && !input.menuCursor().valid,
+              "Loading capture enabled camera input or left the menu pointer active");
+        input.mouseMotion(1000, -1000);
+        const auto loadingMotion = input.consumeMouseLook();
+        check(loadingMotion.x == 0 && loadingMotion.y == 0,
+              "Load-time mouse motion accumulated before a gameplay client existed");
+        check(input.completeLoadingMouseCapture() && input.mouseLookEnabled() && !input.completeLoadingMouseCapture(),
+              "An eligible client must enable captured look once");
+        const auto firstGameplayMotion = input.consumeMouseLook();
+        check(firstGameplayMotion.x == 0 && firstGameplayMotion.y == 0,
+              "Starting gameplay replayed load-time mouse motion");
+        input.setMouseLookEnabled(false, true); input.setMouseLookEnabled(false);
+        check(!input.completeLoadingMouseCapture(), "Manual release was undone by a late client");
+        input.setMouseLookEnabled(false, true);
+        SendMessageW(window, WM_KILLFOCUS, 0, 0); SendMessageW(window, WM_SETFOCUS, 0, 0);
+        check(!input.completeLoadingMouseCapture(), "Refocusing enabled a cancelled load capture");
+        input.setMouseLookEnabled(false, true); input.setSettingsOpen(true); input.setSettingsOpen(false);
+        check(!input.completeLoadingMouseCapture(), "Closing a panel enabled a cancelled load capture");
+        DestroyWindow(window);
+    }
     input.setMouseLookEnabled(true);
     check(!input.menuCursor().valid && input.menuCursor().epoch != releasedPointer.epoch,
           "Gameplay capture must invalidate pointer ownership and stale clicks");
@@ -672,6 +728,9 @@ static void testInputContract(PPCContext& ctx) {
     inputStates[0].Gamepad = {XINPUT_GAMEPAD_A, 0, 0, 0, 0, 0, 0};
     check(promptState() == ERROR_SUCCESS && PPC_LOAD_U16(output + 4) == XINPUT_GAMEPAD_A, "Controller button did not reach guest");
     check(input.promptSource() == PromptInputSource::Controller, "Controller button did not switch prompts");
+    input.requestGameplayMouseCapture();
+    input.publishGameplayMouseCaptureRequest();
+    check(!input.takeGameplayMouseCaptureRequest(), "Controller-accepted load queued mouse capture");
     check(promptState() == ERROR_SUCCESS, "Held controller poll failed");
     check(input.promptSource() == PromptInputSource::Controller, "Held controller lost its own prompts while idle");
     SendMessageW(window, WM_KEYDOWN, 'W', 0);

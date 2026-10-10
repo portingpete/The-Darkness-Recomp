@@ -7,6 +7,7 @@
 #include "input.h"
 #include "language_settings.h"
 #include "display_mode.h"
+#include "flashback_layout.h"
 #include "thread_topology.h"
 #include "native_timed_wait.h"
 #include "renderer/engine/engine_performance.h"
@@ -2122,6 +2123,88 @@ PPC_FUNC(sub_823471F8) {
     if (count < 24 && std::find(seen, seen+count, caller) == seen+count) {
         seen[count++] = caller;
         std::fprintf(stderr, "[DisplayMenu] caller=%08X context=%08X fitted=%u\n", caller, drawContext, unsigned(fitted));
+    }
+}
+
+extern "C" PPC_FUNC(__imp__sub_82347838);
+extern "C" PPC_FUNC(__imp__sub_82347448);
+PPC_FUNC(sub_82347838) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, 0x82347838u, uint32_t(ctx.lr));
+    const uint32_t drawContext = ctx.r3.u32;
+    const auto mode = nativeVideoMode();
+    // Only the original game-message picture painter. Mode 1 resolves a world
+    // texture; other callers and authored image sizes keep their own layout.
+    if (uint32_t(ctx.lr) != 0x8216DC18 || ctx.r27.u32 != 2 ||
+        ctx.r1.u32 < 1024 || (ctx.r1.u32 & 15) ||
+        !guestBufferWritable(drawContext, 684) ||
+        !guestBufferAccessible(ctx.r1.u32 + 420, 4) ||
+        !guestBufferAccessible(ctx.r4.u32, 24) ||
+        !guestBufferAccessible(ctx.r5.u32, 16) ||
+        !guestBufferAccessible(ctx.r6.u32, 4) ||
+        !guestBufferWritable(ctx.r1.u32 - 1024, 1024) ||
+        memory->read32(drawContext + 676) - memory->read32(drawContext + 668) != mode.width ||
+        memory->read32(drawContext + 680) - memory->read32(drawContext + 672) != mode.height) {
+        __imp__sub_82347838(ctx, base);
+        return;
+    }
+    auto value = [&](uint32_t address) { return std::bit_cast<float>(memory->read32(address)); };
+    const uint32_t originalTranslation = memory->read32(drawContext + 320);
+    std::optional<FlashbackLayout> layout;
+    {
+        // Native layout arithmetic must preserve the guest's rounding/flush mode.
+        const unsigned mathMode = _mm_getcsr();
+        _mm_setcsr(mathMode & ~(_MM_ROUND_MASK | _MM_FLUSH_ZERO_MASK | _MM_DENORMALS_ZERO_MASK));
+        layout = fitFlashbackLayout(ctx.r27.u32, memory->read32(ctx.r1.u32 + 420), mode,
+            value(drawContext + 336), value(drawContext + 340),
+            {value(drawContext + 272), std::bit_cast<float>(originalTranslation)},
+            value(ctx.r5.u32), value(ctx.r5.u32 + 8) - value(ctx.r5.u32),
+            value(ctx.r5.u32 + 12) - value(ctx.r5.u32 + 4), memory->read32(ctx.r6.u32));
+        _mm_setcsr(mathMode);
+    }
+    if (!layout) {
+        __imp__sub_82347838(ctx, base);
+        return;
+    }
+    const PPCContext input = ctx;
+    memory->write32(drawContext + 320, std::bit_cast<uint32_t>(layout->image.translationX));
+    try {
+        __imp__sub_82347838(ctx, base);
+    } catch (...) {
+        memory->write32(drawContext + 320, originalTranslation);
+        throw;
+    }
+    memory->write32(drawContext + 320, originalTranslation);
+
+    // Keep the original image's material, UVs, color, alpha and return registers.
+    // A borrowed stack clone queues only the two uncovered strips through the
+    // same retail quad/depth/blend path. Its attributes and vertices are copied
+    // into the frame arena before this stack storage goes out of scope.
+    struct RestoreMathMode {
+        unsigned value = _mm_getcsr();
+        ~RestoreMathMode() { _mm_setcsr(value); }
+    } restoreMathMode;
+    PPCContext bars = input;
+    bars.fpscr = ctx.fpscr;
+    bars.r1.u64 -= 1024;
+    memory->write32(bars.r1.u32, input.r1.u32); // Borrowed frame backchain.
+    const uint32_t clone = bars.r1.u32 + 128;
+    const uint32_t rect = bars.r1.u32 + 816, color = bars.r1.u32 + 832;
+    std::memcpy(base + clone, base + drawContext, 684);
+    std::memcpy(base + rect, base + input.r5.u32, 16);
+    memory->write32(color, layout->matteColor);
+    // These retained material pointers are borrowed, never owned by the clone.
+    // The texture-zero selector does not release them; clear them explicitly.
+    memory->write32(clone + 24, 0);
+    memory->write32(clone + 28, 0);
+    memory->write32(clone + 32, 0);
+    bars.r3.u64 = clone; bars.r4.u64 = 0;
+    __imp__sub_82347448(bars, base);
+    for (const auto transform : {layout->leftBar, layout->rightBar}) {
+        memory->write32(clone + 272, std::bit_cast<uint32_t>(transform.scaleX));
+        memory->write32(clone + 320, std::bit_cast<uint32_t>(transform.translationX));
+        bars.r3.u64 = clone; bars.r4.u64 = input.r4.u64;
+        bars.r5.u64 = rect; bars.r6.u64 = color; bars.r7.u64 = input.r7.u64;
+        __imp__sub_82347838(bars, base);
     }
 }
 

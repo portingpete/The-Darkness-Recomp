@@ -71,7 +71,8 @@ target_sources(DarkRuntime PRIVATE runtime/native/developer_tools.cpp
     runtime/native/developer_player.cpp runtime/native/developer_missions.cpp
     runtime/native/developer_invincibility.cpp runtime/native/developer_player_lookup.cpp
     runtime/native/developer_update.cpp runtime/native/developer_noclip.cpp
-    runtime/native/developer_darkness.cpp)
+    runtime/native/developer_darkness.cpp
+    runtime/native/developer_weapon_assets.cpp)
 target_include_directories(DarkRuntime PUBLIC "${CMAKE_SOURCE_DIR}")
 target_sources(DarkRuntime PRIVATE runtime/native/stall_profiler.cpp)
 target_compile_definitions(DarkRuntime PUBLIC DARK_STALL_PROFILER=$<BOOL:${DARK_STALL_PROFILER}>)
@@ -85,7 +86,8 @@ target_sources(DarkRuntime PRIVATE renderer/engine/engine_vertex_descriptor.cpp)
 target_sources(DarkRuntime PRIVATE renderer/engine/engine_palette.cpp)
 target_sources(DarkRuntime PRIVATE renderer/engine/engine_vertex_program.cpp)
 set_source_files_properties(renderer/engine/engine_transforms.cpp PROPERTIES COMPILE_OPTIONS "/fp:strict")
-target_sources(DarkRuntime PRIVATE renderer/engine/simple_mesh.cpp renderer/d3d11/engine_preview.cpp)
+target_sources(DarkRuntime PRIVATE renderer/engine/simple_mesh.cpp renderer/d3d11/engine_preview.cpp
+  renderer/d3d11/smaa_d3d11.cpp renderer/d3d11/msaa_depth_transfer.cpp)
 target_link_libraries(DarkRuntime PUBLIC d3dcompiler)
 set(DARK_SHADER_DIR "${CMAKE_BINARY_DIR}/native_shaders")
 add_custom_command(OUTPUT "${DARK_SHADER_DIR}/engine_vertex_template.generated.h"
@@ -213,6 +215,10 @@ target_compile_definitions(DarkRecompSettings PRIVATE NOMINMAX WIN32_LEAN_AND_ME
 target_link_libraries(DarkRecompSettings PRIVATE user32 gdi32 shell32 comctl32)
 add_dependencies(DarkRecompSettings DarkRecompPreview)
 if(BUILD_TESTING)
+    add_executable(MouseCapturePolicyTests tests/mouse_capture_policy_tests.cpp)
+    target_include_directories(MouseCapturePolicyTests PRIVATE "${CMAKE_SOURCE_DIR}")
+    add_test(NAME MouseCapturePolicyContract COMMAND MouseCapturePolicyTests)
+
     add_executable(NativeMessagePumpTests tests/native_message_pump_tests.cpp)
     target_include_directories(NativeMessagePumpTests PRIVATE "${CMAKE_SOURCE_DIR}")
     target_compile_definitions(NativeMessagePumpTests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
@@ -242,12 +248,23 @@ if(BUILD_TESTING)
         runtime/native/achievements_catalog.cpp)
     target_include_directories(AchievementsCatalogTests PRIVATE "${CMAKE_SOURCE_DIR}")
     add_test(NAME AchievementsCatalogContract COMMAND AchievementsCatalogTests)
+    add_executable(FlashbackLayoutTests tests/flashback_layout_tests.cpp)
+    target_include_directories(FlashbackLayoutTests PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_compile_options(FlashbackLayoutTests PRIVATE /fp:strict)
+    add_test(NAME FlashbackLayoutContract COMMAND FlashbackLayoutTests)
     add_executable(MenuPointerTests tests/menu_pointer_tests.cpp)
     target_include_directories(MenuPointerTests PRIVATE "${CMAKE_SOURCE_DIR}")
     add_test(NAME MenuPointerContract COMMAND MenuPointerTests)
     add_executable(DeveloperResolutionShortcutTests tests/developer_resolution_shortcut_contract.cpp)
     target_include_directories(DeveloperResolutionShortcutTests PRIVATE "${CMAKE_SOURCE_DIR}")
     add_test(NAME DeveloperResolutionShortcutContract COMMAND DeveloperResolutionShortcutTests)
+    add_executable(DeveloperSpeedDropdownTests tests/developer_speed_dropdown_contract.cpp
+        app/windows/developer_tools_window.cpp)
+    target_include_directories(DeveloperSpeedDropdownTests PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_compile_definitions(DeveloperSpeedDropdownTests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
+    target_link_libraries(DeveloperSpeedDropdownTests PRIVATE user32 gdi32 xinput)
+    add_test(NAME DeveloperSpeedDropdownContract COMMAND DeveloperSpeedDropdownTests)
+    set_tests_properties(DeveloperSpeedDropdownContract PROPERTIES TIMEOUT 15)
     add_executable(KeyboardBindingsTests tests/keyboard_bindings_tests.cpp
         app/windows/keyboard_settings.cpp runtime/native/keyboard_bindings.cpp)
     target_include_directories(KeyboardBindingsTests PRIVATE "${CMAKE_SOURCE_DIR}")
@@ -299,6 +316,12 @@ if(BUILD_TESTING)
     add_test(NAME GeneratorSetupContract COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/test_setup_generator.py")
     set_tests_properties(GeneratorSetupContract PROPERTIES TIMEOUT 60)
     add_test(NAME ReleasePackagingContract COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/test_release.py")
+    add_test(NAME ReleaseUpdaterContract COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+        -File "${CMAKE_SOURCE_DIR}/tests/test_update_release.ps1")
+    set_tests_properties(ReleaseUpdaterContract PROPERTIES TIMEOUT 120)
+    add_test(NAME CommitUpdaterContract COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+        -File "${CMAKE_SOURCE_DIR}/tests/test_update_commits.ps1")
+    set_tests_properties(CommitUpdaterContract PROPERTIES TIMEOUT 120)
     set_tests_properties(ReleasePackagingContract PROPERTIES TIMEOUT 60)
     add_subdirectory(tests/generator)
     add_test(NAME NativeCompilationRollback COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/test_native_stamp.py")
@@ -358,8 +381,17 @@ if(BUILD_TESTING)
     stage_dark_xma(WorldRendererTests)
     add_test(NAME WorldRendererContract COMMAND WorldRendererTests)
     add_test(NAME WorldRendererWarpContract COMMAND WorldRendererTests --warp)
+    add_test(NAME WorldGuiFadeContract COMMAND WorldRendererTests --gui-fade-only)
+    add_test(NAME WorldGuiFadeWarpContract COMMAND WorldRendererTests --warp --gui-fade-only)
+    add_test(NAME WorldBloomResolutionContract COMMAND WorldRendererTests --bloom-only)
+    add_test(NAME WorldBloomResolutionWarpContract COMMAND WorldRendererTests --warp --bloom-only)
+    set_tests_properties(WorldBloomResolutionContract WorldBloomResolutionWarpContract PROPERTIES TIMEOUT 60)
+    add_test(NAME DarknessArmBloomContract COMMAND WorldRendererTests --arm-bloom-only)
+    add_test(NAME DarknessArmBloomWarpContract COMMAND WorldRendererTests --warp --arm-bloom-only)
+    set_tests_properties(DarknessArmBloomContract DarknessArmBloomWarpContract PROPERTIES TIMEOUT 60)
     add_test(NAME WorldVertexPreparationContract COMMAND WorldRendererTests --cpu-only)
     set_tests_properties(WorldVertexPreparationContract PROPERTIES TIMEOUT 30)
+    set_tests_properties(WorldGuiFadeContract WorldGuiFadeWarpContract PROPERTIES TIMEOUT 30)
     # A template change invalidates every vertex permutation in the disk cache.
     # Allow the expanded material suite to compile its shaders on a cold run.
     set_tests_properties(WorldRendererContract WorldRendererWarpContract PROPERTIES TIMEOUT 120)
@@ -519,14 +551,30 @@ if(BUILD_TESTING)
     set_tests_properties(VideoSettingsContract PROPERTIES TIMEOUT 30)
     set_tests_properties(AudioDriverContract DispatcherContract PROPERTIES TIMEOUT 60)
     add_test(NAME XmaLifecycleContract COMMAND "$<TARGET_FILE:NativeTests>" "${CMAKE_SOURCE_DIR}/Darkness" "--xma-lifecycle")
-    add_test(NAME XmaBridgeContract COMMAND "$<TARGET_FILE:NativeTests>" "${CMAKE_SOURCE_DIR}/Darkness" "--xma-bridge" "${CMAKE_SOURCE_DIR}/build_native/run/xma-capture-000.bin")
+    # Captures contain data from the developer's game dump and are not shipped.
+    # Fresh source builds still run the live/staged decoder and lifecycle tests.
+    set(DARK_XMA_CAPTURE "${CMAKE_SOURCE_DIR}/build_native/run/xma-capture-000.bin"
+        CACHE FILEPATH "Private captured XMA test fixture (optional)")
+    if(EXISTS "${DARK_XMA_CAPTURE}")
+        add_test(NAME XmaBridgeContract COMMAND "$<TARGET_FILE:NativeTests>" "${CMAKE_SOURCE_DIR}/Darkness" "--xma-bridge" "${DARK_XMA_CAPTURE}")
+    else()
+        message(STATUS "Skipping captured XMA bridge test: no private ${DARK_XMA_CAPTURE}")
+    endif()
     add_test(NAME XmaDecodeLive COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/tests/check_xma_decode.py" "$<TARGET_FILE:NativeTests>" "${CMAKE_SOURCE_DIR}/Darkness" "--xma-submit-live")
     add_test(NAME XmaDecodeStaged COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/tests/check_xma_decode.py" "$<TARGET_FILE:NativeTests>" "${CMAKE_SOURCE_DIR}/Darkness" "--xma-submit-staged")
     add_test(NAME OriginalGameInflate COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/tests/check_inflate.py" "$<TARGET_FILE:NativeTests>" "${CMAKE_SOURCE_DIR}/Darkness")
-    set(FFMPEG_SHARED_ROOT "${CMAKE_SOURCE_DIR}/build_native/deps/ffmpeg-8.1.2-full_build-shared")
+    set(FFMPEG_SHARED_ROOT "${CMAKE_SOURCE_DIR}/build_native/deps/ffmpeg-8.1.2-full_build-shared"
+        CACHE PATH "Stock FFmpeg SDK for independent captured-XMA oracle tests (optional)")
+    if(EXISTS "${DARK_XMA_CAPTURE}" AND
+       EXISTS "${FFMPEG_SHARED_ROOT}/include/libavcodec/avcodec.h" AND
+       EXISTS "${FFMPEG_SHARED_ROOT}/lib/avcodec.lib" AND
+       EXISTS "${FFMPEG_SHARED_ROOT}/lib/avutil.lib" AND
+       EXISTS "${FFMPEG_SHARED_ROOT}/bin/avcodec-62.dll" AND
+       EXISTS "${FFMPEG_SHARED_ROOT}/bin/avutil-60.dll" AND
+       EXISTS "${FFMPEG_SHARED_ROOT}/bin/swresample-6.dll")
     add_executable(XmaAdapterTests tests/xma_adapter_tests.cpp runtime/native/xma_decoder.cpp)
     target_include_directories(XmaAdapterTests PRIVATE "${CMAKE_SOURCE_DIR}" "${FFMPEG_SHARED_ROOT}/include")
     target_link_directories(XmaAdapterTests PRIVATE "${FFMPEG_SHARED_ROOT}/lib")
@@ -541,15 +589,17 @@ if(BUILD_TESTING)
         "${FFMPEG_SHARED_ROOT}/bin/avutil-60.dll" "$<TARGET_FILE_DIR:XmaAdapterTests>/avutil-60.dll"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
         "${FFMPEG_SHARED_ROOT}/bin/swresample-6.dll" "$<TARGET_FILE_DIR:XmaAdapterTests>/swresample-6.dll")
-    add_test(NAME XmaAdapterContract COMMAND XmaAdapterTests
-        "${CMAKE_SOURCE_DIR}/build_native/run/xma-capture-000.bin")
+    add_test(NAME XmaAdapterContract COMMAND XmaAdapterTests "${DARK_XMA_CAPTURE}")
     add_executable(XmaRawTests tests/xma_raw_tests.cpp)
     target_include_directories(XmaRawTests PRIVATE "${CMAKE_SOURCE_DIR}" "${DARK_XMA_ROOT}/include")
     target_compile_definitions(XmaRawTests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
     target_link_libraries(XmaRawTests PRIVATE DarkXmaRaw)
     add_dependencies(XmaRawTests XmaAdapterTests)
     stage_dark_xma(XmaRawTests)
-    add_test(NAME XmaRawContract COMMAND XmaRawTests "${CMAKE_SOURCE_DIR}/build_native/run/xma-capture-000.bin")
+    add_test(NAME XmaRawContract COMMAND XmaRawTests "${DARK_XMA_CAPTURE}")
+    else()
+        message(STATUS "Skipping captured XMA oracle tests: private capture and stock FFmpeg test SDK required")
+    endif()
     add_executable(TestInputParserTests tests/test_input_parser_contract.cpp)
     target_include_directories(TestInputParserTests PRIVATE "${CMAKE_SOURCE_DIR}")
     target_compile_definitions(TestInputParserTests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)

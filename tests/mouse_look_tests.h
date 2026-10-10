@@ -240,6 +240,26 @@ static void testMouseLookContract(PPCContext& ctx) {
         input.setMouseLookEnabled(false); input.setMouseLookEnabled(true);
         tick(); commands.clear();
     };
+    input.setMouseLookEnabled(false, true);
+    input.mouseMotion(1000, -1000);
+    base[client + 8816] = 2;
+    tick();
+    check(!input.mouseLookEnabled(), "Authored camera mode enabled loading capture");
+    base[client + 8816] = 0;
+    memory->write32(client + 516, 0x21);
+    tick();
+    check(!input.mouseLookEnabled() && commands.empty(),
+          "Input-disabled client enabled loading capture or replayed mouse motion");
+    memory->write32(client + 516, 1);
+    memory->write32(client + 7360, block + 0xA500);
+    tick();
+    check(!input.mouseLookEnabled(), "Active GUI enabled loading mouse look");
+    memory->write32(client + 7360, 0);
+    tick(0x823FC99C);
+    check(!input.mouseLookEnabled(), "Unrelated caller enabled loading mouse look");
+    tick();
+    check(input.mouseLookEnabled() && commands.empty(),
+          "First eligible client tick must enable look without load-time movement");
     commands.clear(); input.mouseMotion(12, -7); tick(0x823FC99C);
     check(commands.empty(), "Call instruction address must not be mistaken for its return LR");
     tick();

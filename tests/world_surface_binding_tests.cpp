@@ -3,6 +3,7 @@
 #include "renderer/engine/world_mesh.h"
 #include "runtime/native/runtime.h"
 #include "ppc_recomp_shared.h"
+#include <bit>
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
@@ -10,6 +11,8 @@
 #include <vector>
 
 using namespace DarkRecomp::Native;
+extern "C" PPC_FUNC(__imp__sub_8285F428);
+extern "C" PPC_FUNC(__imp__sub_8285FBD0);
 extern "C" PPC_FUNC(__imp__sub_82864840);
 extern "C" PPC_FUNC(__imp__sub_82861698);
 
@@ -97,6 +100,51 @@ Commands capture(const StoredDraw& geometry) {
         }
     }
     ++captures;return result;
+}
+void clipPlanesOracle(const PPCContext& initial) {
+    auto geometry=setup(64,32);
+    std::array<EngineVector,6> planes{};
+    for(unsigned i=0;i<planes.size();++i)for(unsigned lane=0;lane<4;++lane) {
+        planes[i][lane]=float(int(i)*4+int(lane)-9)/8;
+        put(device+10272+i*16+lane*4,std::bit_cast<uint32_t>(planes[i][lane]));
+    }
+    auto original=[&](auto function,uint32_t value) {
+        PPCContext guest=initial;guest.r3.u64=device;guest.r4.u64=value;
+        function(guest,memory->base());++originalCalls;
+        require(guest.r1.u32==initial.r1.u32,"Original clip state setter unbalanced stack");
+    };
+    put(device+10564,0x80000); // Original Direct3D clip-space convention.
+    for(unsigned mask=0;mask<64;++mask) {
+        original(__imp__sub_8285F428,mask);
+        const auto observed=capture(geometry).draw.clipPlanes;
+        require(observed.control==memory->read32(device+10564) && observed.enabledMask()==mask,
+            "Completed original clip enable mask was omitted or changed");
+        for(unsigned i=0;i<planes.size();++i)
+            require(observed.planes[i]==((mask&(1u<<i))?planes[i]:EngineVector{}),
+                "Captured clip plane lost coefficients or consumed a disabled plane");
+    }
+    auto retained=captureWorldDraw(memory->base(),geometry);
+    require(retained && retained->clipPlanes.enabledMask()==63,"Pooled draw lost original user planes");
+    original(__imp__sub_8285F428,0);
+    for(unsigned i=0;i<planes.size();++i)put(device+10272+i*16,0x7fc00000);
+    const auto disabled=capture(geometry).draw.clipPlanes;
+    require(disabled.enabledMask()==0 && disabled.planes==std::array<EngineVector,6>{},
+        "Disabled stale clip-plane data rejected or leaked into a draw");
+    require(retained->clipPlanes.enabledMask()==63 && retained->clipPlanes.planes==planes,
+        "Reusing original plane storage mutated an owned queued draw");
+    original(__imp__sub_8285F428,63);
+    original(__imp__sub_8285FBD0,0); // Original D3DRS_CLIPPING=false.
+    const auto clipDisabled=capture(geometry).draw.clipPlanes;
+    require((clipDisabled.control&0x10000) && clipDisabled.enabledMask()==0,
+        "Original clip-disable did not suppress enabled stale planes");
+    original(__imp__sub_8285FBD0,1);
+    auto unchanged=retained->clipPlanes;
+    require(!snapshotWorldClipPlanes(memory->base(),device,unchanged) &&
+        unchanged.control==retained->clipPlanes.control && unchanged.planes==planes,
+        "An enabled nonfinite plane published partial capture state");
+    require(!snapshotWorldClipPlanes(memory->base(),0xfffffff0,unchanged) && unchanged.planes==planes,
+        "Invalid device range changed retained clip-plane state");
+    std::puts("WorldClipPlaneCapture passed: all64 original masks, clip-disable, exact coefficients, inactive poison, pooled ownership and invalid-state atomicity.");
 }
 void oracle(const PPCContext& initial,uint32_t width,uint32_t height,unsigned samples,uint32_t tile) {
     const auto geometry=setup(width,height);
@@ -203,6 +251,7 @@ int main(int argc,char** argv) {
         require(owner.commit(fixture,extent),"Cannot commit CPU fixture");
         for(unsigned samples:{0u,1u,2u})for(uint32_t tile:{0u,1024u})oracle(initial,64,32,samples,tile);
         oracle(initial,1720,720,0,0);
+        clipPlanesOracle(initial);
         std::printf("WorldSurfaceBindingContract passed: %llu captures, %llu original-AOT calls; descriptor replacement/reuse, completed bindings, clear/draw/resolve ownership, pitch/sample/pixel widths, format/exponent views, all attachments, synthetic isolation, null/invalid bindings and queued/pool lifetime. CPU only.\n",captures,originalCalls);
         return 0;
     } catch(const std::exception& e) {
