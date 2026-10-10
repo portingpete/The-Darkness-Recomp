@@ -251,7 +251,16 @@ static void testVideoSettings(PPCContext& ctx) {
     const auto failedMouseLabel = videoSettingLabel("darkrecomp.mouse_sensitivity");
     check(failedMouseLabel.find("SAVE FAILED") != std::string::npos && failedMouseLabel.size() - 4 == 16,
           "mouse save failure is invisible or changes value-button width");
+    initializeNativeMenuText(true, 1);
+    const auto russianFailedMouseLabel = videoSettingLabel("darkrecomp.mouse_sensitivity");
+    check(russianFailedMouseLabel != failedMouseLabel &&
+          russianFailedMouseLabel.find(nativeMenuText("SAVE FAILED")) != std::string::npos &&
+          russianFailedMouseLabel.size() - 4 == 16,
+          "Russian mouse save failure is untranslated or changes value-button width");
     reportMouseSensitivitySave(true);
+    check(videoSettingLabel("darkrecomp.mouse_sensitivity").find("10X") != std::string::npos,
+          "Russian menu changed the numeric mouse multiplier");
+    initializeNativeMenuText(false, 1);
     const auto mouseLabel = videoSettingLabel("darkrecomp.mouse_sensitivity");
     check(mouseLabel.find("10X") != std::string::npos && mouseLabel.size() - 4 == 16 &&
           graphicsSettings() == beforeMouseGraphics && fieldOfViewSetting() == beforeMouseFov &&

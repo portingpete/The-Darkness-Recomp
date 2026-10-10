@@ -21,6 +21,7 @@
     "EXIT GAME?": {"text": "ВЫЙТИ ИЗ ИГРЫ?", "max_glyphs": 20},
     "UNSAVED PROGRESS WILL BE LOST.": {"text": "НЕСОХРАНЁННЫЙ ПРОГРЕСС БУДЕТ ПОТЕРЯН.", "max_glyphs": 40},
     "KEYBOARD BINDINGS": {"text": "КЛАВИШИ И МЫШЬ", "max_glyphs": 20},
+    "MOUSE SENSITIVITY": {"text": "ЧУВСТВ. МЫШИ", "max_glyphs": 20},
     "ACTION": {"text": "ДЕЙСТВИЕ", "max_glyphs": 18},
     "PRIMARY": {"text": "ОСНОВН.", "max_glyphs": 10},
     "SECONDARY": {"text": "ДОПОЛН.", "max_glyphs": 10},
