@@ -16,7 +16,7 @@ import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_NAME = "The Darkness (DarkRecomp)"
-LAUNCH_OPTIONS = "--sound"
+LAUNCH_OPTIONS = ""
 
 
 def steam_userdata_roots(platform=None, home=None, environ=None):
@@ -101,9 +101,9 @@ def serialize_dict(values):
 
 def shortcut_entry(root):
     root = Path(root).resolve()
-    executable = root / "build_native/Release/DarkRecompPreview.exe"
+    executable = root / "build_native/Release/DarkRecomp.exe"
     if not executable.is_file():
-        raise FileNotFoundError(f"Game launcher not found: {executable}; extract the entire Windows release first")
+        raise FileNotFoundError(f"Game executable not found: {executable}; extract the entire Windows release first")
     target = f'"{executable}"'
     appid = (zlib.crc32((target + APP_NAME).encode("utf-8")) | 0x80000000) & 0xFFFFFFFF
     return {

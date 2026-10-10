@@ -84,6 +84,20 @@ System default, English, German, French, Spanish, or Italian. In-game changes
 take effect after restarting. See [CONTROLS.md](CONTROLS.md) for language overrides
 and the full input guide.
 
+## Steam on Windows
+
+In Steam, choose **Games > Add a Non-Steam Game > Browse** and select
+`build_native/Release/DarkRecomp.exe` in the extracted release. Set **Start In**
+to the extracted release folder and leave **Launch Options** empty. Sound and
+normal gameplay are enabled by default. Keep the whole release folder together.
+
+The shortcut must target the game executable so Steam can follow the running
+game for its overlay, Steam Input, and session status. If you already added
+`Launch.cmd` or `DarkRecompPreview.exe`, edit that shortcut's **Properties** to
+use `DarkRecomp.exe` and remove `--sound` from Launch Options. The optional
+`tools/add_steam_shortcut.py` helper preserves existing shortcuts; it does not
+retarget them automatically.
+
 ## Steam Deck and Linux
 
 The Windows build can run through Proton on Linux. `Launch.sh` and the file I/O

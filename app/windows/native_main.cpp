@@ -6,6 +6,7 @@
 #include "runtime/native/input.h"
 #include "native_mouse.h"
 #include "native_shutdown.h"
+#include "native_launch_paths.h"
 #include "resource.h"
 #include "developer_tools_window.h"
 #include "achievements_window.h"
@@ -128,13 +129,14 @@ int wmain(int argc, wchar_t** argv) {
         return 1;
     }
 #endif
-    std::filesystem::path gameDir = L"Darkness";
-    uint32_t timeout = 30000;
+    std::filesystem::path gameDir;
+    bool overrideGameDirectory = false;
+    uint32_t timeout = 0;
     unsigned targetFps = 60;
     bool rendererSmoke = false;
     std::filesystem::path rendererTrace;
     bool manualShadowCapture=false;
-    bool enginePreview = false;
+    bool enginePreview = true;
     bool muted = false;
     bool sampleEngine=false,sampleWorkers=false;
     unsigned sceneWorkers=0;
@@ -153,7 +155,10 @@ int wmain(int argc, wchar_t** argv) {
     bool overrideVsync = false, verticalSync = false;
     for (int i = 1; i < argc; ++i) {
         std::wstring arg = argv[i];
-        if (arg == L"--game-dir" && i + 1 < argc) gameDir = argv[++i];
+        if (arg == L"--game-dir" && i + 1 < argc) {
+            gameDir = argv[++i];
+            overrideGameDirectory = true;
+        }
         else if (arg == L"--timeout-ms" && i + 1 < argc) timeout = wcstoul(argv[++i], nullptr, 10);
         else if (arg == L"--fps" && i + 1 < argc) {
             const wchar_t* text = argv[++i];
@@ -182,6 +187,7 @@ int wmain(int argc, wchar_t** argv) {
         else if (arg == L"--test-start") testStart=true;
         else if (arg == L"--test-skip-intros") testSkipIntros=true;
         else if (arg == L"--engine-preview") enginePreview = true;
+        else if (arg == L"--no-engine-preview") enginePreview = false;
         else if (arg == L"--mute") muted = true;
         else if (arg == L"--fullscreen") { fullscreen = true; overrideFullscreen = true; }
         else if (arg == L"--windowed") { fullscreen = false; overrideFullscreen = true; }
@@ -218,7 +224,8 @@ int wmain(int argc, wchar_t** argv) {
         }
         else if (arg == L"--preview-frame" && i + 1 < argc) previewFrame = argv[++i];
         else {
-            fputs("Usage: DarkRecomp --game-dir <directory> [--timeout-ms 30000 (0 disables deadline)] [--renderer-smoke] [--trace-renderer <new directory>] [--engine-preview] [--mute] [--fps 60 (default; 0 uncapped)] [--profile-engine] [--sample-engine] [--mouse-sensitivity 1.0] [--language auto|en|de|fr|es|it] [--preview-frame <new BMP path>] [--test-input <file>] [--test-start] [--test-skip-intros]\n", stderr);
+            fputs("Usage: DarkRecomp [--game-dir <directory>] [--timeout-ms N (default 0, no deadline)] [--renderer-smoke] [--trace-renderer <new directory>] [--engine-preview | --no-engine-preview] [--mute] [--fps 60 (default; 0 uncapped)] [--profile-engine] [--sample-engine] [--mouse-sensitivity 1.0] [--language auto|en|de|fr|es|it] [--preview-frame <new BMP path>] [--test-input <file>] [--test-start] [--test-skip-intros]\n", stderr);
+            fputs("  Starts with gameplay rendering and sound. Without --game-dir, finds Darkness beside the installed EXE or its parent folders.\n", stderr);
             fputs("  --test-input file lines (max 64, own-process diagnostics only): numeric '<key> [<holdMs 1..10000>]' (bare menu keys hold 250ms, I/J/K/L hold 2000ms; gameplay keys WASD/E/R/F/X/Z/C/Q/G/1-4/Tab/Back/Shift/Ctrl plus arrows/Space/Return/Esc/IJKL; 116=F5 panel,117=gated F6); 'mouse <dx> <dy>' (+/-10000, held 2000ms); 'capture' game screenshots; '0' inspects; 'dev open|close|status|defaults', 'dev mission <ID>', 'dev speed <preset>', 'dev invincible|noclip|resolution on|off', 'dev darkness unlock|max', 'dev capture <absolute BMP path>'; an invalid line blocks later commands until that line is fixed.\n", stderr);
             fputs("  Display: --fullscreen or --windowed; --width W --height H selects window/aspect size; --render-height H controls internal resolution (180..2160, default 720). Alt+Enter toggles borderless fullscreen; enable the F6 resolution shortcut in the F5 developer panel to switch live 720p/1440p when started with a 720-high guest mode (disabled by default).\n", stderr);
             fputs("  Options > Video Settings contains native PC graphics controls. Saved settings apply unless explicitly overridden. --vsync / --no-vsync overrides vertical sync; --fov 0 (Original) or 60..120 overrides horizontal FOV at 16:9 for this run.\n", stderr);
@@ -236,6 +243,13 @@ int wmain(int argc, wchar_t** argv) {
     }
     puts("DarkRecomp native Windows AOT runtime - development build, gameplay incomplete");
     try {
+        if (!overrideGameDirectory) {
+            wchar_t executable[32768]{};
+            const DWORD length = GetModuleFileNameW(nullptr, executable, DWORD(std::size(executable)));
+            if (!length || length >= std::size(executable))
+                throw std::runtime_error("Cannot locate DarkRecomp.exe; specify --game-dir <directory>.");
+            gameDir = DarkRecomp::findInstalledGameDirectory(executable);
+        }
         const auto settingsPath = std::filesystem::absolute(gameDir).parent_path() / L"DarkRecomp.settings.ini";
         initializeGameLanguageSetting(loadGameLanguage(settingsPath));
         if (overrideLanguage) overrideGameLanguageForRun(commandLineLanguage);
