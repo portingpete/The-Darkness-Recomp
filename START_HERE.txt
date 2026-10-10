@@ -34,6 +34,13 @@ THE DARKNESS RECOMP - START HERE
 3. Double-click Launch.cmd. That's it - no build or developer tools needed.
    To choose settings and language before playing, use LaunchWithSettings.cmd.
 
+   For Steam on Windows, add build_native\Release\DarkRecomp.exe as a Non-Steam
+   Game. Set Start In to this extracted folder and leave Launch Options empty.
+   Sound and normal gameplay are enabled by default. For an existing shortcut
+   to Launch.cmd or DarkRecompPreview.exe, edit its Properties to target
+   DarkRecomp.exe and remove --sound. The shortcut helper preserves existing
+   entries, so this change must be made manually.
+
 Windows 10/11, 64-bit, with a Direct3D 11-capable graphics device is required.
 The audio and Visual C++ runtime files are included. Keep them with the game.
 

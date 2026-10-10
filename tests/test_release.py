@@ -389,7 +389,7 @@ class SteamShortcutTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix='dark steam & test! ')
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-        launcher = self.root / 'build_native/Release/DarkRecompPreview.exe'
+        launcher = self.root / 'build_native/Release/DarkRecomp.exe'
         launcher.parent.mkdir(parents=True)
         launcher.write_bytes(b'launcher')
         self.entry = steam.shortcut_entry(self.root)
@@ -403,10 +403,27 @@ class SteamShortcutTests(unittest.TestCase):
         self.assertEqual(end, len(data))
         return parsed
 
-    def test_shortcut_quotes_installed_folder_and_starts_sound(self):
-        self.assertEqual(self.entry['Exe'], f'"{self.root / "build_native/Release/DarkRecompPreview.exe"}"')
+    def test_shortcut_quotes_game_executable_and_needs_no_launch_options(self):
+        self.assertEqual(self.entry['Exe'], f'"{self.root / "build_native/Release/DarkRecomp.exe"}"')
         self.assertEqual(self.entry['StartDir'], f'"{self.root}"')
-        self.assertEqual(self.entry['LaunchOptions'], '--sound')
+        self.assertEqual(self.entry['LaunchOptions'], '')
+
+    def test_preview_launcher_alone_does_not_create_game_shortcut(self):
+        executable = self.root / 'build_native/Release/DarkRecomp.exe'
+        executable.rename(executable.with_name('DarkRecompPreview.exe'))
+        with self.assertRaisesRegex(FileNotFoundError, 'Game executable not found'):
+            steam.shortcut_entry(self.root)
+
+    def test_existing_preview_shortcut_is_preserved_for_manual_retargeting(self):
+        existing = dict(self.entry)
+        existing['Exe'] = f'"{self.root / "build_native/Release/DarkRecompPreview.exe"}"'
+        existing['LaunchOptions'] = '--sound'
+        existing['appid'] = 123
+        self.shortcuts.write_bytes(steam.serialize_dict({'shortcuts': {'0': existing}}) + b'\x08')
+        original = self.shortcuts.read_bytes()
+        self.assertFalse(steam.add_to(self.shortcuts, self.entry))
+        self.assertEqual(self.shortcuts.read_bytes(), original)
+        self.assertFalse(self.shortcuts.with_name('shortcuts.vdf.bak').exists())
 
     def test_linux_discovers_native_and_flatpak_steam_locations(self):
         candidates = steam.steam_userdata_roots(platform='linux', home=self.root)

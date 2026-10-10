@@ -62,6 +62,8 @@ if args.trace_renderer:
     command += ["--trace-renderer", str(log.with_suffix(".render"))]
 if args.engine_preview:
     command += ["--engine-preview", "--preview-frame", str(log.with_suffix(".bmp"))]
+else:
+    command += ["--no-engine-preview"]
 if args.mute:
     command += ["--mute"]
 if args.profile_engine:

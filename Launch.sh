@@ -10,7 +10,7 @@ Usage: ./Launch.sh [play|mute|check|help] [extra game arguments...]
   check           Check the release and UMU without launching or downloading.
 
 Install umu-run using https://github.com/Open-Wine-Components/umu-launcher
-or add build_native/Release/DarkRecompPreview.exe to Steam and select Proton.
+or add build_native/Release/DarkRecomp.exe to Steam and select Proton.
 See STEAM_DECK.md. WINEPREFIX, GAMEID and PROTONPATH overrides are respected.
 Setup checks require the complete game dump in Darkness beside Launch.sh.
 Additional --game-dir arguments are forwarded; check still validates Darkness.
@@ -64,7 +64,7 @@ if (( missing )); then
 fi
 if ! command -v umu-run >/dev/null 2>&1; then
     printf 'umu-run was not found. Install UMU from https://github.com/Open-Wine-Components/umu-launcher\n' >&2
-    printf 'Alternatively, add build_native/Release/DarkRecompPreview.exe to Steam and select Proton. See STEAM_DECK.md.\n' >&2
+    printf 'Alternatively, add build_native/Release/DarkRecomp.exe to Steam and select Proton. See STEAM_DECK.md.\n' >&2
     exit 1
 fi
 

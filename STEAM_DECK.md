@@ -96,15 +96,16 @@ setup reproduces the validation scope above, including its input limitations.
    `Darkness` folder using the layout in `START_HERE.txt`. Only the original
    extracted files are needed; no executable preparation is required.
 2. In Steam, choose **Games > Add a Non-Steam Game > Browse** and select
-   `build_native/Release/DarkRecompPreview.exe` from the extracted folder.
+   `build_native/Release/DarkRecomp.exe` from the extracted folder.
 3. Open the shortcut's **Properties**. Set **Start In** to the extracted release
-   folder, and **Launch Options** to `--sound`. Quote paths containing spaces.
+   folder, and leave **Launch Options** empty. Sound is enabled by default.
+   Quote paths containing spaces.
    For the example folder, the properties are:
 
    ```text
-   Target: "/home/deck/Games/The-Darkness-Recomp/build_native/Release/DarkRecompPreview.exe"
+   Target: "/home/deck/Games/The-Darkness-Recomp/build_native/Release/DarkRecomp.exe"
    Start In: "/home/deck/Games/The-Darkness-Recomp"
-   Launch Options: --sound
+   Launch Options:
    ```
 
 4. Under **Compatibility**, enable **Force the use of a specific Steam Play
@@ -114,6 +115,11 @@ setup reproduces the validation scope above, including its input limitations.
 5. Use Steam Input's **Gamepad** template so the Deck controls reach the game's
    Xbox controller input. Launch the shortcut. If Desktop Mode succeeds, try
    Gaming Mode and test saves, audio, controller input, and suspend/resume.
+
+The shortcut targets the running game directly for Steam's overlay, Steam Input,
+and session status. For an existing shortcut to `Launch.cmd` or
+`DarkRecompPreview.exe`, edit its **Properties** to target `DarkRecomp.exe` and
+remove `--sound` from Launch Options.
 
 Video options are in the game's **Options > Video Settings**. Begin with the
 default 720p internal rendering. A stable frame rate on Deck has not been
@@ -160,7 +166,8 @@ Use Steam's shortcut method above when you want Steam Input and Gaming Mode.
 The release includes `tools/add_steam_shortcut.py`. Python 3 is needed only for
 this optional helper; the manual Steam steps above do not require it. The
 helper discovers standard Linux and Flatpak Steam user folders as well as
-Windows Steam installations, and targets the same EXE and `--sound` option.
+Windows Steam installations, and targets the same game EXE with empty launch
+options.
 
 Close Steam completely before running the helper, because Steam writes
 `shortcuts.vdf` when it exits. Preview the entry first:
@@ -180,22 +187,24 @@ Replace `USER_ID` with the numeric folder for your Steam user. The helper
 preserves existing entries and keeps an initial `.bak` backup. Select Proton in
 the shortcut's Compatibility properties after adding it. `--root /path/to/game`
 can target an extracted release elsewhere; `--steam-userdata /path/to/userdata`
-can select another Steam installation.
+can select another Steam installation. Existing shortcuts are preserved; edit
+their Properties manually using the target above to switch from an older launcher.
 
 ## If launch fails
 
 Enable Proton logging for one diagnostic run with:
 
 ```text
-PROTON_LOG=1 %command% --sound
+PROTON_LOG=1 %command%
 ```
 
 [Proton's documentation](https://github.com/ValveSoftware/Proton#runtime-config-options)
 describes the log location, normally `steam-<shortcut-id>.log` in your home
-folder. Also retain the newest `build_native/run/desktop-*/runtime.log` inside
-the extracted release. Report both logs, the release version, Proton version,
+folder. If you also reproduce through `Launch.sh`, retain its newest
+`build_native/run/desktop-*/runtime.log` inside the extracted release.
+Report the available logs, the release version, Proton version,
 SteamOS/Linux version, and whether the failure happens in Desktop or Gaming
-Mode. Return Launch Options to `--sound` after testing. Do not upload game files.
+Mode. Clear Launch Options after testing. Do not upload game files.
 
 The current build requires an x86-64 CPU with SSSE3. It does not select the
 build machine's CPU instruction set, and the bundled XMA decoder disables
