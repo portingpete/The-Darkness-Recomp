@@ -11,5 +11,6 @@ struct NativeMenuAssets {
 // paths preserve the original menus when the supplied menu differs from the
 // source used to generate the bundled PC menu, or preparation fails.
 NativeMenuAssets prepareNativeMenuAssets(const std::filesystem::path& gameDirectory,
-                                        const std::filesystem::path& bundledAssetsDirectory) noexcept;
+                                        const std::filesystem::path& bundledAssetsDirectory,
+                                        bool russianMenu = false) noexcept;
 }

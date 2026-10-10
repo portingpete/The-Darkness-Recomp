@@ -8,8 +8,10 @@ import argparse
 from dataclasses import dataclass
 import hashlib
 from pathlib import Path
+import re
 import struct
 import zlib
+from compile_native_menu_text import DEFAULT_CATALOG, load_catalog, write_if_changed
 
 
 @dataclass
@@ -169,7 +171,38 @@ KEYBOARD_SECONDARY = tuple({"CROUCH": "C", "ZOOM": "MMB", "FIRE RIGHT WEAPON": "
                             "FIRE LEFT WEAPON": "RMB"}.get(action, "UNBOUND") for action in KEYBOARD_ACTIONS)
 
 
-def replace_video_page(registry):
+def localized_text(text, region, translations):
+    """Translate generated TEXT only, retaining byte-based glyph/cell sizing."""
+    if translations is None:
+        return text
+    token, value = text.split(", ", 1)
+    if value.startswith("§"):
+        return text  # Original localized resources remain owned by the dump.
+
+    def lookup(english):
+        if english not in translations:
+            raise ValueError(f"Missing Russian menu translation: {english}")
+        return translations[english]
+
+    if value.startswith("< ") and value.endswith(" >"):
+        original = value[2:-2].strip()
+        translated = original if re.fullmatch(r"\d+(?:%|P|X)?", original) else lookup(original)
+        value = "< " + translated.center(12) + " >"
+    elif value.startswith("[") and value.endswith("]"):
+        original = value[1:-1].strip()
+        translated = lookup(original) if original == "UNBOUND" else original
+        value = "[" + translated.center(8) + "]"
+    elif value.startswith("PAGE "):
+        value = lookup("PAGE") + value[4:]
+    else:
+        value = lookup(value)
+    width = int(region.split(",")[2]) * (2 if token == "sc" else 1)
+    if len(value) > width:
+        raise ValueError(f"Russian menu text exceeds its {width}-glyph region: {text}")
+    return token + ", " + value
+
+
+def replace_video_page(registry, translations=None):
     r = registry
     page, = [n for n in r.roots if r.decode(n) == ("WINDOW", "options_video")]
     # Preserve the original calibration page class, properties and navigation.
@@ -197,7 +230,7 @@ def replace_video_page(registry):
             children.insert(option_index, r.make("STYLE", "HIDDENFOCUS"))
         return r.make("WINDOW", r.decode(original)[1], children)
     def window(cls, text, region, script=None):
-        children = [r.make("CLASSNAME", cls), r.make("TEXT", text)]
+        children = [r.make("CLASSNAME", cls), r.make("TEXT", localized_text(text, region, translations))]
         if script:
             children.append(r.make("SCRIPT_PRESSED", script))
             children.append(r.make("ALWAYSPAINT", "1"))
@@ -227,9 +260,9 @@ def replace_video_page(registry):
     r.set_children(page, properties)
 
 
-def add_pc_menu_actions(r):
+def add_pc_menu_actions(r, translations=None):
     def window(cls, text, region, script=None, *, style=None, always_paint=False, identifier=None):
-        children = [r.make("CLASSNAME", cls), r.make("TEXT", text)]
+        children = [r.make("CLASSNAME", cls), r.make("TEXT", localized_text(text, region, translations))]
         if script:
             children.append(r.make("SCRIPT_PRESSED", script))
         if always_paint:
@@ -313,7 +346,7 @@ def add_pc_menu_actions(r):
     r.root_hashes += b"\0" * (-len(r.root_hashes) % 4)
 
 
-def compile_menu(source):
+def compile_menu(source, translations=None):
     data = bytearray(source)
     assert data[:15] == b"MOS DATAFILE2.0"
     payloads = []
@@ -321,8 +354,8 @@ def compile_menu(source):
         offset, size, version = struct.unpack_from("<III", data, entry + 32)
         assert version == 0x203
         r = Registry(data[offset:offset + size], endian)
-        replace_video_page(r)
-        add_pc_menu_actions(r)
+        replace_video_page(r, translations)
+        add_pc_menu_actions(r, translations)
         payloads.append(r.encode())
     output = data[:0x90]
     for entry, payload in zip((0x30, 0x60), payloads):
@@ -401,6 +434,8 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--archive-source", type=Path)
     parser.add_argument("--archive-output", type=Path)
+    parser.add_argument("--russian-output", type=Path)
+    parser.add_argument("--russian-catalog", type=Path, default=DEFAULT_CATALOG)
     args = parser.parse_args()
     assert args.source.resolve() != args.output.resolve(), "Never overwrite the shipped registry"
     source = args.source.read_bytes()
@@ -408,6 +443,9 @@ if __name__ == "__main__":
     args.output.parent.mkdir(parents=True, exist_ok=True)
     if not args.output.exists() or args.output.read_bytes() != result:
         args.output.write_bytes(result)
+    if args.russian_output:
+        assert args.russian_output.resolve() not in (args.source.resolve(), args.output.resolve()), "Russian menu output must be private"
+        write_if_changed(args.russian_output, compile_menu(source, load_catalog(args.russian_catalog)))
     if args.archive_source or args.archive_output:
         assert args.archive_source and args.archive_output
         assert args.archive_source.resolve() != args.archive_output.resolve()

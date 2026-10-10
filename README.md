@@ -44,6 +44,12 @@ own `default.xex`. The Russian localization uses the game's English content
 slot: choose **English**, or **System default** on Russian Windows. Its translated
 text, fonts, and audio come from that dump.
 
+The added in-game PC menus also use Russian with that dump: video settings,
+keyboard and mouse bindings, and Exit Game. Their translation source is
+[assets/localization/native_menu_ru.json](assets/localization/native_menu_ru.json).
+See [the translation guide](assets/localization/README.md) to improve the wording
+and rebuild the menus.
+
 The mouse captures automatically when keyboard/mouse gameplay starts or resumes
 after a menu. Click the game window to recapture after a manual release or Alt-Tab.
 **F1** shows controls, **F2** toggles

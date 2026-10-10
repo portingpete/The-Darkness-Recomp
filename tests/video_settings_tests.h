@@ -3,6 +3,7 @@
 #include "runtime/native/video_settings_menu.h"
 #include "runtime/native/fov_settings.h"
 #include "runtime/native/language_settings.h"
+#include "runtime/native/native_menu_text.h"
 #include <fstream>
 #include <utility>
 
@@ -55,6 +56,12 @@ static void testVideoMenuFiles(PPCContext& ctx) {
 // This does not render, start the game, or use a GPU.
 static void testVideoSettings(PPCContext& ctx) {
     testVideoMenuFiles(ctx);
+    const bool russian = russianNativeMenus();
+    struct RestoreMenuLanguage {
+        bool russian;
+        ~RestoreMenuLanguage() { initializeNativeMenuText(russian, 1); }
+    } restoreMenuLanguage{russian};
+    initializeNativeMenuText(false, 1);
     initializeVideoSettingsMenu();
     check(!graphicsSettings().motionBlur, "motion blur must default to Off");
     check(graphicsSettings().antialiasing == AntialiasingMode::Off, "antialiasing must default to Off");
@@ -388,5 +395,13 @@ static void testVideoSettings(PPCContext& ctx) {
         check(!takeExitGameRequest() && !takeDisplaySettingsSaveRequest(),
               "host action consumed more than once or requested display save");
     }
-    std::puts("Native video settings: shader flags, resolution, original button ABI, filtering, host actions and persistence passed; no rendering performed.");
+    initializeNativeMenuText(true, 1);
+    check(videoSettingLabel("darkrecomp.fov").size() == 20 &&
+          videoSettingLabel("darkrecomp.mode").size() == 20,
+          "Russian values changed the original button hit width");
+    reportDisplaySettingsSave(false);
+    check(videoSettingLabel("darkrecomp.bloom").find("\xce\xd8\xc8\xc1\xca\xc0") != std::string::npos,
+          "Russian save failure remained in English");
+    reportDisplaySettingsSave(true);
+    std::puts("Native video settings: shader flags, resolution, original button ABI, filtering, host actions, Russian labels and persistence passed; no rendering performed.");
 }

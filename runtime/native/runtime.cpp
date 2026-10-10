@@ -8,6 +8,7 @@
 #include "timebase_scale.h"
 #include "achievements.h"
 #include "language_settings.h"
+#include "native_menu_text.h"
 #include <array>
 #include <dbghelp.h>
 #include <cstdio>
@@ -391,8 +392,9 @@ void Memory::load(const std::filesystem::path& gameDir) {
             }
         }
     }
-    Achievements::initialize(achievementData, configuredConsoleLanguage(),
-        std::string_view(decoded.revisionName).starts_with("Russian localization"));
+    const bool russianRevision = std::string_view(decoded.revisionName).starts_with("Russian localization");
+    initializeNativeMenuText(russianRevision, configuredConsoleLanguage());
+    Achievements::initialize(achievementData, configuredConsoleLanguage(), russianRevision);
     uint32_t tlsHeader = headerField(0x20104);
     if (!tlsHeader || read32(tlsHeader) != 64) throw std::runtime_error("Unsupported XEX TLS slot count");
     uint32_t rawAddress = read32(tlsHeader + 4), size = read32(tlsHeader + 8), rawSize = read32(tlsHeader + 12);
@@ -413,7 +415,8 @@ void Memory::load(const std::filesystem::path& gameDir) {
     wchar_t executable[32768]{};
     const DWORD executableLength = GetModuleFileNameW(nullptr, executable, DWORD(std::size(executable)));
     if (executableLength && executableLength < std::size(executable))
-        nativeMenuAssets_ = prepareNativeMenuAssets(gameDir_, std::filesystem::path(executable).parent_path());
+        nativeMenuAssets_ = prepareNativeMenuAssets(gameDir_, std::filesystem::path(executable).parent_path(),
+                                                  russianNativeMenus());
     printf("[AOT] Verified game image (%s); mapped %zu native functions.\n", decoded.revisionName, count);
 }
 uint32_t Memory::headerField(uint32_t key) const {

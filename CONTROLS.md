@@ -130,6 +130,9 @@ does not replace your saved language choice when you adjust graphics settings.
 The supported Russian localization uses the English content slot. With that
 dump, choose **English**, or **System** on Russian Windows, to load its translated
 text and audio. Keep its own executable and all matching content files together.
+The added video, keyboard/mouse and exit menus follow the same selection.
+Their Russian strings are in `assets/localization/native_menu_ru.json`; see
+[the translation guide](assets/localization/README.md) for editing and rebuilding.
 
 In menus, move the cursor over a choice and click to select it. The game releases
 mouse capture while a menu is open and captures it automatically when keyboard/mouse
