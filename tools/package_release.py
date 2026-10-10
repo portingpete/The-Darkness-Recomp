@@ -12,9 +12,10 @@ ROOT = Path(__file__).resolve().parents[1]
 BINARIES = (
     'DarkRecomp.exe', 'DarkRecompPreview.exe', 'DarkRecompSettings.exe',
     'avcodec-darkxma-62.dll', 'avutil-darkxma-60.dll', 'libwinpthread-1.dll',
-    'CubeWnd.pc.xcr', 'CubeWnd.pc.xcr.source.sha256', 'GameContext_Create.pc.xdf',
+    'CubeWnd.pc.xcr', 'CubeWnd.pc.ru.xcr', 'CubeWnd.pc.xcr.source.sha256', 'GameContext_Create.pc.xdf',
 )
-DOCUMENTS = ('Launch.cmd', 'LaunchWithSettings.cmd', 'LaunchStallProfiler.cmd', 'Launch.sh', 'SetupLinux.cmd', 'PlayLinux.cmd', 'START_HERE.txt', 'README.md', 'CONTROLS.md', 'RENDERING.md', 'STEAM_DECK.md', 'COPYING')
+DOCUMENTS = ('Launch.cmd', 'LaunchWithSettings.cmd', 'LaunchStallProfiler.cmd', 'Launch.sh', 'SetupLinux.cmd', 'PlayLinux.cmd', 'START_HERE.txt', 'README.md', 'CONTROLS.md', 'RENDERING.md', 'STEAM_DECK.md', 'COPYING',
+             'assets/localization/README.md', 'assets/localization/native_menu_ru.json')
 LINUX_SETUP_TOOLS = ('setup_linux.ps1', 'setup_linux.py', 'wsl_graphics.py')
 CRT_REQUIRED = ('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')
 

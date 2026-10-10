@@ -101,7 +101,7 @@ struct Fixture {
             std::filesystem::remove(path, error);
             std::filesystem::remove(path.parent_path(), error);
         }
-        for (const auto* name : {L"CubeWnd.pc.xcr", L"GameContext_Create.pc.xdf", L"CubeWnd.pc.xcr.source.sha256"})
+        for (const auto* name : {L"CubeWnd.pc.xcr", L"CubeWnd.pc.ru.xcr", L"GameContext_Create.pc.xdf", L"CubeWnd.pc.xcr.source.sha256"})
             std::filesystem::remove(bundle / name, error);
         std::filesystem::remove(game / L"Content/Gui/CubeWnd.xcr", error);
         std::filesystem::remove(game / L"Content/Xdf/GameContext_Create.XDF", error);
@@ -128,6 +128,13 @@ int main() {
         auto prepared = prepareNativeMenuAssets(fixture.game, fixture.bundle);
         check(prepared.menu == fixture.bundle / L"CubeWnd.pc.xcr" &&
               prepared.archive == fixture.bundle / L"GameContext_Create.pc.xdf", "stock dump stopped using bundled menu cache");
+        check(prepareNativeMenuAssets(fixture.game, fixture.bundle, true).menu.empty(),
+              "missing Russian menu silently selected an English override");
+        save(fixture.bundle / L"CubeWnd.pc.ru.xcr", bytes("Russian PC menu"));
+        auto russian = prepareNativeMenuAssets(fixture.game, fixture.bundle, true); fixture.retain(russian);
+        check(russian.menu == fixture.bundle / L"CubeWnd.pc.ru.xcr" && russian.archive != prepared.archive,
+              "Russian menu reused the English prefetched menu");
+        check(read(archivePath) == baseline.data, "Russian menu selection changed the source startup assets");
 
         save(archivePath, localized.data);
         prepared = prepareNativeMenuAssets(fixture.game, fixture.bundle); fixture.retain(prepared);

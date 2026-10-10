@@ -47,6 +47,19 @@ endif()
 add_library(DarkRuntime STATIC runtime/native/runtime.cpp runtime/native/kernel.cpp runtime/native/dispatcher.cpp runtime/native/filesystem.cpp runtime/native/storage.cpp runtime/native/guest_runner.cpp runtime/native/audio_driver.cpp runtime/native/input.cpp runtime/native/xma_bridge.cpp renderer/d3d11/display_context_d3d11.cpp)
 target_sources(DarkRuntime PRIVATE runtime/native/xex_image.cpp runtime/native/native_menu_assets.cpp)
 target_sources(DarkRuntime PRIVATE runtime/native/language_settings.cpp)
+
+set(DARK_MENU_TEXT_HEADER "${CMAKE_BINARY_DIR}/native_assets/native_menu_text.generated.h")
+add_custom_command(OUTPUT "${DARK_MENU_TEXT_HEADER}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/compile_native_menu_text.py"
+        --catalog "${CMAKE_SOURCE_DIR}/assets/localization/native_menu_ru.json" --output "${DARK_MENU_TEXT_HEADER}"
+    DEPENDS tools/compile_native_menu_text.py assets/localization/native_menu_ru.json VERBATIM)
+add_custom_target(NativeMenuText DEPENDS "${DARK_MENU_TEXT_HEADER}")
+function(add_native_menu_text target)
+    target_sources(${target} PRIVATE runtime/native/native_menu_text.cpp)
+    add_dependencies(${target} NativeMenuText)
+    target_include_directories(${target} PRIVATE "${CMAKE_BINARY_DIR}/native_assets")
+endfunction()
+add_native_menu_text(DarkRuntime)
 target_sources(DarkRuntime PRIVATE runtime/native/achievements.cpp runtime/native/achievements_catalog.cpp)
 
 target_sources(DarkRuntime PRIVATE runtime/native/fov_settings.cpp runtime/native/fov_camera.cpp)
@@ -153,15 +166,19 @@ target_compile_options(DarkRuntime PRIVATE /Zi)
 add_executable(DarkRecomp app/windows/native_main.cpp app/windows/display_settings.cpp
     app/windows/developer_tools_window.cpp app/windows/keyboard_settings.cpp app/windows/achievements_window.cpp)
 set(DARK_VIDEO_MENU "${CMAKE_BINARY_DIR}/native_assets/CubeWnd.pc.xcr")
+set(DARK_VIDEO_MENU_RUSSIAN "${CMAKE_BINARY_DIR}/native_assets/CubeWnd.pc.ru.xcr")
 set(DARK_VIDEO_ARCHIVE "${CMAKE_BINARY_DIR}/native_assets/GameContext_Create.pc.xdf")
 set(DARK_VIDEO_MENU_SOURCE "${DARK_VIDEO_MENU}.source.sha256")
-add_custom_command(OUTPUT "${DARK_VIDEO_MENU}" "${DARK_VIDEO_ARCHIVE}" "${DARK_VIDEO_MENU_SOURCE}"
+add_custom_command(OUTPUT "${DARK_VIDEO_MENU}" "${DARK_VIDEO_MENU_RUSSIAN}" "${DARK_VIDEO_ARCHIVE}" "${DARK_VIDEO_MENU_SOURCE}"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/compile_video_menu.py"
         --source "${CMAKE_SOURCE_DIR}/Darkness/Content/Gui/CubeWnd.xcr" --output "${DARK_VIDEO_MENU}"
+        --russian-output "${DARK_VIDEO_MENU_RUSSIAN}" --russian-catalog "${CMAKE_SOURCE_DIR}/assets/localization/native_menu_ru.json"
         --archive-source "${CMAKE_SOURCE_DIR}/Darkness/Content/Xdf/GameContext_Create.XDF" --archive-output "${DARK_VIDEO_ARCHIVE}"
-    DEPENDS tools/compile_video_menu.py Darkness/Content/Gui/CubeWnd.xcr Darkness/Content/Xdf/GameContext_Create.XDF VERBATIM)
-add_custom_target(NativeVideoMenu ALL DEPENDS "${DARK_VIDEO_MENU}" "${DARK_VIDEO_ARCHIVE}" "${DARK_VIDEO_MENU_SOURCE}"
+    DEPENDS tools/compile_video_menu.py tools/compile_native_menu_text.py assets/localization/native_menu_ru.json
+        Darkness/Content/Gui/CubeWnd.xcr Darkness/Content/Xdf/GameContext_Create.XDF VERBATIM)
+add_custom_target(NativeVideoMenu ALL DEPENDS "${DARK_VIDEO_MENU}" "${DARK_VIDEO_MENU_RUSSIAN}" "${DARK_VIDEO_ARCHIVE}" "${DARK_VIDEO_MENU_SOURCE}"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${DARK_VIDEO_MENU}" "$<TARGET_FILE_DIR:DarkRecomp>/CubeWnd.pc.xcr"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${DARK_VIDEO_MENU_RUSSIAN}" "$<TARGET_FILE_DIR:DarkRecomp>/CubeWnd.pc.ru.xcr"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${DARK_VIDEO_ARCHIVE}" "$<TARGET_FILE_DIR:DarkRecomp>/GameContext_Create.pc.xdf"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${DARK_VIDEO_MENU_SOURCE}" "$<TARGET_FILE_DIR:DarkRecomp>/CubeWnd.pc.xcr.source.sha256")
 add_dependencies(DarkRecomp NativeVideoMenu)
@@ -239,10 +256,15 @@ if(BUILD_TESTING)
     add_test(NAME KeyboardBindingsContract COMMAND KeyboardBindingsTests)
     add_executable(KeyboardMenuTests tests/keyboard_menu_tests.cpp
         runtime/native/keyboard_menu.cpp runtime/native/keyboard_bindings.cpp)
+    add_native_menu_text(KeyboardMenuTests)
     target_include_directories(KeyboardMenuTests PRIVATE "${CMAKE_SOURCE_DIR}")
     target_compile_definitions(KeyboardMenuTests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
     target_link_libraries(KeyboardMenuTests PRIVATE user32)
     add_test(NAME KeyboardMenuContract COMMAND KeyboardMenuTests)
+    add_executable(NativeMenuTextTests tests/native_menu_text_tests.cpp)
+    add_native_menu_text(NativeMenuTextTests)
+    target_include_directories(NativeMenuTextTests PRIVATE "${CMAKE_SOURCE_DIR}")
+    add_test(NAME NativeMenuTextContract COMMAND NativeMenuTextTests)
     add_executable(DisplayGammaTests tests/display_gamma_tests.cpp)
     target_compile_options(DisplayGammaTests PRIVATE /fp:strict)
     target_link_libraries(DisplayGammaTests PRIVATE DarkRuntime)
@@ -270,6 +292,7 @@ if(BUILD_TESTING)
     stage_dark_xma(DisplaySettingsTests)
     add_test(NAME DisplaySettingsContract COMMAND DisplaySettingsTests)
     add_test(NAME NativeVideoMenuAssetContract COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/test_video_menu.py")
+    add_test(NAME NativeMenuTextGeneratorContract COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/test_native_menu_text.py")
     set_tests_properties(DisplaySettingsContract PROPERTIES TIMEOUT 30)
     add_test(NAME AOTGenerationContract COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/test_recompile.py")
     set_tests_properties(AOTGenerationContract PROPERTIES TIMEOUT 30)
