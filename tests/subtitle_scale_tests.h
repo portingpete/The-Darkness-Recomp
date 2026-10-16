@@ -457,7 +457,9 @@ static void testSubtitleScale(PPCContext& ctx) {
     constexpr unsigned spacingGap = 10;
     for (const NativeVideoMode mode : {NativeVideoMode{1280,720}, NativeVideoMode{3440,1440}})
     for (float contextualScale : {1.3f, 1.5f})
-    for (float globalFontSize : {14.0f, -1.0f}) {
+    for (float globalFontSize : {14.0f, -1.0f})
+    for (const std::u16string& text : {std::u16string(u"E"), std::u16string(u"E|E"),
+            std::u16string(u"Oh, oh. Ap\u00e1rtate de esa peque\u00f1a rata como de la peste bub\u00f3nica.|\u00bfQu\u00e9 diablos has hecho?")}) {
         const float previousHeight = fontHeightValue;
         fixture.rebuild(ctx, mode, 500);
         struct RestoreFontMetrics {
@@ -480,26 +482,28 @@ static void testSubtitleScale(PPCContext& ctx) {
         putFloat(fixture.font.block + 348, contextualScale);
         const double mx = getFloat(fixture.font.block + 272), my = getFloat(fixture.font.block + 292);
         const double tx = getFloat(fixture.font.block + 320), ty = getFloat(fixture.font.block + 324);
-        const std::u16string text = u"E|E";
         const auto retail = fixture.paint(ctx, 0x82331F38, 100, text, true, spacingGap, true, true);
-        check(retail.size() == 2 && retail[0].text == u"E" && retail[1].text == u"E",
-              "Synthetic Text ink fixture lost an authored line");
+        const unsigned authoredLines = text.find(u'|') == std::u16string::npos ? 1 : 2;
+        check(retail.size() >= authoredLines, "Synthetic Text ink fixture lost an authored line");
         const double nativeHeight = std::trunc(textOriginalSize);
-        const double lastBaseline = (retail.back().origin[1] - ty) / my;
-        const double lowerAnchor = (std::min)(lastBaseline + nativeHeight, 470.0);
         const double adjustedAdvance = std::ceil((nativeHeight + spacingGap) * double(contextualScale));
         const double resolvedSize = globalFontSize < 0 ? textOriginalSize : globalFontSize;
+        std::u16string literalText;
+        for (char16_t character : text) if (character != u'|') literalText += character;
         for (unsigned percent : {50u, 90u, 100u, 150u, 200u}) {
             const auto foreground = fixture.paint(ctx, 0x82331F38, percent, text, true, spacingGap, false, true);
             const auto shadow = fixture.paint(ctx, 0x82331EF8, percent, text, true, spacingGap, false, true);
-            check(foreground.size() == retail.size() && shadow.size() == foreground.size(),
-                  "Contextual subtitle leading changed authored line count");
-            const double scale = double(percent) / 100;
+            check(foreground.size() >= authoredLines && shadow.size() == foreground.size(),
+                  "Speech fitting lost an authored line or shadow");
+            const double scale = foreground[0].horizontal[0] / retail[0].horizontal[0];
+            check(scale > 0 && scale <= double(percent) / (100 * contextualScale) + .00001,
+                  "Speech retained the extra actor-font magnification");
+            std::u16string joined;
             std::optional<SyntheticInkBox> previousInk;
             for (unsigned i = 0; i < foreground.size(); ++i) {
                 const auto& draw = foreground[i];
                 sameDraw(draw, shadow[i]);
-                check(draw.text == u"E", "Contextual subtitle leading changed its literal text");
+                joined += draw.text;
                 layoutNear(draw.fontSize, resolvedSize, "Contextual subtitle leading changed native font size");
                 for (unsigned axis = 0; axis < 3; ++axis) {
                     layoutNear(draw.horizontal[axis], retail[0].horizontal[axis] * (axis < 2 ? scale : 1),
@@ -512,6 +516,11 @@ static void testSubtitleScale(PPCContext& ctx) {
                     layoutNear(baseline - (foreground[i-1].origin[1] - ty) / my,
                                adjustedAdvance * scale, "Contextual subtitle leading ignored glyph scale or authored gap");
                 const auto ink = syntheticTextCell(draw, mx, my, tx, ty, textOriginalSize);
+                check(ink.top > 400 && ink.bottom < 480,
+                      "Speech ink overlaps the character-name band or bottom edge");
+                layoutNear((draw.origin[0] - tx) / mx, 75, "Speech lost its left margin");
+                const double right = 75 + draw.text.size() * resolvedSize * .5 * contextualScale * scale;
+                check(right <= 565.01, "Speech glyphs exceed their horizontal canvas");
                 if (previousInk)
                     check(previousInk->bottom <= ink.top + .002,
                           "Adjacent synthetic Text glyph ink rectangles overlap");
@@ -533,12 +542,27 @@ static void testSubtitleScale(PPCContext& ctx) {
                 check(draw.color == retail[0].color && draw.origin[2] == retail[0].origin[2],
                       "Contextual subtitle leading changed native fade, material or depth");
             }
-            layoutNear((foreground.back().origin[1] - ty) / my, lowerAnchor - nativeHeight * scale,
-                       "Contextual subtitle leading moved its lower or last-line anchor");
+            check(joined == literalText, "Speech fitting dropped translated text");
+            check((foreground[0].origin[1] - ty) / my >= 410 - .002,
+                  "Speech fitting grew into the character-name area");
+            layoutNear((foreground.back().origin[1] - ty) / my,
+                       466 - std::ceil(nativeHeight * contextualScale) * scale,
+                       "Speech fitting lost its lower anchor");
             const auto unrelated = fixture.paint(ctx, 0x82331F3C, percent, text, true, spacingGap, false, true);
             check(unrelated.size() == retail.size(), "Contextual subtitle leading leaked into another caller");
             for (unsigned i = 0; i < retail.size(); ++i) sameDraw(retail[i], unrelated[i]);
             ++spacingCases;
+        }
+        if (text == u"E|E") {
+            fixture.paint(ctx, 0x8230D96C, 100, text, true, spacingGap, false, true, 390.f, true);
+            const auto resting = fixture.lastLayoutMatrix;
+            const double restingY = (resting[5] * 390 + resting[13] - ty) / my;
+            check(restingY >= 410 - .002, "Animated speech rests in the character-name area");
+            fixture.paint(ctx, 0x8230D96C, 100, text, true, spacingGap, false, true, 342.5f, true);
+            const auto moving = fixture.lastLayoutMatrix;
+            const double movingY = (moving[5] * 342.5 + moving[13] - ty) / my;
+            layoutNear(movingY - restingY, -47.5, "Speech fitting lost the native effect motion");
+            layoutNear(moving[0], resting[0], "Animated speech changed size during its motion");
         }
     }
     struct RestoreMathMode {

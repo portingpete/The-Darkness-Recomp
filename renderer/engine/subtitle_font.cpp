@@ -15,6 +15,22 @@
 #include <vector>
 
 namespace DarkRecomp::Native {
+std::optional<uint32_t> westernSubtitleCodepoint(uint16_t slot) noexcept {
+    if (slot < 0x80 || (slot >= 0xa0 && slot <= 0xff)) return slot;
+    constexpr uint16_t windows1252[]{
+        0x20ac,0,0x201a,0x0192,0x201e,0x2026,0x2020,0x2021,
+        0x02c6,0x2030,0x0160,0x2039,0x0152,0,0x017d,0,
+        0,0x2018,0x2019,0x201c,0x201d,0x2022,0x2013,0x2014,
+        0x02dc,0x2122,0x0161,0x203a,0x0153,0,0x017e,0x0178
+    };
+    if (slot >= 0x80 && slot <= 0x9f) {
+        const auto codepoint = windows1252[slot - 0x80];
+        return codepoint ? std::optional<uint32_t>(codepoint) : std::nullopt;
+    }
+    for (const auto codepoint : windows1252)
+        if (codepoint && codepoint == slot) return slot;
+    return {};
+}
 namespace {
 template<class T> using Ptr = Microsoft::WRL::ComPtr<T>;
 struct Cell {
@@ -214,10 +230,8 @@ std::shared_ptr<const ColorImage> rasterize(const Definition& definition,const C
     unsigned rendered=0,kept=0;
     std::vector<uint8_t> coverage;
     for(const auto& cell:definition.cells) {
-        // Translation fonts can assign their own letters to extended slots.
-        // Keep their authored coverage instead of interpreting a font slot as
-        // a Windows codepage or Unicode character.
-        if(cell.codepoint>=0x80) {++kept;continue;}
+        const auto codepoint=westernSubtitleCodepoint(uint16_t(cell.codepoint));
+        if(!codepoint) {++kept;continue;}
         unsigned left=cell.right,top=cell.bottom,right=cell.left,bottom=cell.top;
         for(unsigned y=cell.top;y<cell.bottom;++y)for(unsigned x=cell.left;x<cell.right;++x)
             if(source.pixels[(size_t(y)*source.width+x)*4+3]) {
@@ -228,7 +242,7 @@ std::shared_ptr<const ColorImage> rasterize(const Definition& definition,const C
                 result->pixels[(size_t(y)*result->width+x)*4+3]=0;
             continue;
         }
-        if(!rasterizer.glyph(cell.codepoint,(right-left)*factor,(bottom-top)*factor,coverage)) {++kept;continue;}
+        if(!rasterizer.glyph(*codepoint,(right-left)*factor,(bottom-top)*factor,coverage)) {++kept;continue;}
         ++rendered;
         for(unsigned y=cell.top*factor;y<cell.bottom*factor;++y)for(unsigned x=cell.left*factor;x<cell.right*factor;++x)
             result->pixels[(size_t(y)*result->width+x)*4+3]=0;

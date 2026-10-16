@@ -65,14 +65,14 @@ static void subtitleFontCpuContract() {
         subtitleFontRasterScale(2160,200)==8 && subtitleFontRasterScale(2160,50)==2,"Font raster density differs");
     for(const bool modern:{false,true}) {
         SubtitleFontFixture localized(modern?60125:60124,modern);
-        // The second cell starts with an unsupported slot, so it retains the
-        // authored marker. Real localized slots must retain identical coverage.
+        // The unsupported second cell supplies a bitmap fallback baseline.
         std::array<std::shared_ptr<const ColorImage>,3> authored;
         for(unsigned i=0;i<authored.size();++i) {
             authored[i]=subtitleFontReplacementFor(localized.textureId,localized.color,2u<<i);
             require(bool(authored[i]),"ASCII glyph lost its vector replacement");
         }
-        for(const uint16_t slot:{0xc4,0xe9,0xf1,0xdf,0xc6,0x0416,0x0401,0x20ac}) {
+        for(const uint16_t slot:{0x81,0x8d,0x8f,0x90,0x9d,0x0416,0x0401,0x4f60,0xffff}) {
+            require(!westernSubtitleCodepoint(slot),"Custom slot acquired a guessed Western character");
             auto* code=localized.memory.data()+512+40+32;
             code[0]=uint8_t(slot>>8);code[1]=uint8_t(slot);
             registerSubtitleFont(localized.memory.data(),128,true);
@@ -84,11 +84,35 @@ static void subtitleFontCpuContract() {
                     for(unsigned x=localized.width/4*factor;x<localized.width/2*factor;++x) {
                         const auto at=(size_t(y)*result->width+x)*4;
                         require(std::memcmp(result->pixels.data()+at,authored[i]->pixels.data()+at,4)==0,
-                            "Localized glyph was reinterpreted instead of preserving authored coverage");
+                            "Custom glyph was reinterpreted instead of preserving authored coverage");
                     }
             }
         }
+        for(const uint16_t slot:{0xa1,0xbf,0xc4,0xc6,0xc7,0xdf,0xe1,0xe9,0xed,0xf1,0xf3,0xfa,0xfc,
+                                  0x80,0x93,0x96,0x0152,0x0160,0x2014,0x201c,0x20ac}) {
+            const auto mapped=westernSubtitleCodepoint(slot);
+            require(mapped.has_value(),"Known Western character retained blurry bitmap fallback");
+            if(slot>=0xa0)require(*mapped==slot,"Western Unicode character changed identity");
+            auto* code=localized.memory.data()+512+40+32;
+            code[0]=uint8_t(slot>>8);code[1]=uint8_t(slot);
+            registerSubtitleFont(localized.memory.data(),128,true);
+            for(unsigned i=0;i<authored.size();++i) {
+                const unsigned factor=2u<<i;
+                const auto result=subtitleFontReplacementFor(localized.textureId,localized.color,factor);
+                require(bool(result),"Western character lost its vector atlas");
+                bool changed=false,visible=false;
+                for(unsigned y=0;y<localized.height*factor;++y)
+                    for(unsigned x=localized.width/4*factor;x<localized.width/2*factor;++x) {
+                        const auto at=(size_t(y)*result->width+x)*4+3;
+                        changed|=result->pixels[at]!=authored[i]->pixels[at];
+                        visible|=result->pixels[at]!=0;
+                    }
+                require(changed && visible,"Western accent did not receive sharp vector lettering");
+            }
+        }
     }
+    require(westernSubtitleCodepoint(0x80)==0x20ac && westernSubtitleCodepoint(0x93)==0x201c &&
+        westernSubtitleCodepoint(0x96)==0x2013,"Windows-1252 punctuation mapped to the wrong character");
     {
         initializeNativeMenuText(true,1);
         struct LocaleOwner {~LocaleOwner(){initializeNativeMenuText(false,1);}} localeOwner;

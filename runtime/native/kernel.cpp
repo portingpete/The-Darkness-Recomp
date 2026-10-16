@@ -2239,7 +2239,8 @@ struct SubtitleTextScope {
     uint32_t width = 0, gap = 0, percent = 100;
     std::array<uint32_t,16> original{};
     std::array<uint32_t,4> originalClip{};
-    bool fitted = false, centered = true;
+    bool fitted = false, centered = true, speechLayout = false;
+    float speechOffset = 0, glyphWidthScale = 1;
     explicit SubtitleTextScope(PPCContext& ctx) {
         const uint32_t caller = uint32_t(ctx.lr);
         if (!subtitleStringCaller(caller)) {
@@ -2302,6 +2303,21 @@ struct SubtitleTextScope {
         const unsigned mathMode = _mm_getcsr();
         _mm_setcsr(mathMode & ~(_MM_ROUND_MASK | _MM_FLUSH_ZERO_MASK | _MM_DENORMALS_ZERO_MASK));
         scale = float(percent) / 100;
+        // Actor fonts carry an extra canvas magnification. Normalize it so
+        // speech uses the requested size instead of stacking both scales.
+        speechLayout = leftAligned && lineScale > 1;
+        if (speechLayout) {
+            glyphWidthScale = std::bit_cast<float>(memory->read32(context + 344));
+            if (!std::isfinite(glyphWidthScale) || glyphWidthScale <= 0 || glyphWidthScale > 16) {
+                _mm_setcsr(mathMode);
+                subtitleTextScope = nullptr;
+                return;
+            }
+            scale /= lineScale;
+            // Preserve the native effect's motion relative to the resting
+            // speech position when moving the resting block below names.
+            if (animatedActor) speechOffset = float(ctx.f2.f64) - (gap == 5 ? 400.f : 390.f);
+        }
         _mm_setcsr(mathMode);
         x = float(ctx.f1.f64); y = float(ctx.f2.f64);
         centered = !leftAligned;
@@ -2329,7 +2345,7 @@ std::optional<int32_t> subtitleLineAdvance(uint32_t height, uint32_t gap, float 
     return int32_t(advance);
 }
 std::optional<float> subtitleBlockHeight(const PPCContext& input, uint32_t count, uint32_t gap,
-                                        float lineScale = 1) {
+                                        float lineScale = 1, bool scaledTerminal = false) {
     if (!count || count > 31 || !guestBufferAccessible(input.r8.u32, count * 4)) return {};
     float height = 0;
     for (unsigned i = 0; i < count; ++i) {
@@ -2339,9 +2355,10 @@ std::optional<float> subtitleBlockHeight(const PPCContext& input, uint32_t count
         metric.r3.u64 = input.r4.u64; metric.r4.u64 = line;
         __imp__sub_8234A0C8(metric, memory->base());
         if (metric.r3.s32 <= 0 || metric.r3.u32 > 480) return {};
-        // Keep the terminal native metric so the final baseline stays anchored.
-        // Only the preceding baseline advances follow the actual glyph scale.
-        if (i + 1 == count) height += float(metric.r3.u32);
+        // Normalized speech reserves the last glyph's contextual height too;
+        // otherwise a short, enlarged caption can cross the bottom clip.
+        if (i + 1 == count) height += scaledTerminal ?
+            float(std::ceil(double(metric.r3.u32) * lineScale)) : float(metric.r3.u32);
         else {
             const auto advance = subtitleLineAdvance(metric.r3.u32, gap, lineScale);
             if (!advance) return {};
@@ -2379,10 +2396,31 @@ PPC_FUNC(sub_8234C4C0) {
         return;
     }
     PPCContext reflow = input;
-    const uint32_t width = scope->width * 100 / scope->percent;
-    reflow.r5.u64 = width;
-    __imp__sub_8234C4C0(reflow, base);
-    const auto reflowHeight = subtitleBlockHeight(input, reflow.r3.u32, scope->gap, scope->lineScale);
+    uint32_t width = scope->width * 100 / scope->percent;
+    std::optional<float> reflowHeight;
+    // The bottom speech band leaves the native character-name area clear.
+    // Long translations fit this band by rewrapping at their reduced size.
+    constexpr float speechBandHeight = 56;
+    for (unsigned attempt = 0; attempt < 3; ++attempt) {
+        if (scope->speechLayout) {
+            const unsigned mathMode = _mm_getcsr();
+            _mm_setcsr(mathMode & ~(_MM_ROUND_MASK | _MM_FLUSH_ZERO_MASK | _MM_DENORMALS_ZERO_MASK));
+            width = uint32_t(std::floor(double(scope->width) / (double(scope->scale) * scope->glyphWidthScale)));
+            _mm_setcsr(mathMode);
+        }
+        reflow = input;
+        reflow.r5.u64 = width;
+        __imp__sub_8234C4C0(reflow, base);
+        reflowHeight = subtitleBlockHeight(input, reflow.r3.u32, scope->gap, scope->lineScale, scope->speechLayout);
+        if (!reflowHeight || !scope->speechLayout) break;
+        const unsigned mathMode = _mm_getcsr();
+        _mm_setcsr(mathMode & ~(_MM_ROUND_MASK | _MM_FLUSH_ZERO_MASK | _MM_DENORMALS_ZERO_MASK));
+        const float fittedScale = speechBandHeight / *reflowHeight;
+        const bool fits = scope->scale <= fittedScale;
+        if (!fits && attempt < 2) scope->scale = fittedScale;
+        _mm_setcsr(mathMode);
+        if (fits) break;
+    }
     if (!reflowHeight) {
         // Restore the original output lines if a font rejects reflow metrics.
         ctx = input;
@@ -2399,7 +2437,8 @@ PPC_FUNC(sub_8234C4C0) {
     const float shiftX = scope->centered ?
         scope->x + float(scope->width) * .5f - scope->scale * (scope->x + float(width) * .5f) :
         scope->x * (1 - scope->scale);
-    const float bottom = (std::min)(scope->y + *originalHeight, 470.0f);
+    const float bottom = scope->speechLayout ? 466.f + scope->speechOffset :
+        (std::min)(scope->y + *originalHeight, 470.0f);
     const float shiftY = bottom - scope->scale * (scope->y + *reflowHeight);
     matrix[12] += matrix[0] * shiftX + matrix[4] * shiftY;
     matrix[13] += matrix[1] * shiftX + matrix[5] * shiftY;

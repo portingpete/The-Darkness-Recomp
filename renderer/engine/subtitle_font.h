@@ -2,12 +2,16 @@
 #include "simple_mesh.h"
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 namespace DarkRecomp::Native {
-// Only ASCII glyphs in the ordinary TEXT resource may be replaced. Russian,
-// decorative and unknown fonts retain all their authored glyphs. Read the
+// Western glyphs in the ordinary TEXT resource may be replaced. Russian,
+// decorative and unknown fonts retain their authored glyphs. Read the
 // original CStr before the font loader consumes it.
 bool subtitleFontResourceAllowsReplacement(uint8_t* base, uint32_t resource) noexcept;
+// TEXT uses Latin-1 and Windows-1252 slots, including Unicode punctuation.
+// Unknown/custom slots retain their authored coverage.
+std::optional<uint32_t> westernSubtitleCodepoint(uint16_t slot) noexcept;
 // Snapshot the completed definition, including loads before the lazy upload.
 // A rejected load also invalidates an earlier definition at the reused address.
 void registerSubtitleFont(uint8_t* base, uint32_t font, bool replaceable) noexcept;
