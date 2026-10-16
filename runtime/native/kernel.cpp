@@ -2405,7 +2405,13 @@ PPC_FUNC(sub_8234C4C0) {
         if (scope->speechLayout) {
             const unsigned mathMode = _mm_getcsr();
             _mm_setcsr(mathMode & ~(_MM_ROUND_MASK | _MM_FLUSH_ZERO_MASK | _MM_DENORMALS_ZERO_MASK));
-            width = uint32_t(std::floor(double(scope->width) / (double(scope->scale) * scope->glyphWidthScale)));
+            const double available = std::floor(double(scope->width) / (double(scope->scale) * scope->glyphWidthScale));
+            if (!std::isfinite(available) || available < 1 || available > INT32_MAX) {
+                _mm_setcsr(mathMode);
+                reflowHeight.reset();
+                break;
+            }
+            width = uint32_t(available);
             _mm_setcsr(mathMode);
         }
         reflow = input;

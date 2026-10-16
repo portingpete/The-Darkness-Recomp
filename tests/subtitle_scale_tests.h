@@ -564,6 +564,13 @@ static void testSubtitleScale(PPCContext& ctx) {
             layoutNear(movingY - restingY, -47.5, "Speech fitting lost the native effect motion");
             layoutNear(moving[0], resting[0], "Animated speech changed size during its motion");
         }
+        if (text == u"E") {
+            putFloat(fixture.font.block + 344, 1e-30f);
+            const auto original = fixture.paint(ctx, 0x82331F38, 200, text, true, spacingGap, true, true);
+            const auto unsupported = fixture.paint(ctx, 0x82331F38, 200, text, true, spacingGap, false, true);
+            check(original.size() == unsupported.size(), "Unsupported speech scale lost a line");
+            for (unsigned i = 0; i < original.size(); ++i) sameDraw(original[i], unsupported[i]);
+        }
     }
     struct RestoreMathMode {
         unsigned value = _mm_getcsr();
