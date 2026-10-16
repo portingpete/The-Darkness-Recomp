@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <cmath>
@@ -20,6 +21,19 @@ inline bool setNativeVideoMode(uint32_t width, uint32_t height) {
 bool configureGuestRenderMode(uint32_t display);
 bool fitLegacyMenuMatrix(uint32_t drawContext);
 bool fitTitleTextMatrix(uint32_t drawContext);
+// The original full-screen movie painter draws its own black background before
+// its fitted video. Restore the original canvas for only that background draw.
+class FullscreenMovieBackdropScope {
+public:
+    FullscreenMovieBackdropScope(uint32_t drawContext, uint32_t caller,
+                                 uint32_t rectangle, uint32_t color);
+    ~FullscreenMovieBackdropScope();
+    FullscreenMovieBackdropScope(const FullscreenMovieBackdropScope&) = delete;
+    FullscreenMovieBackdropScope& operator=(const FullscreenMovieBackdropScope&) = delete;
+private:
+    uint32_t context_ = 0;
+    std::array<uint32_t,2> fitted_{};
+};
 inline float fitMenuLabelX(float x, float textWidth, bool rightAligned, float scaleX, NativeVideoMode mode) {
     if (uint64_t(mode.width)*9 <= uint64_t(mode.height)*16 || scaleX <= 0 ||
         !std::isfinite(x) || !std::isfinite(textWidth) || !std::isfinite(scaleX)) return x;

@@ -69,6 +69,12 @@ Full-screen videos retain their source aspect, and the front-end menu retains
 its 16:9 content width. The journal and gameplay HUD keep their original
 height-based layout.
 
+The full-screen movie painter's original black background covers the entire
+display, including ultrawide pillars after the intro crash. Its separate video
+draw retains the fitted menu matrix. The temporary background transform uses
+the exact original canvas and restores the fitted matrix before the movie and
+following controls, preserving embedded videos and other menu draws.
+
 Authored white intro, character-name and credit text fits its 853x480 canvas
 uniformly on displays narrower than 16:9, keeping it centered and inside the
 viewport. The original font renderer adds an alpha-matched black shadow while

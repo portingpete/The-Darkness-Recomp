@@ -155,6 +155,137 @@ void coverage(DarkRecomp::EnginePreviewD3D11& renderer, DarkRecomp::CDisplayCont
     display.GetContext()->Unmap(staging.Get(), 0);
     check(correct, "Screen fade left uncovered pixels or changed fade color/alpha");
 }
+
+std::array<uint32_t,16> matrixWords(uint32_t drawContext) {
+    std::array<uint32_t,16> result{};
+    for (unsigned i = 0; i < result.size(); ++i)
+        result[i] = memory->read32(drawContext + 272 + i * 4);
+    return result;
+}
+
+void movieBackdrop(const PPCContext& ctx, Fixture& fixture, CDisplayContextD3D11& display) {
+    constexpr uint32_t rebuildCaller = 0x823A06A0, backdropCaller = 0x823A07A8;
+    const uint32_t rectangle = fixture.block + 1280, color = rectangle + 16;
+    const auto resetPaint = [&] {
+        putFloat(rectangle, 0); putFloat(rectangle + 4, 0);
+        putFloat(rectangle + 8, 640); putFloat(rectangle + 12, 480);
+        memory->write32(color, 0);
+    };
+    uint64_t pixelChecks = 0;
+    for (const NativeVideoMode mode : std::array<NativeVideoMode,4>{{
+            {1280,720}, {3440,1440}, {2560,720}, {1721,721}}}) {
+        check(setNativeVideoMode(mode.width, mode.height), "Movie backdrop video mode rejected");
+        display.Resize(mode.width, mode.height);
+        EnginePreviewD3D11 renderer(display.GetDevice(), display.GetContext(), display.GetSwapChain(), mode.width, mode.height);
+        const auto original = rebuild(ctx, fixture.block, mode, rebuildCaller, true);
+        auto background = transformQuad(ctx, fixture.block);
+        background.opaque = true;
+        const auto fitted = rebuild(ctx, fixture.block, mode, rebuildCaller, false);
+        resetPaint();
+
+        // The original movie background is the only draw allowed to borrow
+        // the unfitted matrix. Adjacent calls and other paint arguments retain
+        // the fitted movie/menu layout, without consuming the valid capture.
+        for (const uint32_t caller : {backdropCaller - 4, backdropCaller + 4, 0x8216DC18u}) {
+            FullscreenMovieBackdropScope scope(fixture.block, caller, rectangle, color);
+            check(matrixWords(fixture.block) == fitted, "Movie backdrop scope accepted another painter caller");
+        }
+        for (const uint32_t value : {0xFF000000u, 0x00FFFFFFu}) {
+            memory->write32(color, value);
+            FullscreenMovieBackdropScope scope(fixture.block, backdropCaller, rectangle, color);
+            check(matrixWords(fixture.block) == fitted, "Movie backdrop scope accepted another paint color");
+        }
+        resetPaint();
+        for (const auto [offset, value] : std::array<std::pair<uint32_t,float>,3>{{{0,1}, {8,639}, {12,479}}}) {
+            putFloat(rectangle + offset, value);
+            {
+                FullscreenMovieBackdropScope scope(fixture.block, backdropCaller, rectangle, color);
+                check(matrixWords(fixture.block) == fitted, "Movie backdrop scope accepted embedded geometry");
+            }
+            resetPaint();
+        }
+        std::memcpy(memory->base() + fixture.block + 2048, memory->base() + fixture.block, 704);
+        {
+            FullscreenMovieBackdropScope scope(fixture.block + 2048, backdropCaller, rectangle, color);
+            check(matrixWords(fixture.block + 2048) == fitted, "Movie backdrop scope accepted an unrelated draw context");
+        }
+
+        SimpleMesh matte;
+        {
+            const auto mathMode = _mm_getcsr();
+            FullscreenMovieBackdropScope scope(fixture.block, backdropCaller, rectangle, color);
+            check(matrixWords(fixture.block) == original, "Movie backdrop did not recover the original full-screen matrix");
+            check(_mm_getcsr() == mathMode, "Movie backdrop scope changed the guest math mode");
+            matte = transformQuad(ctx, fixture.block);
+        }
+        check(matrixWords(fixture.block) == fitted, "Movie backdrop did not restore the fitted movie matrix");
+        {
+            FullscreenMovieBackdropScope consumed(fixture.block, backdropCaller, rectangle, color);
+            check(matrixWords(fixture.block) == fitted, "Movie backdrop reused an already consumed matrix capture");
+        }
+        auto movie = transformQuad(ctx, fixture.block);
+        matte.opaque = movie.opaque = true;
+        for (auto& vertex : matte.vertices) vertex.color[0] = vertex.color[1] = vertex.color[2] = 0;
+        for (auto& vertex : movie.vertices) vertex.color[1] = vertex.color[2] = 0;
+        auto overlay = movie; overlay.opaque = false;
+        for (auto& vertex : overlay.vertices) {
+            vertex.color[0] = 0; vertex.color[1] = 1; vertex.color[3] = .5f;
+        }
+        const float margin = (mode.width - (std::min)(float(mode.width), mode.height * (16.0f / 9))) * .5f;
+        for (bool streamed : {false, true}) for (bool laterOverlay : {false, true}) {
+            std::vector<SimpleMesh> commands{matte, movie};
+            if (laterOverlay) commands.push_back(overlay);
+            if (streamed) {
+                renderer.render({background}, {true, false});
+                renderer.render(commands, {false, true});
+            } else {
+                commands.insert(commands.begin(), background);
+                renderer.render(commands);
+            }
+            renderer.copyToDisplay();
+            ComPtr<ID3D11Texture2D> back, staging;
+            check(SUCCEEDED(display.GetSwapChain()->GetBuffer(0, IID_PPV_ARGS(&back))), "Movie backdrop output buffer missing");
+            D3D11_TEXTURE2D_DESC desc{}; back->GetDesc(&desc);
+            desc.BindFlags = desc.MiscFlags = 0; desc.Usage = D3D11_USAGE_STAGING;
+            desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+            check(SUCCEEDED(display.GetDevice()->CreateTexture2D(&desc, nullptr, &staging)), "Movie backdrop staging allocation failed");
+            display.GetContext()->CopyResource(staging.Get(), back.Get());
+            D3D11_MAPPED_SUBRESOURCE mapped{};
+            check(SUCCEEDED(display.GetContext()->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped)), "Movie backdrop readback failed");
+            bool correct = true;
+            for (uint32_t y = 0; y < mode.height; ++y) for (uint32_t x = 0; x < mode.width; ++x) {
+                const auto* pixel = static_cast<const uint8_t*>(mapped.pData) + size_t(y) * mapped.RowPitch + x * 4;
+                const bool inside = x + .5f >= margin && x + .5f < mode.width - margin;
+                const int red = inside ? (laterOverlay ? 128 : 255) : 0;
+                const int green = inside && laterOverlay ? 128 : 0;
+                correct &= std::abs(int(pixel[0]) - red) <= 1 && std::abs(int(pixel[1]) - green) <= 1 &&
+                           pixel[2] == 0 && pixel[3] == 255;
+            }
+            display.GetContext()->Unmap(staging.Get(), 0);
+            check(correct, "Movie backdrop exposed a retained white fade, changed fitting, or covered a later overlay");
+            pixelChecks += uint64_t(mode.width) * mode.height;
+        }
+
+        // A later rebuild must replace the capture even when its resulting
+        // fitted words happen to match. Destruction must also restore after an
+        // exception from the original painter.
+        rebuild(ctx, fixture.block, mode, rebuildCaller, false);
+        rebuild(ctx, fixture.block, mode, menuCaller, false, false);
+        {
+            FullscreenMovieBackdropScope scope(fixture.block, backdropCaller, rectangle, color);
+            check(matrixWords(fixture.block) == fitted, "Movie backdrop used a stale capture after another menu rebuild");
+        }
+        rebuild(ctx, fixture.block, mode, rebuildCaller, false);
+        struct PainterExit {};
+        try {
+            FullscreenMovieBackdropScope scope(fixture.block, backdropCaller, rectangle, color);
+            check(matrixWords(fixture.block) == original, "Repeated movie backdrop rebuild lost the original matrix");
+            throw PainterExit{};
+        } catch (const PainterExit&) {}
+        check(matrixWords(fixture.block) == fitted, "Movie backdrop failed to restore the fitted matrix during unwinding");
+    }
+    std::printf("MovieBackdropContract: original guest transforms, precise painter ownership, one-shot matrix capture/restoration; %llu GPU pixels including fractional ultrawide fits and streamed overlays passed.\n", pixelChecks);
+}
 } // namespace ScreenFadeTestDetail
 
 static void testScreenFade(PPCContext& ctx) {
@@ -199,4 +330,5 @@ static void testScreenFade(PPCContext& ctx) {
         }
     }
     std::printf("ScreenFadeContract: original guest matrix/quad transforms, repeated rebuilds, preserved menu/adjacent callers; %llu GPU pixels at 16:9, 21:9 and 32:9 with black/white alpha0/128/255 passed.\n", pixelChecks);
+    movieBackdrop(ctx, fixture, display);
 }
