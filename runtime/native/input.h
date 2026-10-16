@@ -74,9 +74,9 @@ public:
     bool takeGameplayMouseCaptureRequest();
     void cancelGameplayMouseCaptureRequest();
     bool completeLoadingMouseCapture();
-    // The original client owns dialogue/menu focus independently of capture.
+    // Conversation choices live in player state, separately from active GUIs.
     // Before its first signal, released capture permits startup menu input.
-    void setGuestMenuActive(bool active);
+    void setGuestMenuActive(bool active, bool dialogueChoicesActive = false);
     bool setMouseSensitivity(float sensitivity);
     float mouseSensitivity();
     KeyboardBindings keyboardBindings();
@@ -106,6 +106,7 @@ private:
     void suppressMenuActivationKeysLocked();
     void stopVibrationLocked();
     XINPUT_GAMEPAD keyboardLocked();
+    void updateBindingLabelsLocked();
     void clearMouseLocked();
     void resetPromptLocked();
     void noteKeyboardActivityLocked(bool active);
@@ -142,6 +143,7 @@ private:
     std::array<bool, XUSER_MAX_COUNT> waitForControllerRelease_{};
     std::array<uint64_t, XUSER_MAX_COUNT> controllerFreshAfter_{};
     bool mouseLook_ = false, escapePauses_ = false, guestMenuActive_ = false;
+    bool dialogueChoicesActive_ = false;
     bool gameplayCapturePrepared_ = false, gameplayCaptureRequested_ = false, loadingCapture_ = false;
     bool guestMenuContextKnown_ = false;
     float mouseSensitivity_ = kDefaultMouseSensitivity;
@@ -149,7 +151,7 @@ private:
     uint64_t mouseEpoch_ = 0;
     bool mousePending_ = false;
     int wheelRemainder_ = 0, wheelPending_ = 0;
-    WORD wheelButton_ = 0;
+    uint16_t wheelKey_ = 0;
     ULONGLONG wheelNext_ = 0;
     std::array<bool, 256> keys_{};
     std::array<bool, 256> capturedKeys_{};

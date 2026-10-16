@@ -475,7 +475,7 @@ void NativeInput::clearMouseLocked() {
     }
     mouseX_ = mouseY_ = 0;
     mousePending_ = false;
-    wheelPending_ = wheelRemainder_ = 0; wheelButton_ = 0; wheelNext_ = 0;
+    wheelPending_ = wheelRemainder_ = 0; wheelKey_ = 0; wheelNext_ = 0;
 }
 void NativeInput::setMouseLookEnabled(bool enabled, bool waitForClient) {
     std::lock_guard lock(mutex_);
@@ -531,16 +531,29 @@ bool NativeInput::completeLoadingMouseCapture() {
     }
     return mouseLook_;
 }
-void NativeInput::setGuestMenuActive(bool active) {
+void NativeInput::setGuestMenuActive(bool active, bool dialogueChoicesActive) {
     std::lock_guard lock(mutex_);
-    if (guestMenuContextKnown_ && guestMenuActive_ == active) return;
+    if (guestMenuContextKnown_ && guestMenuActive_ == active &&
+        dialogueChoicesActive_ == dialogueChoicesActive) return;
+    const bool dialogueChanged = (dialogueChoicesActive_ && !guestMenuActive_) != (dialogueChoicesActive && !active);
+    if (dialogueChanged) {
+        // A held shared key must not replay as a fresh choice or gameplay
+        // action when its context changes. The physical release rearms it.
+        for (const auto action : {KeyboardAction::PreviousDialogueChoice, KeyboardAction::NextDialogueChoice})
+            for (const auto key : bindings_.keys[size_t(action)]) if (key && key < keys_.size() && keys_[key]) {
+                capturedKeys_[key] = true; keys_[key] = false;
+                if (heldKeys_) --heldKeys_;
+            }
+    }
     guestMenuContextKnown_ = true;
     guestMenuActive_ = active;
+    dialogueChoicesActive_ = dialogueChoicesActive;
+    if (dialogueChanged) updateBindingLabelsLocked();
     ++menuEpoch_;
     // A detent belongs to the UI/gameplay context in which it arrived. Never
     // replay a dialogue choice as a weapon switch when the dialogue closes.
     wheelPending_ = wheelRemainder_ = 0;
-    wheelButton_ = 0;
+    wheelKey_ = 0;
     wheelNext_ = 0;
 }
 bool NativeInput::setMouseSensitivity(float sensitivity) {
@@ -554,13 +567,13 @@ float NativeInput::mouseSensitivity() {
     return mouseSensitivity_;
 }
 void NativeInput::suppressMenuActivationKeysLocked() {
-    const bool held = heldKeys_ || wheelPending_ || wheelButton_;
+    const bool held = heldKeys_ || wheelPending_ || wheelKey_;
     for (size_t key = 0; key < keys_.size(); ++key) {
         capturedKeys_[key] = capturedKeys_[key] || keys_[key];
         keys_[key] = false;
     }
     heldKeys_ = 0;
-    wheelPending_ = wheelRemainder_ = 0; wheelButton_ = 0;
+    wheelPending_ = wheelRemainder_ = 0; wheelKey_ = 0;
     waitForControllerRelease_.fill(true);
     if (backgroundController_) {
         captureWasBlocked_ = true;
@@ -580,6 +593,15 @@ KeyboardBindings NativeInput::keyboardBindings() {
 }
 bool NativeInput::setKeyboardBindings(const KeyboardBindings& bindings) {
     if (!validKeyboardBindings(bindings)) return false;
+    std::lock_guard lock(mutex_);
+    bindings_ = bindings;
+    updateBindingLabelsLocked();
+    // The old held key must never keep an action active after its reassignment.
+    clearKeysLocked();
+    return true;
+}
+void NativeInput::updateBindingLabelsLocked() {
+    const auto& bindings = bindings_;
     auto labels = Prompts::defaultBindingLabels();
     const auto key = [&](KeyboardAction action) {
         const auto& slots = bindings.keys[size_t(action)];
@@ -640,12 +662,14 @@ bool NativeInput::setKeyboardBindings(const KeyboardBindings& bindings) {
     gameplayLabels[13] = key(KeyboardAction::NextPower);
     gameplayLabels[14] = key(KeyboardAction::PreviousWeapon);
     gameplayLabels[15] = key(KeyboardAction::NextWeapon);
-    std::lock_guard lock(mutex_);
-    bindings_ = bindings;
+    if (dialogueChoicesActive_ && !guestMenuActive_) {
+        const auto previous = key(KeyboardAction::PreviousDialogueChoice);
+        const auto next = key(KeyboardAction::NextDialogueChoice);
+        labels[12] = gameplayLabels[12] = previous;
+        labels[13] = gameplayLabels[13] = next;
+        labels[16] = gameplayLabels[16] = previous + "/" + next;
+    }
     Prompts::setBindingLabels(std::move(labels), std::move(gameplayLabels));
-    // The old held key must never keep an action active after its reassignment.
-    clearKeysLocked();
-    return true;
 }
 MenuCursorSnapshot NativeInput::menuCursor() {
     std::lock_guard lock(mutex_);
@@ -695,7 +719,9 @@ void NativeInput::attachWindow(HWND window) {
     clearKeysLocked();
     resetPromptLocked();
     primaryController_ = -1;
-    guestMenuActive_ = guestMenuContextKnown_ = false;
+    const bool hadDialogue = dialogueChoicesActive_ && !guestMenuActive_;
+    guestMenuActive_ = guestMenuContextKnown_ = dialogueChoicesActive_ = false;
+    if (hadDialogue) updateBindingLabelsLocked();
     window_ = window;
     focused_ = false;
     settingsOpen_ = false;
@@ -744,7 +770,9 @@ bool NativeInput::windowMessage(HWND window, UINT message, WPARAM key, LPARAM de
         clearKeysLocked();
         stopVibrationLocked();
         resetPromptLocked();
-        guestMenuActive_ = guestMenuContextKnown_ = false;
+        const bool hadDialogue = dialogueChoicesActive_ && !guestMenuActive_;
+        guestMenuActive_ = guestMenuContextKnown_ = dialogueChoicesActive_ = false;
+        if (hadDialogue) updateBindingLabelsLocked();
         window_ = nullptr;
         focused_ = false;
     } else if (message == WM_CAPTURECHANGED) {
@@ -782,8 +810,9 @@ bool NativeInput::windowMessage(HWND window, UINT message, WPARAM key, LPARAM de
             }
             return message == WM_XBUTTONDOWN || message == WM_XBUTTONUP;
         }
-        if (keyboardMenuInputBlocked() && message == WM_MOUSEWHEEL) {
-            wheelPending_ = wheelRemainder_ = 0; wheelButton_ = 0;
+        if (message == WM_MOUSEWHEEL && keyboardMenuWheelEvent(GET_WHEEL_DELTA_WPARAM(key))) {
+            wheelPending_ = wheelRemainder_ = 0; wheelKey_ = 0;
+            wheelNext_ = 0;
             return true;
         }
         if ((message == WM_KEYDOWN || message == WM_SYSKEYDOWN ||
@@ -822,7 +851,8 @@ bool NativeInput::windowMessage(HWND window, UINT message, WPARAM key, LPARAM de
             if (key == VK_MENU && std::any_of(bindings_.keys.begin(), bindings_.keys.end(),
                 [](const auto& slots) { return slots[0] == VK_MENU || slots[1] == VK_MENU; })) return true;
         }
-        else if (message == WM_MOUSEWHEEL && (mouseLook_ || guestMenuActive_ || !guestMenuContextKnown_)) {
+        else if (message == WM_MOUSEWHEEL &&
+                 (mouseLook_ || guestMenuActive_ || dialogueChoicesActive_ || !guestMenuContextKnown_)) {
             promptSource_.store(PromptInputSource::KeyboardMouse, std::memory_order_release);
             wheelRemainder_ += GET_WHEEL_DELTA_WPARAM(key);
             wheelPending_ = std::clamp(wheelPending_ + wheelRemainder_ / WHEEL_DELTA, -16, 16);
@@ -844,16 +874,40 @@ bool NativeInput::windowMessage(HWND window, UINT message, WPARAM key, LPARAM de
 XINPUT_GAMEPAD NativeInput::keyboardLocked() {
     XINPUT_GAMEPAD pad{};
     if (!window_ || !focused_ || settingsOpen_ || keyboardMenuInputBlocked()) return pad;
-    const bool menuContext = !mouseLook_ || guestMenuActive_;
+    const bool dialogueContext = dialogueChoicesActive_ && !guestMenuActive_;
+    const bool menuContext = guestMenuActive_ || (!mouseLook_ && !dialogueContext);
+    const auto now = api_.ticks();
+    if (now >= wheelNext_) {
+        if (wheelKey_) { wheelKey_ = 0; wheelNext_ = now + 20; }
+        else if (wheelPending_) {
+            wheelKey_ = wheelPending_ > 0 ? kMouseWheelUp : kMouseWheelDown;
+            wheelPending_ += wheelPending_ > 0 ? -1 : 1;
+            wheelNext_ = now + 40;
+        }
+    }
     const auto fixedMenuKey = [](unsigned key) {
         return key == VK_UP || key == VK_DOWN || key == VK_LEFT || key == VK_RIGHT ||
                key == VK_RETURN || key == VK_TAB || key == 'E' || key == VK_SPACE ||
                key == VK_BACK || key == VK_ESCAPE;
     };
     const auto down = [&](KeyboardAction action) {
+        const bool dialogueAction = isDialogueBindingAction(action);
+        if (dialogueAction && !dialogueContext) return false;
+        // The original game also interprets power-direction bits as dialogue
+        // navigation. Retire those actions so cleared/remapped choices stick.
+        if (dialogueContext && (action == KeyboardAction::PreviousPower || action == KeyboardAction::NextPower ||
+            action == KeyboardAction::PreviousWeapon || action == KeyboardAction::NextWeapon)) return false;
         const auto& binding = bindings_.keys[size_t(action)];
         const auto pressed = [&](unsigned key) {
-            return key && keys_[key] && !(menuContext && fixedMenuKey(key)) &&
+            const bool held = isWheelBindingKey(key) ? key == wheelKey_ : key && keys_[key];
+            if (!held) return false;
+            if (dialogueAction) return true;
+            if (dialogueContext) {
+                if (isWheelBindingKey(key)) return false;
+                for (const auto choice : {KeyboardAction::PreviousDialogueChoice, KeyboardAction::NextDialogueChoice})
+                    for (const auto assigned : bindings_.keys[size_t(choice)]) if (key == assigned) return false;
+            }
+            return !(menuContext && fixedMenuKey(key)) &&
                    !(isMouseBindingKey(key) && (!mouseLook_ || guestMenuActive_));
         };
         return pressed(binding[0]) || pressed(binding[1]);
@@ -868,7 +922,9 @@ XINPUT_GAMEPAD NativeInput::keyboardLocked() {
         {KeyboardAction::PreviousWeapon, XINPUT_GAMEPAD_DPAD_LEFT},
         {KeyboardAction::NextWeapon, XINPUT_GAMEPAD_DPAD_RIGHT},
         {KeyboardAction::PreviousPower, XINPUT_GAMEPAD_DPAD_UP},
-        {KeyboardAction::NextPower, XINPUT_GAMEPAD_DPAD_DOWN}
+        {KeyboardAction::NextPower, XINPUT_GAMEPAD_DPAD_DOWN},
+        {KeyboardAction::PreviousDialogueChoice, XINPUT_GAMEPAD_DPAD_UP},
+        {KeyboardAction::NextDialogueChoice, XINPUT_GAMEPAD_DPAD_DOWN}
     };
     for (auto binding : buttons) if (down(binding.action)) pad.wButtons |= binding.button;
     // Fixed menu navigation survives even a completely unbound gameplay set.
@@ -892,19 +948,8 @@ XINPUT_GAMEPAD NativeInput::keyboardLocked() {
     pad.sThumbRY = axis(KeyboardAction::LookDown, KeyboardAction::LookUp);
     pad.bLeftTrigger = down(KeyboardAction::FireLeft) ? 255 : 0;
     pad.bRightTrigger = down(KeyboardAction::FireRight) ? 255 : 0;
-    const auto now = api_.ticks();
-    if (now >= wheelNext_) {
-        if (wheelButton_) { wheelButton_ = 0; wheelNext_ = now + 20; }
-        else if (wheelPending_) {
-            const bool menu = guestMenuActive_ || (!mouseLook_ && !guestMenuContextKnown_);
-            wheelButton_ = wheelPending_ > 0
-                ? (menu ? XINPUT_GAMEPAD_DPAD_UP : XINPUT_GAMEPAD_DPAD_RIGHT)
-                : (menu ? XINPUT_GAMEPAD_DPAD_DOWN : XINPUT_GAMEPAD_DPAD_LEFT);
-            wheelPending_ += wheelPending_ > 0 ? -1 : 1;
-            wheelNext_ = now + 40;
-        }
-    }
-    pad.wButtons |= wheelButton_;
+    if (menuContext && wheelKey_)
+        pad.wButtons |= wheelKey_ == kMouseWheelUp ? XINPUT_GAMEPAD_DPAD_UP : XINPUT_GAMEPAD_DPAD_DOWN;
     return pad;
 }
 DWORD NativeInput::getState(Memory& owner, uint32_t user, uint32_t flags, uint32_t output) {
@@ -966,7 +1011,7 @@ DWORD NativeInput::getState(Memory& owner, uint32_t user, uint32_t flags, uint32
         bool keyboardMouseActive = false;
         if (user == 0 && window_) {
             keyboardMouseActive = heldKeys_ != 0 || keyboardMouseEvent_ || mousePending_ || wheelPending_ != 0 ||
-                wheelButton_ != 0 || wheelRemainder_ != 0;
+                wheelKey_ != 0 || wheelRemainder_ != 0;
         }
         updatePromptSourceLocked(user, state.Gamepad, status == ERROR_SUCCESS, keyboardMouseActive);
         if (user == 0) keyboardMouseEvent_ = false;

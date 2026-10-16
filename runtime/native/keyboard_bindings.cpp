@@ -14,7 +14,9 @@ const std::array<KeyboardActionInfo, kKeyboardActionCount>& keyboardActions() no
         {L"PREVIOUS WEAPON", L"PreviousWeapon"}, {L"NEXT WEAPON", L"NextWeapon"},
         {L"PREVIOUS DARKNESS POWER", L"PreviousPower"}, {L"NEXT DARKNESS POWER", L"NextPower"},
         {L"MANIFEST DARKNESS", L"ManifestDarkness"}, {L"USE DARKNESS POWER", L"UseDarkness"},
-        {L"REDIRECT DARKLING", L"RedirectDarkling"}, {L"JOURNAL", L"Journal"}, {L"PAUSE", L"Pause"}
+        {L"REDIRECT DARKLING", L"RedirectDarkling"}, {L"JOURNAL", L"Journal"}, {L"PAUSE", L"Pause"},
+        {L"PREVIOUS DIALOGUE CHOICE", L"PreviousDialogueChoice"},
+        {L"NEXT DIALOGUE CHOICE", L"NextDialogueChoice"}
     }};
     return actions;
 }
@@ -22,17 +24,24 @@ KeyboardBindings defaultKeyboardBindings() noexcept {
     KeyboardBindings result;
     constexpr std::array<uint16_t, kKeyboardActionCount> primary{
         'W','S','A','D','I','K','J','L', VK_SPACE,'E','R',VK_CONTROL,VK_SHIFT,
-        'X','Z','1','2','3','4','Q','G','F',VK_TAB,VK_RETURN};
+        'X','Z','1','2','3','4','Q','G','F',VK_TAB,VK_RETURN,'3','4'};
     for (size_t i = 0; i < primary.size(); ++i) result.keys[i][0] = primary[i];
     result.keys[size_t(KeyboardAction::Crouch)][1] = 'C';
     result.keys[size_t(KeyboardAction::FireRight)][1] = VK_LBUTTON;
     result.keys[size_t(KeyboardAction::FireLeft)][1] = VK_RBUTTON;
     result.keys[size_t(KeyboardAction::Zoom)][1] = VK_MBUTTON;
+    result.keys[size_t(KeyboardAction::PreviousWeapon)][1] = kMouseWheelDown;
+    result.keys[size_t(KeyboardAction::NextWeapon)][1] = kMouseWheelUp;
+    result.keys[size_t(KeyboardAction::PreviousDialogueChoice)][1] = kMouseWheelUp;
+    result.keys[size_t(KeyboardAction::NextDialogueChoice)][1] = kMouseWheelDown;
     return result;
 }
 bool isMouseBindingKey(unsigned key) noexcept {
     return key == VK_LBUTTON || key == VK_RBUTTON || key == VK_MBUTTON ||
-           key == VK_XBUTTON1 || key == VK_XBUTTON2;
+           key == VK_XBUTTON1 || key == VK_XBUTTON2 || isWheelBindingKey(key);
+}
+bool isWheelBindingKey(unsigned key) noexcept {
+    return key == kMouseWheelUp || key == kMouseWheelDown;
 }
 bool assignableKeyboardKey(unsigned key) noexcept {
     if (!key) return true; // Explicitly unbound.
@@ -54,10 +63,13 @@ bool assignableKeyboardKey(unsigned key) noexcept {
     }
 }
 bool validKeyboardBindings(const KeyboardBindings& bindings) noexcept {
-    std::array<bool, 256> used{};
-    for (const auto& action : bindings.keys) for (const auto key : action) {
-        if (!assignableKeyboardKey(key) || (key && used[key])) return false;
-        if (key) used[key] = true;
+    std::array<std::array<bool, kBindingKeyCount>, 2> used{};
+    for (size_t action = 0; action < bindings.keys.size(); ++action) {
+        auto& context = used[isDialogueBindingAction(KeyboardAction(action))];
+        for (const auto key : bindings.keys[action]) {
+            if (!assignableKeyboardKey(key) || (key && context[key])) return false;
+            if (key) context[key] = true;
+        }
     }
     return true;
 }
@@ -67,8 +79,10 @@ bool assignKeyboardKey(KeyboardBindings& bindings, KeyboardAction action, size_t
         !validKeyboardBindings(bindings)) return false;
     auto& current = bindings.keys[index][slot];
     if (key == current) return true;
-    if (key) for (auto& other : bindings.keys) for (auto& assigned : other) {
-        if (assigned == key) { assigned = current; current = uint16_t(key); return true; }
+    if (key) for (size_t other = 0; other < bindings.keys.size(); ++other) {
+        if (isDialogueBindingAction(KeyboardAction(other)) != isDialogueBindingAction(action)) continue;
+        for (auto& assigned : bindings.keys[other])
+            if (assigned == key) { assigned = current; current = uint16_t(key); return true; }
     }
     current = uint16_t(key);
     return true;
@@ -81,6 +95,8 @@ std::wstring keyboardKeyName(unsigned key) {
     case VK_MBUTTON: return L"MOUSE MIDDLE";
     case VK_XBUTTON1: return L"MOUSE 4";
     case VK_XBUTTON2: return L"MOUSE 5";
+    case kMouseWheelUp: return L"WHEEL UP";
+    case kMouseWheelDown: return L"WHEEL DOWN";
     default: break;
     }
     if (key == VK_CONTROL) return L"CTRL";
@@ -107,6 +123,7 @@ std::string keyboardKeyPrompt(unsigned key) {
     switch (key) {
     case VK_LBUTTON: return "LMB"; case VK_RBUTTON: return "RMB"; case VK_MBUTTON: return "MMB";
     case VK_XBUTTON1: return "M4"; case VK_XBUTTON2: return "M5";
+    case kMouseWheelUp: return "WhUp"; case kMouseWheelDown: return "WhDn";
     case VK_SPACE: return "Spc"; case VK_RETURN: return "Ent"; case VK_TAB: return "Tab";
     case VK_CONTROL: return "Ct"; case VK_SHIFT: return "Sh"; case VK_MENU: return "Alt"; case VK_BACK: return "Bk";
     case VK_LEFT: return "<"; case VK_RIGHT: return ">"; case VK_UP: return "^"; case VK_DOWN: return "v";

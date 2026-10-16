@@ -78,7 +78,9 @@ achievement list. Unlocks from gameplay are stored in
 dump's achievement text and selected language; multiplayer achievements require
 their original gameplay conditions. Xbox Live synchronization is unavailable.
 Use **Options > Controls > Keyboard bindings** to remap gameplay keys and mouse buttons.
-The four-page game menu supports primary/secondary keys, clear, defaults, and Save/Cancel.
+The five-page game menu supports primary/secondary keys, clear, defaults, and Save/Cancel.
+Page 5 configures dialogue-choice controls independently of weapon switching;
+the same keys and wheel directions can be used in both contexts.
 **Exit Game** in the pause or main menu closes the game after confirmation.
 Press **F5** to open developer tools for mission selection, player speed,
 invincibility, noclip, all Darkness abilities and maximum Darkness level.

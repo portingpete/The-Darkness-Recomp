@@ -61,7 +61,8 @@ void updateKeyboardMenuGuest(PPCContext& ctx, uint8_t* base, uint32_t frontend) 
     const bool liveRoot = root && uint64_t(root) + 272 <= PPC_MEMORY_SIZE &&
                           !PPC_LOAD_U8(root + 88) && !(PPC_LOAD_U32(root + 84) & 8);
     const bool keyboardPage = liveRoot && (name == "darkrecomp_keyboard_1" || name == "darkrecomp_keyboard_2" ||
-                              name == "darkrecomp_keyboard_3" || name == "darkrecomp_keyboard_4");
+                              name == "darkrecomp_keyboard_3" || name == "darkrecomp_keyboard_4" ||
+                              name == "darkrecomp_keyboard_5");
     if (keyboardPage) {
         if (enteredKeyboardPage && keyboardFrontend != frontend) return;
         keyboardFrontend = frontend;

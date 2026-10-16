@@ -341,6 +341,81 @@ static void testMouseLookContract(PPCContext& ctx) {
           "Original active GUI did not accept released mouse wheel input");
     memory->write32(client + 7360, 0); tick();
     check(wheelButtons() == 0,"Original released GUI exit retained wheel input");
+
+    // Actual conversation choices are player-client data, with no active GUI.
+    // Build the original client actor vector and leave the weapon wheel binds
+    // intact. Camera actor choices must not be mistaken for local choices.
+    const auto originalBindings = input.keyboardBindings();
+    memory->write32(client + 536, 1); memory->write32(client + 540, 2);
+    memory->write32(client + 3956, 3);
+    memory->write32(block + 0xA404, 3);
+    memory->write32(block + 0xA418, block + 0xA600);
+    memory->write32(block + 0xA604, player);
+    const auto npc = block + 0xC000, npcState = block + 0xD000;
+    memory->write32(block + 0xA608, npc);
+    PPC_STORE_U16(player + 368, 1); PPC_STORE_U16(player + 370, 1);
+    PPC_STORE_U16(npc + 368, 2); PPC_STORE_U16(npc + 370, 1);
+    memory->write32(npc + 396, npcState); memory->write32(npcState + 16, npc);
+    base[npcState + 4296] = 3;
+    newEpoch();
+    input.windowMessage(window, WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), 0);
+    check(wheelButtons() == XINPUT_GAMEPAD_DPAD_RIGHT,
+          "Camera NPC choices stole the local player's weapon wheel");
+    base[state + 4296] = 3; base[state + 4297] = 1;
+    PPC_STORE_U16(state + 7196, 0xffff); // No companion dialogue owner.
+    tick();
+    check(wheelButtons() == 0, "Opening actual dialogue replayed a weapon wheel press");
+    input.windowMessage(window, WM_MOUSEWHEEL, MAKEWPARAM(0, 240), 0);
+    check(wheelButtons() == XINPUT_GAMEPAD_DPAD_UP && PPC_LOAD_U32(client + 7360) == 0,
+          "Actual dialogue without a GUI required unbinding wheel from weapons");
+    const auto dialogueMessage = block + 0xB200;
+    const auto choose = [&](uint32_t control) {
+        memory->write32(dialogueMessage, 4380); memory->write32(dialogueMessage + 4, control);
+        auto call = fresh(); call.r3.u64 = player; call.r4.u64 = client; call.r5.u64 = dialogueMessage;
+        sub_821570E8(call, base);
+    };
+    choose(0x100); tick();
+    check(base[state + 4297] == 0, "Original dialogue handler did not select the previous choice");
+    Sleep(45);
+    check(wheelButtons() == 0, "Actual dialogue wheel lacked a release edge");
+    newEpoch();
+    input.windowMessage(window, WM_MOUSEWHEEL, MAKEWPARAM(0, short(-WHEEL_DELTA)), 0);
+    check(wheelButtons() == XINPUT_GAMEPAD_DPAD_DOWN, "Actual dialogue wheel down missed next choice input");
+    choose(0x200); tick();
+    check(base[state + 4297] == 1 && input.keyboardBindings() == originalBindings,
+          "Original next-choice navigation failed or changed saved weapon bindings");
+    auto customDialogue = originalBindings;
+    check(assignKeyboardKey(customDialogue, KeyboardAction::PreviousDialogueChoice, 0, 'H') &&
+          assignKeyboardKey(customDialogue, KeyboardAction::NextDialogueChoice, 0, 'N') &&
+          assignKeyboardKey(customDialogue, KeyboardAction::PreviousDialogueChoice, 1, 0) &&
+          assignKeyboardKey(customDialogue, KeyboardAction::NextDialogueChoice, 1, 0) &&
+          input.setKeyboardBindings(customDialogue), "Cannot configure original dialogue's independent keys");
+    newEpoch();
+    input.windowMessage(window, WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), 0);
+    check(wheelButtons() == 0 && base[state + 4297] == 1,
+          "Original dialogue ignored a cleared wheel binding");
+    input.windowMessage(window, WM_KEYDOWN, 'H', 0);
+    check(wheelButtons() == XINPUT_GAMEPAD_DPAD_UP, "Custom previous key missed actual dialogue context");
+    choose(0x100); tick();
+    input.windowMessage(window, WM_KEYUP, 'H', 0);
+    check(base[state + 4297] == 0, "Custom previous binding did not reach original dialogue selection");
+    input.windowMessage(window, WM_KEYDOWN, 'N', 0);
+    check(wheelButtons() == XINPUT_GAMEPAD_DPAD_DOWN, "Custom next key missed actual dialogue context");
+    choose(0x200); tick();
+    input.windowMessage(window, WM_KEYUP, 'N', 0);
+    check(base[state + 4297] == 1 &&
+          customDialogue.keys[size_t(KeyboardAction::PreviousWeapon)] == originalBindings.keys[size_t(KeyboardAction::PreviousWeapon)] &&
+          customDialogue.keys[size_t(KeyboardAction::NextWeapon)] == originalBindings.keys[size_t(KeyboardAction::NextWeapon)],
+          "Custom original dialogue navigation failed or displaced weapon bindings");
+    base[state + 4296] = 0; tick();
+    check(wheelButtons() == 0, "Closing actual dialogue replayed a choice as a weapon switch");
+    input.windowMessage(window, WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), 0);
+    check(wheelButtons() == XINPUT_GAMEPAD_DPAD_RIGHT,
+          "Actual dialogue exit did not restore the unchanged weapon wheel binding");
+    check(input.setKeyboardBindings(originalBindings), "Cannot restore original dialogue fixture controls");
+    input.setMouseLookEnabled(true);
+    memory->write32(client + 536, 0); memory->write32(client + 540, 0);
+    tick();
     newEpoch(); base[client + 8816] = 2;
     std::array<uint8_t, 64> cameraBefore{};
     std::memcpy(cameraBefore.data(), base + client + 8880, cameraBefore.size());

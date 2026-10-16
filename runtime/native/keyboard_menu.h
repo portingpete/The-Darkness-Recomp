@@ -22,6 +22,8 @@ public:
     // Send all keyboard and mouse button edges, even while this menu is closed.
     // Capture waits for the input which activated its original slot to release.
     bool keyEvent(unsigned key, bool down, bool repeat = false, bool alt = false) noexcept;
+    // Accumulate high-resolution wheel deltas only while waiting for a binding.
+    bool wheelEvent(int delta) noexcept;
     void cancelCapture() noexcept;
     bool takeSaveRequest(KeyboardMenuSaveRequest& request) noexcept;
     void reportSave(uint64_t id, bool saved) noexcept;
@@ -34,7 +36,8 @@ public:
 private:
     enum class Status { Ready, Release, Capture, Reserved, Updated, Defaults, Saving, Failed, Saved };
     KeyboardBindings staged_ = defaultKeyboardBindings();
-    std::array<bool, 256> held_{};
+    std::array<bool, kBindingKeyCount> held_{};
+    int wheelRemainder_ = 0;
     size_t captureAction_ = kKeyboardActionCount, captureSlot_ = 0;
     bool active_ = false, awaitRelease_ = false, closeRequested_ = false, closing_ = false, saveQueued_ = false;
     uint64_t nextId_ = 0, pendingId_ = 0;
@@ -49,6 +52,7 @@ std::string keyboardMenuLabel(std::string_view action);
 bool keyboardMenuCaptureActive() noexcept;
 bool keyboardMenuInputBlocked() noexcept;
 bool keyboardMenuKeyEvent(unsigned key, bool down, bool repeat = false, bool alt = false) noexcept;
+bool keyboardMenuWheelEvent(int delta) noexcept;
 void cancelKeyboardMenuCapture() noexcept;
 bool takeKeyboardMenuSaveRequest(KeyboardMenuSaveRequest& request) noexcept;
 void reportKeyboardMenuSave(uint64_t id, bool saved) noexcept;

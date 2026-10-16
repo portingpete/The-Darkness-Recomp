@@ -158,12 +158,22 @@ also release it. Click again after returning to the game.
 - **Keyboard alternatives:** I / J / K / L to look, Z / X to fire left / right.
 
 These are the default bindings. Open **Options > Controls > Keyboard bindings**
-to change gameplay keys and mouse buttons inside the original game menu. **Previous** and **Next**
-switch between four pages of actions. Select a primary or secondary slot, then
-press the new key or mouse button; **Escape** cancels capture and **Delete** clears the slot.
+to change gameplay keys, mouse buttons, and wheel directions inside the original game menu. **Previous** and **Next**
+switch between five pages of actions. Select a primary or secondary slot, then
+press the new key or mouse button, or scroll up/down; **Escape** cancels capture and **Delete** clears the slot.
 Left, right, middle, and the two side buttons (**M4 / M5**) can be assigned,
 along with **Alt**. Release the click used to select a slot before pressing
-the button to bind. **Alt+Enter** and other host shortcuts stay available.
+the button or wheel direction to bind. **WHEEL UP / WHEEL DN** can be assigned
+to either slot.
+Each scroll step briefly presses its assigned action. Page **5 / 5** contains
+**Prev Dialogue** and **Next Dialogue**, with separate primary and secondary slots.
+Their defaults are **3 / Wheel Up** and **4 / Wheel Down**. Bind a different key,
+mouse button or wheel direction there, or clear a slot with **Delete**.
+Dialogue bindings only act while choices are visible. They can share inputs with
+gameplay bindings without replacing them; weapon scrolling resumes after choices
+close. Clearing the dialogue wheel slots disables wheel selection in dialogue.
+Ordinary menu navigation remains available regardless of these bindings.
+**Alt+Enter** and other host shortcuts stay available.
 **Defaults** stages the original selection. **Save** applies the changes
 and writes the `[Keyboard]` section of `DarkRecomp.settings.ini`.
 **Cancel** or Back discards unsaved edits. Menu navigation stays available outside

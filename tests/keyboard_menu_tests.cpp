@@ -70,7 +70,7 @@ void captureValidation() {
     bind(menu, jump, 'M');
     check(menu.action("darkrecomp.keyboard.defaults") && menu.staged() == original,
           "restore defaults was not staged");
-    for (const char* malformed : {"darkrecomp.keyboard.bind.24.0", "darkrecomp.keyboard.bind.0.2",
+    for (const char* malformed : {"darkrecomp.keyboard.bind.26.0", "darkrecomp.keyboard.bind.0.2",
          "darkrecomp.keyboard.bind.-1.0", "darkrecomp.keyboard.bind.1.0.extra",
          "darkrecomp.keyboard.bind..0", "darkrecomp.keyboard.bind.999999999999999999999.0", "unknown"})
         check(!menu.action(malformed) && menu.label(malformed).empty() && menu.staged() == original,
@@ -202,6 +202,50 @@ void saveButtonFeedback() {
     failSave(); menu.end(); menu.begin(original);
     expect("SAVE"); // A new session starts without the previous failure.
 }
+void wheelCapture() {
+    KeyboardMenuState menu;
+    const auto defaults = defaultKeyboardBindings();
+    check(!menu.wheelEvent(WHEEL_DELTA), "closed menu consumed wheel navigation");
+    menu.begin(defaults);
+    check(!menu.wheelEvent(WHEEL_DELTA), "idle menu consumed wheel navigation");
+    menu.keyEvent(VK_LBUTTON, true); menu.action(jump);
+    check(menu.wheelEvent(WHEEL_DELTA) && menu.captureActive() && menu.staged() == defaults,
+          "wheel captured before activation click was released");
+    menu.keyEvent(VK_LBUTTON, false);
+    check(menu.wheelEvent(60) && menu.captureActive(), "partial detent captured a binding");
+    check(menu.wheelEvent(180) && !menu.captureActive() &&
+          menu.staged().keys[size_t(KeyboardAction::Jump)][0] == kMouseWheelUp &&
+          menu.staged().keys[size_t(KeyboardAction::NextWeapon)][1] == VK_SPACE &&
+          menu.label(jump) == "sc, [WHEEL UP]", "wheel up capture or conflict swap failed");
+    menu.action(use); menu.wheelEvent(-WHEEL_DELTA);
+    check(!menu.captureActive() && menu.label(use) == "sc, [WHEEL DN]", "wheel down label or capture failed");
+    menu.action(jump); menu.wheelEvent(60); menu.cancelCapture();
+    menu.action(jump); menu.wheelEvent(60);
+    check(menu.captureActive(), "cancelled partial wheel input escaped into the next capture");
+    menu.wheelEvent(60);
+    check(!menu.captureActive(), "wheel capture retained a synthetic held key");
+    menu.action(save);
+    KeyboardMenuSaveRequest request;
+    check(menu.wheelEvent(-240) && menu.takeSaveRequest(request) &&
+          request.bindings == menu.staged(), "wheel changed bindings during Save");
+    menu.reportSave(request.id, false); menu.action(cancel); menu.end();
+    menu.begin(defaults);
+    check(menu.staged() == defaults, "Cancel applied wheel edits");
+    constexpr const char* previousDialogue = "darkrecomp.keyboard.bind.24.0";
+    constexpr const char* nextDialogue = "darkrecomp.keyboard.bind.25.1";
+    bind(menu, previousDialogue, '1');
+    check(menu.staged().keys[size_t(KeyboardAction::PreviousWeapon)] == defaults.keys[size_t(KeyboardAction::PreviousWeapon)],
+          "dialogue menu capture stole a weapon key");
+    bind(menu, nextDialogue, kMouseWheelUp);
+    check(menu.staged().keys[size_t(KeyboardAction::NextWeapon)] == defaults.keys[size_t(KeyboardAction::NextWeapon)] &&
+          menu.staged().keys[size_t(KeyboardAction::PreviousDialogueChoice)][1] == kMouseWheelDown,
+          "dialogue menu conflict swapped across contexts instead of within dialogue");
+    bind(menu, previousDialogue, VK_DELETE);
+    check(menu.staged().keys[size_t(KeyboardAction::PreviousDialogueChoice)][0] == 0,
+          "dialogue menu Delete did not clear the selected key");
+    menu.action("darkrecomp.keyboard.defaults");
+    check(menu.staged() == defaults, "menu Defaults did not restore dialogue controls");
+}
 void labelsAndBridge() {
     KeyboardMenuState menu; menu.begin(defaultKeyboardBindings());
     check(menu.label(status).size() == 44, "status label changed authored width");
@@ -257,6 +301,7 @@ int main() {
     try {
         activationRelease(); captureValidation(); mouseCapture(); altCapture(); saveCancelAndCompletion(); saveButtonFeedback(); labelsAndBridge();
         russianLabels();
+        wheelCapture();
         std::puts("Keyboard/mouse menu: activation release, capture validation, staged edits, Save/Cancel and async completion passed.");
         return 0;
     } catch (const std::exception& error) {

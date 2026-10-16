@@ -164,11 +164,13 @@ KEYBOARD_ACTIONS = ("MOVE FORWARD", "MOVE BACKWARD", "MOVE LEFT", "MOVE RIGHT", 
                     "LOOK LEFT", "LOOK RIGHT", "JUMP", "USE / CONFIRM", "RELOAD", "CROUCH", "ZOOM",
                     "FIRE RIGHT WEAPON", "FIRE LEFT WEAPON", "PREVIOUS WEAPON", "NEXT WEAPON",
                     "PREV DARKNESS", "NEXT DARKNESS", "MANIFEST DARKNESS", "USE DARKNESS POWER",
-                    "REDIRECT DARKLING", "JOURNAL", "PAUSE")
+                    "REDIRECT DARKLING", "JOURNAL", "PAUSE", "PREV DIALOGUE", "NEXT DIALOGUE")
 KEYBOARD_PRIMARY = ("W", "S", "A", "D", "I", "K", "J", "L", "SPACE", "E", "R", "CTRL", "SHIFT",
-                    "X", "Z", "1", "2", "3", "4", "Q", "G", "F", "TAB", "ENTER")
+                    "X", "Z", "1", "2", "3", "4", "Q", "G", "F", "TAB", "ENTER", "3", "4")
 KEYBOARD_SECONDARY = tuple({"CROUCH": "C", "ZOOM": "MMB", "FIRE RIGHT WEAPON": "LMB",
-                            "FIRE LEFT WEAPON": "RMB"}.get(action, "UNBOUND") for action in KEYBOARD_ACTIONS)
+                            "FIRE LEFT WEAPON": "RMB", "PREVIOUS WEAPON": "WHEEL DN",
+                            "NEXT WEAPON": "WHEEL UP", "PREV DIALOGUE": "WHEEL UP",
+                            "NEXT DIALOGUE": "WHEEL DN"}.get(action, "UNBOUND") for action in KEYBOARD_ACTIONS)
 
 
 def localized_text(text, region, translations):
@@ -338,10 +340,11 @@ def add_pc_menu_actions(r, translations=None):
         window("CubeButton", "nc, CANCEL", "0,11,20,1", "cg_prevmenu()"),
         window("CubeButton", "nc, EXIT GAME", "0,13,20,1", "darkrecomp.exit"),
     ]))
-    for page in range(4):
+    page_count = (len(KEYBOARD_ACTIONS) + 5) // 6
+    for page in range(page_count):
         # cg_switchmenu is the retail controller-template pagination route.
         # It replaces the current page without adding a submenu history level.
-        previous, following = (page - 1) % 4 + 1, (page + 1) % 4 + 1
+        previous, following = (page - 1) % page_count + 1, (page + 1) % page_count + 1
         children = [r.make("CLASSNAME", "CubeMenu"),
             r.make("ID", f"DARKRECOMP_KEYBOARD_{page + 1}"),
             r.make("ACCELLERATOR_1", "gui_cancel,,cg_prevmenu()"),
@@ -352,8 +355,7 @@ def add_pc_menu_actions(r, translations=None):
             window("CubeText", "sc, ACTION", "1,6,9,1"),
             window("CubeText", "sc, PRIMARY", "10,6,5,1"),
             window("CubeText", "sc, SECONDARY", "15,6,5,1")]
-        for row in range(6):
-            action = page * 6 + row
+        for row, action in enumerate(range(page * 6, min((page + 1) * 6, len(KEYBOARD_ACTIONS)))):
             y = 7 + row
             children.append(window("CubeText", "sc, " + KEYBOARD_ACTIONS[action], f"1,{y},9,1"))
             # Retail TEXT sizing trims plain padding. Visible endpoints keep
@@ -363,7 +365,7 @@ def add_pc_menu_actions(r, translations=None):
                     f"{x},{y},{width},1", f"darkrecomp.keyboard.bind.{action}.{slot}", always_paint=True))
         children.extend([
             window("CubeButton", "sc, PREVIOUS", "1,14,6,1", f"cg_switchmenu('darkrecomp_keyboard_{previous}')"),
-            window("CubeText", f"sc, PAGE {page + 1}/4", "7,14,6,1"),
+            window("CubeText", f"sc, PAGE {page + 1}/{page_count}", "7,14,6,1"),
             window("CubeButton", "sc, NEXT", "13,14,6,1", f"cg_switchmenu('darkrecomp_keyboard_{following}')"),
             window("CubeButton", "sc, DEFAULTS", "1,16,7,1", "darkrecomp.keyboard.defaults"),
             window("CubeButton", "sc, SAVE", "8,16,5,1", "darkrecomp.keyboard.save", always_paint=True),

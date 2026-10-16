@@ -133,7 +133,7 @@ class VideoMenu(unittest.TestCase):
     def test_original_round_trip_and_untouched_pages(self):
         for (before, raw), (after, _) in zip(registries(self.source), registries(self.output)):
             self.assertEqual(before.encode(), raw)
-            self.assertEqual(len(before.roots) + 5, len(after.roots))
+            self.assertEqual(len(before.roots) + 6, len(after.roots))
             for original, edited in zip(before.roots, after.roots):
                 if before.decode(original)[1] not in ("options_video", "options_subtitles", "options_controller",
                         "MainMenu_NoCheckpoint", "MainMenu_GotCheckpoint", "GAMEMENU_real"):
@@ -253,9 +253,15 @@ class VideoMenu(unittest.TestCase):
                         self.assertEqual(text, text.upper(), name)
 
     def test_keyboard_pages_cover_both_slots_and_preserve_same_level_navigation(self):
+        self.assertEqual(len(KEYBOARD_ACTIONS), 26)
+        self.assertEqual(KEYBOARD_ACTIONS[24:], ("PREV DIALOGUE", "NEXT DIALOGUE"))
+        self.assertEqual(KEYBOARD_PRIMARY[24:], ("3", "4"))
+        self.assertEqual(KEYBOARD_SECONDARY[24:], ("WHEEL UP", "WHEEL DN"))
         for registry, _ in registries(self.output):
             covered = []
-            for page_number in range(1, 5):
+            keyboard_pages = [n for n in registry.roots if registry.decode(n)[1].startswith("darkrecomp_keyboard_")]
+            self.assertEqual(len(keyboard_pages), 5)
+            for page_number in range(1, 6):
                 page, = [n for n in registry.roots if registry.decode(n) ==
                          ("WINDOW", f"darkrecomp_keyboard_{page_number}")]
                 props = dict(registry.decode(c) for c in page.children)
@@ -274,7 +280,7 @@ class VideoMenu(unittest.TestCase):
                     header, = [c for c in controls if c.get("TEXT") == text]
                     self.assertEqual((header["CLASSNAME"], header["RGN"]), ("CubeText", region))
                 bindings = [c for c in controls if c.get("SCRIPT_PRESSED", "").startswith("darkrecomp.keyboard.bind.")]
-                expected = [(page_number - 1) * 6 + row for row in range(6)]
+                expected = list(range((page_number - 1) * 6, min(page_number * 6, 26)))
                 self.assertEqual([c["SCRIPT_PRESSED"] for c in bindings],
                     [f"darkrecomp.keyboard.bind.{action}.{slot}" for action in expected for slot in range(2)])
                 for row, action in enumerate(expected):
@@ -293,18 +299,19 @@ class VideoMenu(unittest.TestCase):
                                          "retail initial TEXT sizing strips leading and trailing whitespace")
                         covered.append((action, slot))
                 scripts = {c.get("SCRIPT_PRESSED"): c for c in controls if "SCRIPT_PRESSED" in c}
-                previous, following = (page_number - 2) % 4 + 1, page_number % 4 + 1
+                previous, following = (page_number - 2) % 5 + 1, page_number % 5 + 1
                 self.assertIn(f"cg_switchmenu('darkrecomp_keyboard_{previous}')", scripts)
                 self.assertIn(f"cg_switchmenu('darkrecomp_keyboard_{following}')", scripts)
                 self.assertFalse(any(script.startswith("cg_submenu") for script in scripts),
-                                 "pagination must not stack four nested Back levels")
+                                 "pagination must not stack nested Back levels")
                 for action in ("defaults", "save", "cancel"):
                     self.assertIn("darkrecomp.keyboard." + action, scripts)
                 self.assertEqual(scripts["darkrecomp.keyboard.save"]["ALWAYSPAINT"], "1")
                 self.assertFalse(any(c.get("ID") == "DARKRECOMP_KEYBOARD_STATUS" for c in controls))
                 self.assertNotIn("darkrecomp.keyboard.status", scripts)
-                self.assertIn(f"sc, PAGE {page_number}/4", [c.get("TEXT") for c in controls])
-            self.assertEqual(covered, [(action, slot) for action in range(24) for slot in range(2)])
+                self.assertIn(f"sc, PAGE {page_number}/5", [c.get("TEXT") for c in controls])
+            self.assertEqual(covered, [(action, slot) for action in range(26) for slot in range(2)])
+            self.assertEqual(len(covered), 52)
 
     def test_keyboard_columns_and_footer_fit_the_original_cell_grid(self):
         for registry, _ in registries(self.output):
@@ -588,6 +595,13 @@ class VideoMenu(unittest.TestCase):
                             if registry.decode(prop)[0] == "SCRIPT_PRESSED"]
         self.assertEqual(subtitle_scripts, ["darkrecomp.subtitle_scale"],
                          "startup cache must contain the moved subtitle setting")
+        dialogue_page, = [n for n in registry.roots if registry.decode(n) == ("WINDOW", "darkrecomp_keyboard_5")]
+        dialogue_scripts = [registry.decode(prop)[1] for child in dialogue_page.children for prop in child.children
+                            if registry.decode(prop)[0] == "SCRIPT_PRESSED"
+                            and registry.decode(prop)[1].startswith("darkrecomp.keyboard.bind.")]
+        self.assertEqual(dialogue_scripts, [f"darkrecomp.keyboard.bind.{action}.{slot}"
+                                          for action in (24, 25) for slot in range(2)],
+                         "startup cache must include both slots for the independent dialogue bindings")
         profiles = [dict(registry.decode(prop) for prop in child.children)
                     for child in page.children if registry.decode(child)[0] == "WINDOW"
                     and dict(registry.decode(prop) for prop in child.children).get("GROUP") == "colorprofile"]

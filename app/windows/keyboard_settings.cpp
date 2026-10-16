@@ -17,7 +17,7 @@ std::optional<unsigned> readKey(const std::filesystem::path& path, const wchar_t
     for (DWORD i = 0; i < length; ++i) {
         if (text[i] < L'0' || text[i] > L'9') return {};
         value = value * 10 + unsigned(text[i] - L'0');
-        if (value > 255) return {};
+        if (value >= kBindingKeyCount) return {};
     }
     return assignableKeyboardKey(value) ? std::optional<unsigned>(value) : std::nullopt;
 }
@@ -49,8 +49,27 @@ KeyboardBindings loadKeyboardBindings(const std::filesystem::path& path) noexcep
             }};
             for (const auto [action, key] : mouseDefaults) {
                 bool assigned = false;
-                for (const auto& slots : loaded.keys)
-                    for (const auto existing : slots) assigned = assigned || existing == key;
+                for (size_t i = 0; i < loaded.keys.size(); ++i)
+                    if (!isDialogueBindingAction(KeyboardAction(i)))
+                        for (const auto existing : loaded.keys[i]) assigned = assigned || existing == key;
+                if (assigned) continue;
+                auto& slots = loaded.keys[size_t(action)];
+                if (!slots[1]) slots[1] = key;
+                else if (!slots[0]) slots[0] = key;
+            }
+        }
+        // Wheel cycling was fixed before version 3. Preserve it in a vacant
+        // slot when upgrading, without displacing a custom or wheel binding.
+        if (GetPrivateProfileIntW(L"Keyboard", L"BindingsVersion", 0, path.c_str()) < 3) {
+            constexpr std::array<std::pair<KeyboardAction, uint16_t>, 2> wheelDefaults{{
+                {KeyboardAction::PreviousWeapon, kMouseWheelDown},
+                {KeyboardAction::NextWeapon, kMouseWheelUp}
+            }};
+            for (const auto [action, key] : wheelDefaults) {
+                bool assigned = false;
+                for (size_t i = 0; i < loaded.keys.size(); ++i)
+                    if (!isDialogueBindingAction(KeyboardAction(i)))
+                        for (const auto existing : loaded.keys[i]) assigned = assigned || existing == key;
                 if (assigned) continue;
                 auto& slots = loaded.keys[size_t(action)];
                 if (!slots[1]) slots[1] = key;
@@ -69,7 +88,7 @@ bool saveKeyboardBindings(const std::filesystem::path& path, const KeyboardBindi
         if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES) {
             if (!CopyFileW(path.c_str(), temporary, FALSE)) return false;
         } else if (GetLastError() != ERROR_FILE_NOT_FOUND) return false;
-        if (!WritePrivateProfileStringW(L"Keyboard", L"BindingsVersion", L"2", temporary)) return false;
+        if (!WritePrivateProfileStringW(L"Keyboard", L"BindingsVersion", L"3", temporary)) return false;
         for (size_t action = 0; action < kKeyboardActionCount; ++action)
             for (size_t slot = 0; slot < kKeyboardBindingSlots; ++slot) {
                 const auto text = std::to_wstring(bindings.keys[action][slot]);

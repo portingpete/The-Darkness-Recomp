@@ -55,6 +55,8 @@ std::string keyLabel(unsigned key) {
     case VK_OEM_7: return "APOST";
     case VK_OEM_MINUS: return "MINUS";
     case VK_OEM_PLUS: return "EQUALS";
+    case kMouseWheelUp: return "WHEEL UP";
+    case kMouseWheelDown: return "WHEEL DN";
     default: break;
     }
     auto text = keyboardKeyPrompt(key);
@@ -77,6 +79,7 @@ bool KeyboardMenuState::begin(const KeyboardBindings& current) noexcept {
     if (!validKeyboardBindings(current)) return false;
     if (active_) return true; // Switching original pages retains staged edits.
     staged_ = current;
+    wheelRemainder_ = 0;
     active_ = true;
     captureAction_ = kKeyboardActionCount;
     awaitRelease_ = closeRequested_ = closing_ = saveQueued_ = false;
@@ -85,6 +88,7 @@ bool KeyboardMenuState::begin(const KeyboardBindings& current) noexcept {
     return true;
 }
 void KeyboardMenuState::end() noexcept {
+    wheelRemainder_ = 0;
     active_ = false;
     captureAction_ = kKeyboardActionCount;
     awaitRelease_ = closeRequested_ = closing_ = saveQueued_ = false;
@@ -98,6 +102,7 @@ bool KeyboardMenuState::action(std::string_view action) noexcept {
     const bool cancel = action == "darkrecomp.keyboard.cancel";
     if (!selected && !defaults && !save && !cancel) return false;
     if (!active_ || pendingId_ || closing_) return true;
+    wheelRemainder_ = 0;
     if (selected) {
         captureAction_ = selected->action; captureSlot_ = selected->slot;
         awaitRelease_ = std::any_of(held_.begin(), held_.end(), [](bool down) { return down; });
@@ -167,7 +172,21 @@ bool KeyboardMenuState::keyEvent(unsigned key, bool down, bool repeat, bool alt)
     captureAction_ = kKeyboardActionCount; status_ = Status::Updated;
     return true;
 }
+bool KeyboardMenuState::wheelEvent(int delta) noexcept {
+    if (!inputBlocked()) return false;
+    if (!captureActive() || awaitRelease_) { wheelRemainder_ = 0; return true; }
+    wheelRemainder_ += delta;
+    if (wheelRemainder_ >= WHEEL_DELTA || wheelRemainder_ <= -WHEEL_DELTA) {
+        const auto key = wheelRemainder_ > 0 ? kMouseWheelUp : kMouseWheelDown;
+        keyEvent(key, true);
+        keyEvent(key, false);
+        // A multi-detent event captures once and cannot navigate afterward.
+        wheelRemainder_ = 0;
+    }
+    return true;
+}
 void KeyboardMenuState::cancelCapture() noexcept {
+    wheelRemainder_ = 0;
     held_.fill(false);
     captureAction_ = kKeyboardActionCount; awaitRelease_ = false;
     if (!pendingId_) status_ = Status::Ready;
@@ -196,6 +215,7 @@ std::string keyboardMenuLabel(std::string_view action) { std::lock_guard lock(me
 bool keyboardMenuCaptureActive() noexcept { std::lock_guard lock(menuMutex); return menu.captureActive(); }
 bool keyboardMenuInputBlocked() noexcept { std::lock_guard lock(menuMutex); return menu.inputBlocked(); }
 bool keyboardMenuKeyEvent(unsigned key, bool down, bool repeat, bool alt) noexcept { std::lock_guard lock(menuMutex); return menu.keyEvent(key, down, repeat, alt); }
+bool keyboardMenuWheelEvent(int delta) noexcept { std::lock_guard lock(menuMutex); return menu.wheelEvent(delta); }
 void cancelKeyboardMenuCapture() noexcept { std::lock_guard lock(menuMutex); menu.cancelCapture(); }
 bool takeKeyboardMenuSaveRequest(KeyboardMenuSaveRequest& request) noexcept { std::lock_guard lock(menuMutex); return menu.takeSaveRequest(request); }
 void reportKeyboardMenuSave(uint64_t id, bool saved) noexcept { std::lock_guard lock(menuMutex); menu.reportSave(id, saved); }

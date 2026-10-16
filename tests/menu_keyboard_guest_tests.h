@@ -68,8 +68,8 @@ static void testMenuKeyboardGuest(PPCContext& ctx) {
         PPC_STORE_U32(frontend, 0x82071A10);
         const auto title = std::string_view(name);
         const uint32_t pageOffset = title.starts_with("darkrecomp_keyboard_") &&
-            title.back() >= '1' && title.back() <= '4' ? uint32_t(title.back() - '1') * 128 : 0;
-        const uint32_t currentRoot = root + (frontend == foreign ? 512 : pageOffset);
+            title.back() >= '1' && title.back() <= '5' ? uint32_t(title.back() - '1') * 128 : 0;
+        const uint32_t currentRoot = root + (frontend == foreign ? 640 : pageOffset);
         PPC_STORE_U32(currentRoot, 0x82078708);
         PPC_STORE_U32(currentRoot + 84, 0x81);
         PPC_STORE_U8(currentRoot + 88, 0);
@@ -135,16 +135,30 @@ static void testMenuKeyboardGuest(PPCContext& ctx) {
           "owned keyboard capture did not accept a new physical key");
     keyboardMenuKeyEvent('J', false);
     const auto stagedJump = keyboardMenuLabel("darkrecomp.keyboard.bind.8.0");
-    for (const char* name : {"darkrecomp_keyboard_2", "darkrecomp_keyboard_3", "darkrecomp_keyboard_4"}) {
+    for (const char* name : {"darkrecomp_keyboard_2", "darkrecomp_keyboard_3", "darkrecomp_keyboard_4",
+                             "darkrecomp_keyboard_5"}) {
         page(owner, name);
         updateKeyboardMenuGuest(call, base, owner);
         check(PPC_LOAD_U32(owner + 464) == 2 &&
               keyboardMenuLabel("darkrecomp.keyboard.bind.8.0") == stagedJump,
               "same-depth keyboard page switch lost staged bindings");
     }
+    check(keyboardMenuAction("darkrecomp.keyboard.bind.24.0") && keyboardMenuCaptureActive(),
+          "fifth keyboard page did not retain dialogue binding capture ownership");
+    check(keyboardMenuKeyEvent('U', true) && !keyboardMenuCaptureActive(),
+          "previous dialogue binding did not accept a new physical key");
+    keyboardMenuKeyEvent('U', false);
+    check(keyboardMenuAction("darkrecomp.keyboard.bind.25.1") && keyboardMenuCaptureActive(),
+          "fifth keyboard page did not expose the next dialogue secondary slot");
+    check(keyboardMenuKeyEvent('O', true) && !keyboardMenuCaptureActive(),
+          "next dialogue secondary binding did not accept a new physical key");
+    keyboardMenuKeyEvent('O', false);
+    check(keyboardMenuLabel("darkrecomp.keyboard.bind.24.0") == "sc, [   U    ]" &&
+          keyboardMenuLabel("darkrecomp.keyboard.bind.25.1") == "sc, [   O    ]",
+          "fifth keyboard page lost independent dialogue binding values");
 
     check(keyboardMenuAction("darkrecomp.keyboard.cancel"), "keyboard Cancel action was not recognized");
-    page(foreign, "darkrecomp_keyboard_2");
+    page(foreign, "darkrecomp_keyboard_5");
     updateKeyboardMenuGuest(call, base, foreign);
     check(PPC_LOAD_U32(foreign + 308) == 0xffffffff,
           "another FrontEnd consumed the owned keyboard close request");
@@ -164,7 +178,7 @@ static void testMenuKeyboardGuest(PPCContext& ctx) {
     check(!keyboardMenuCaptureActive(), "Back to Controls retained keyboard capture ownership");
 
     beginKeyboardMenu(defaultKeyboardBindings());
-    page(owner, "darkrecomp_keyboard_2");
+    page(owner, "darkrecomp_keyboard_5");
     updateKeyboardMenuGuest(call, base, owner);
     keyboardMenuAction("darkrecomp.keyboard.save");
     KeyboardMenuSaveRequest failed, retry;

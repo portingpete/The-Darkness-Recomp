@@ -50,6 +50,8 @@
     "REDIRECT DARKLING": {"text": "ПРИКАЗ ДАРКЛИНГУ", "max_glyphs": 18},
     "JOURNAL": {"text": "ДНЕВНИК", "max_glyphs": 18},
     "PAUSE": {"text": "ПАУЗА", "max_glyphs": 18},
+    "PREV DIALOGUE": {"text": "ПРЕД. ОТВЕТ", "max_glyphs": 18},
+    "NEXT DIALOGUE": {"text": "СЛЕД. ОТВЕТ", "max_glyphs": 18},
     "PREVIOUS": {"text": "НАЗАД", "max_glyphs": 12},
     "NEXT": {"text": "ВПЕРЁД", "max_glyphs": 12},
     "PAGE": {"text": "СТР.", "max_glyphs": 8},

@@ -638,6 +638,104 @@ static void testInputContract(PPCContext& ctx) {
     check(PPC_LOAD_U16(output+4)==0,"Released GUI exit did not restore gameplay wheel suppression");
     input.setMouseLookEnabled(true);state();
     check(PPC_LOAD_U16(output+4)==0,"Recapture replayed menu wheel input as a weapon switch");
+    auto powerWheel = defaultKeyboardBindings();
+    check(assignKeyboardKey(powerWheel, KeyboardAction::PreviousPower, 0, kMouseWheelUp) &&
+          assignKeyboardKey(powerWheel, KeyboardAction::NextPower, 0, kMouseWheelDown) &&
+          input.setKeyboardBindings(powerWheel), "Cannot remap wheel directions to power actions");
+    input.setMouseLookEnabled(true);
+    SendMessageW(window, WM_MOUSEWHEEL, MAKEWPARAM(0, 240), 0); state();
+    check(PPC_LOAD_U16(output + 4) == XINPUT_GAMEPAD_DPAD_UP,
+          "Remapped wheel up still cycled weapons or failed to cycle power");
+    inputTicks += 40; state();
+    check(zero(output + 4, 12), "Remapped wheel power remained held");
+    inputTicks += 20; state();
+    check(PPC_LOAD_U16(output + 4) == XINPUT_GAMEPAD_DPAD_UP, "Remapped wheel lost its second detent");
+    input.setGuestMenuActive(true);
+    SendMessageW(window, WM_MOUSEWHEEL, MAKEWPARAM(0, short(-120)), 0); state();
+    check(PPC_LOAD_U16(output + 4) == XINPUT_GAMEPAD_DPAD_DOWN, "Power binding broke dialogue wheel navigation");
+    input.setGuestMenuActive(false);
+    SendMessageW(window, WM_MOUSEWHEEL, MAKEWPARAM(0, short(-120)), 0); state();
+    check(PPC_LOAD_U16(output + 4) == XINPUT_GAMEPAD_DPAD_DOWN, "Remapped wheel down missed its action");
+    auto actionWheel = defaultKeyboardBindings();
+    check(assignKeyboardKey(actionWheel, KeyboardAction::FireRight, 1, kMouseWheelUp) &&
+          assignKeyboardKey(actionWheel, KeyboardAction::MoveForward, 1, kMouseWheelDown) &&
+          input.setKeyboardBindings(actionWheel), "Cannot bind wheel to trigger and movement actions");
+    input.setMouseLookEnabled(true);
+    SendMessageW(window, WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), 0); state();
+    check(base[output + 7] == 255 && PPC_LOAD_U16(output + 4) == 0,
+          "Wheel trigger binding failed or retained fixed weapon switching");
+    inputTicks += 40; state();
+    check(zero(output + 4, 12), "Wheel trigger pulse failed to release");
+    inputTicks += 20;
+    SendMessageW(window, WM_MOUSEWHEEL, MAKEWPARAM(0, short(-120)), 0); state();
+    check(PPC_LOAD_U16(output + 10) == 32767 && PPC_LOAD_U16(output + 4) == 0,
+          "Wheel movement binding failed or retained fixed weapon switching");
+    input.setGuestMenuActive(true);
+    SendMessageW(window, WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), 0); state();
+    check(PPC_LOAD_U16(output + 4) == XINPUT_GAMEPAD_DPAD_UP && base[output + 7] == 0 &&
+          PPC_LOAD_U16(output + 10) == 0, "Dialogue wheel fired a remapped gameplay action");
+    auto unboundWheel = defaultKeyboardBindings();
+    assignKeyboardKey(unboundWheel, KeyboardAction::PreviousWeapon, 1, 0);
+    assignKeyboardKey(unboundWheel, KeyboardAction::NextWeapon, 1, 0);
+    check(input.setKeyboardBindings(unboundWheel), "Cannot clear wheel bindings");
+    input.setMouseLookEnabled(true); input.setGuestMenuActive(false);
+    SendMessageW(window, WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), 0); state();
+    check(zero(output + 4, 12), "Unbound wheel still triggered gameplay");
+    input.setGuestMenuActive(true);
+    SendMessageW(window, WM_MOUSEWHEEL, MAKEWPARAM(0, short(-120)), 0); state();
+    check(PPC_LOAD_U16(output + 4) == XINPUT_GAMEPAD_DPAD_DOWN, "Unbound wheel lost fixed menu navigation");
+    auto separateDialogue = defaultKeyboardBindings();
+    check(assignKeyboardKey(separateDialogue, KeyboardAction::PreviousDialogueChoice, 0, 'H') &&
+          assignKeyboardKey(separateDialogue, KeyboardAction::NextDialogueChoice, 0, 'N') &&
+          assignKeyboardKey(separateDialogue, KeyboardAction::PreviousDialogueChoice, 1, 0) &&
+          assignKeyboardKey(separateDialogue, KeyboardAction::NextDialogueChoice, 1, 0) &&
+          assignKeyboardKey(separateDialogue, KeyboardAction::FireRight, 0, 'H') &&
+          input.setKeyboardBindings(separateDialogue), "Cannot configure independent dialogue controls");
+    input.setMouseLookEnabled(true); input.setGuestMenuActive(false, true);
+    check((*DarkRecomp::Prompts::bindingLabels(true))[12] == "H" &&
+          (*DarkRecomp::Prompts::bindingLabels(true))[13] == "N", "Dialogue prompts retained power bindings");
+    SendMessageW(window, WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), 0); state();
+    check(zero(output + 4, 12), "Cleared dialogue wheel still navigated or switched weapons");
+    inputTicks += 40; state(); inputTicks += 20;
+    for (const unsigned key : {'3', '4'}) {
+        SendMessageW(window, WM_KEYDOWN, key, 0); state();
+        check(zero(output + 4, 12), "Old power keys still changed remapped dialogue choices");
+        SendMessageW(window, WM_KEYUP, key, 0);
+    }
+    SendMessageW(window, WM_KEYDOWN, 'H', 0); state();
+    check(PPC_LOAD_U16(output + 4) == XINPUT_GAMEPAD_DPAD_UP && base[output + 7] == 0,
+          "Shared dialogue key fired its gameplay action or missed the previous choice");
+    input.setGuestMenuActive(false, false); state();
+    check(zero(output + 4, 12) && (*DarkRecomp::Prompts::bindingLabels(true))[12] == "3",
+          "Dialogue exit replayed a held key or retained dialogue prompts");
+    SendMessageW(window, WM_KEYUP, 'H', 0); SendMessageW(window, WM_KEYDOWN, 'H', 0); state();
+    check(base[output + 7] == 255 && PPC_LOAD_U16(output + 4) == 0,
+          "Shared gameplay binding did not resume on a fresh press");
+    SendMessageW(window, WM_KEYUP, 'H', 0); SendMessageW(window, WM_KEYDOWN, 'N', 0); state();
+    check(zero(output + 4, 12), "Dialogue-only key navigated outside choices");
+    input.setGuestMenuActive(false, true); state();
+    check(zero(output + 4, 12), "Opening choices replayed a held dialogue key");
+    SendMessageW(window, WM_KEYUP, 'N', 0); SendMessageW(window, WM_KEYDOWN, 'N', 0); state();
+    check(PPC_LOAD_U16(output + 4) == XINPUT_GAMEPAD_DPAD_DOWN, "Remapped next dialogue key did not select a choice");
+    SendMessageW(window, WM_KEYUP, 'N', 0);
+    assignKeyboardKey(separateDialogue, KeyboardAction::PreviousDialogueChoice, 1, 'W');
+    check(input.setKeyboardBindings(separateDialogue), "Cannot bind a secondary dialogue choice");
+    input.setMouseLookEnabled(false); input.setGuestMenuActive(false, true);
+    SendMessageW(window, WM_KEYDOWN, 'W', 0); state();
+    check(PPC_LOAD_U16(output + 4) == XINPUT_GAMEPAD_DPAD_UP && PPC_LOAD_U16(output + 10) == 0,
+          "Released-mouse secondary dialogue binding leaked movement or was ignored");
+    SendMessageW(window, WM_KEYUP, 'W', 0);
+    for (const auto action : {KeyboardAction::PreviousDialogueChoice, KeyboardAction::NextDialogueChoice})
+        for (size_t slot = 0; slot < kKeyboardBindingSlots; ++slot) assignKeyboardKey(separateDialogue, action, slot, 0);
+    check(input.setKeyboardBindings(separateDialogue), "Cannot clear dialogue controls");
+    input.setMouseLookEnabled(true); input.setGuestMenuActive(false, true);
+    SendMessageW(window, WM_MOUSEWHEEL, MAKEWPARAM(0, short(-WHEEL_DELTA)), 0); state();
+    check(zero(output + 4, 12), "Completely unbound dialogue restored fixed wheel navigation");
+    input.setGuestMenuActive(true, true);
+    SendMessageW(window, WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), 0); state();
+    check(PPC_LOAD_U16(output + 4) == XINPUT_GAMEPAD_DPAD_UP, "Unbound dialogue broke ordinary menu wheel navigation");
+    check(input.setKeyboardBindings(defaultKeyboardBindings()), "Cannot restore wheel defaults");
+    input.setGuestMenuActive(false); input.setMouseLookEnabled(true);
     SendMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,0);
     SendMessageW(window,WM_RBUTTONDOWN,MK_RBUTTON,0);
     SendMessageW(window,WM_MBUTTONDOWN,MK_MBUTTON,0);state();
@@ -954,9 +1052,9 @@ static void testInputContract(PPCContext& ctx) {
     check(beginKeyboardMenu(input.keyboardBindings()) &&
           keyboardMenuAction("darkrecomp.keyboard.bind.10.0"), "Native menu capture did not start");
     check(state() == ERROR_SUCCESS && zero(output + 4, 12), "Activation key leaked during capture");
-    SendMessageW(window, WM_KEYUP, 'E', 0);
     const auto beforeCaptureClick = input.menuCursor();
     SendMessageW(window, WM_MOUSEWHEEL, MAKEWPARAM(0,WHEEL_DELTA), 0);
+    SendMessageW(window, WM_KEYUP, 'E', 0);
     SendMessageW(window, WM_KEYDOWN, 'T', 0);
     check(!keyboardMenuCaptureActive() && keyboardMenuLabel("darkrecomp.keyboard.bind.10.0").find('T') != std::string::npos,
           "Fresh raw key was not staged by the game menu");
@@ -978,9 +1076,9 @@ static void testInputContract(PPCContext& ctx) {
         check(keyboardMenuAction("darkrecomp.keyboard.bind.8.0") &&
               keyboardMenuLabel("darkrecomp.keyboard.bind.8.0").find("RELEASE") != std::string::npos,
               "Slot activation click did not wait for release");
-        SendMessageW(window, WM_LBUTTONUP, 0, 0);
         const auto beforeMouseCapture = input.menuCursor();
         SendMessageW(window, WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), 0);
+        SendMessageW(window, WM_LBUTTONUP, 0, 0);
         SendMessageW(window, button.press, button.parameter, 0);
         KeyboardMenuSaveRequest mouseSave;
         check(!keyboardMenuCaptureActive() && keyboardMenuAction("darkrecomp.keyboard.save") &&
@@ -994,6 +1092,22 @@ static void testInputContract(PPCContext& ctx) {
         check(zero(output + 4, 12) && input.menuCursor().presses == beforeMouseCapture.presses,
               "Held assigned mouse button escaped suppression");
         SendMessageW(window, button.release, button.parameter, 0);
+    }
+    for (const int delta : {WHEEL_DELTA, -WHEEL_DELTA}) {
+        const unsigned wheelKey = delta > 0 ? kMouseWheelUp : kMouseWheelDown;
+        check(keyboardMenuAction("darkrecomp.keyboard.bind.8.0"), "Cannot start wheel binding capture");
+        SendMessageW(window, WM_MOUSEWHEEL, MAKEWPARAM(0, short(delta / 2)), 0);
+        check(state() == ERROR_SUCCESS && zero(output + 4, 12) && keyboardMenuCaptureActive(),
+              "Partial captured wheel navigated the menu or assigned a binding");
+        SendMessageW(window, WM_MOUSEWHEEL, MAKEWPARAM(0, short(delta + delta / 2)), 0);
+        KeyboardMenuSaveRequest wheelSave;
+        check(!keyboardMenuCaptureActive() && keyboardMenuAction("darkrecomp.keyboard.save") &&
+              takeKeyboardMenuSaveRequest(wheelSave) &&
+              wheelSave.bindings.keys[size_t(KeyboardAction::Jump)][0] == wheelKey,
+              "Native wheel did not stage its direction");
+        check(state() == ERROR_SUCCESS && zero(output + 4, 12), "Captured wheel replayed while saving");
+        reportKeyboardMenuSave(wheelSave.id, false); inputTicks += 100;
+        check(state() == ERROR_SUCCESS && zero(output + 4, 12), "Captured multi-detent wheel replayed into menu navigation");
     }
     for (const LPARAM context : {altContext, altContext | (LPARAM(1) << 24)}) {
         check(keyboardMenuAction("darkrecomp.keyboard.bind.8.0"), "Cannot start native Alt capture");
