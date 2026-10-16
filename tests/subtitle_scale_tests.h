@@ -222,14 +222,15 @@ inline void originalCanvasInsideClip(const Draw& draw, double mx, double my,
 }
 struct SyntheticInkBox { double left, top, right, bottom; };
 inline SyntheticInkBox syntheticTextCell(const Draw& draw, double mx, double my,
-                                        double tx, double ty, double originalSize) {
+                                        double tx, double ty, double originalSize,
+                                        double cellWidth=20, double cellTop=-5, double cellBottom=30) {
     // An opaque synthetic glyph with the measured Text E cell dimensions and
     // bearing. The retail glyph's alpha coverage need not fill its entire cell.
     const double ratio = draw.fontSize / originalSize;
     const double x0 = (draw.origin[0] - tx) / mx;
-    const double x1 = (draw.origin[0] + double(draw.horizontal[0]) * 20 * ratio - tx) / mx;
-    const double y0 = (draw.origin[1] + double(draw.vertical[1]) * -5 * ratio - ty) / my;
-    const double y1 = (draw.origin[1] + double(draw.vertical[1]) * 30 * ratio - ty) / my;
+    const double x1 = (draw.origin[0] + double(draw.horizontal[0]) * cellWidth * ratio - tx) / mx;
+    const double y0 = (draw.origin[1] + double(draw.vertical[1]) * cellTop * ratio - ty) / my;
+    const double y1 = (draw.origin[1] + double(draw.vertical[1]) * cellBottom * ratio - ty) / my;
     return {(std::min)(x0,x1), (std::min)(y0,y1), (std::max)(x0,x1), (std::max)(y0,y1)};
 }
 } // namespace SubtitleScaleTestDetail
@@ -453,13 +454,20 @@ static void testSubtitleScale(PPCContext& ctx) {
     // rather than equating the integer line metric with the visible glyph size.
     unsigned spacingCases = 0;
     constexpr uint32_t nativeFontSizeAddress = 0x82A47C90;
-    constexpr float textOriginalSize = 26.9230785f;
     constexpr unsigned spacingGap = 10;
+    // Actual stock/Russian ORIGINALSIZE values and E-cell ink metrics differ.
+    for (const float textOriginalSize : {26.9230785f, 22.3076935f})
     for (const NativeVideoMode mode : {NativeVideoMode{1280,720}, NativeVideoMode{3440,1440}})
     for (float contextualScale : {1.3f, 1.5f})
     for (float globalFontSize : {14.0f, -1.0f})
     for (const std::u16string& text : {std::u16string(u"E"), std::u16string(u"E|E"),
-            std::u16string(u"Oh, oh. Ap\u00e1rtate de esa peque\u00f1a rata como de la peste bub\u00f3nica.|\u00bfQu\u00e9 diablos has hecho?")}) {
+            std::u16string(u"Oh, oh. Ap\u00e1rtate de esa peque\u00f1a rata como de la peste bub\u00f3nica.|\u00bfQu\u00e9 diablos has hecho?"),
+            // Representative test phrases exercise each supported script/locale, not captured dialogue.
+            std::u16string(u"Keep away from that little rat as if he carried the plague.|What have you done?"),
+            std::u16string(u"Hüte dich vor dieser kleinen Ratte wie vor der Pest.|Was hast du bloß getan?"),
+            std::u16string(u"Éloigne-toi de ce petit rat comme de la peste.|Qu'est-ce que tu as fait ?"),
+            std::u16string(u"Stai lontano da quel piccolo ratto come dalla peste.|Che cosa hai fatto?"),
+            std::u16string(u"Держись подальше от этой маленькой крысы, словно от чумы.|Что же ты наделал? Ёжик, ёжик!")}) {
         const float previousHeight = fontHeightValue;
         fixture.rebuild(ctx, mode, 500);
         struct RestoreFontMetrics {
@@ -515,7 +523,9 @@ static void testSubtitleScale(PPCContext& ctx) {
                 if (i)
                     layoutNear(baseline - (foreground[i-1].origin[1] - ty) / my,
                                adjustedAdvance * scale, "Contextual subtitle leading ignored glyph scale or authored gap");
-                const auto ink = syntheticTextCell(draw, mx, my, tx, ty, textOriginalSize);
+                const bool russianMetrics = textOriginalSize < 25;
+                const auto ink = syntheticTextCell(draw, mx, my, tx, ty, textOriginalSize,
+                    russianMetrics ? 13 : 20, russianMetrics ? -4 : -5, russianMetrics ? 25 : 30);
                 check(ink.top > 400 && ink.bottom < 480,
                       "Speech ink overlaps the character-name band or bottom edge");
                 layoutNear((draw.origin[0] - tx) / mx, 75, "Speech lost its left margin");

@@ -63,6 +63,21 @@ static void subtitleFontCpuContract() {
     require(subtitleFontRasterScale(720,100)==1 && subtitleFontRasterScale(720,50)==1 &&
         subtitleFontRasterScale(1080,100)==2 && subtitleFontRasterScale(2160,100)==4 &&
         subtitleFontRasterScale(2160,200)==8 && subtitleFontRasterScale(2160,50)==2,"Font raster density differs");
+    // Every stock locale's alphabet must use the same vector path, including accents.
+    for(const auto text : {u"English: The quick brown fox.", u"Deutsch: ÄÖÜäöüß",
+                          u"Français: ÀÂÆÇÈÉÊËÎÏÔŒÙÛÜŸàâæçèéêëîïôœùûüÿ",
+                          u"Español: ¡¿ÁÉÍÓÚÜÑáéíóúüñ", u"Italiano: ÀÈÉÌÒÙàèéìòù"})
+        for(const auto* character=text;*character;++character)
+            require(westernSubtitleCodepoint(uint16_t(*character))==uint32_t(*character),
+                "Supported Western locale alphabet lost vector mapping");
+    for(uint16_t slot=0xc0;slot<=0xff;++slot)
+        require(russianSubtitleCodepoint(slot)==uint32_t(0x0410+slot-0xc0),
+            "Russian Cyrillic letter changed identity");
+    require(russianSubtitleCodepoint(0xa8)==0x0401 && russianSubtitleCodepoint(0xb8)==0x0451 &&
+            russianSubtitleCodepoint('A')=='A' && russianSubtitleCodepoint(0x201c)==0x201c,
+        "Russian Yo, ASCII or Unicode punctuation lost vector mapping");
+    for(const uint16_t slot:{0x80,0x81,0xa1,0xa9,0xab,0xbf,0x0416,0xffff})
+        require(!russianSubtitleCodepoint(slot),"Russian custom glyph acquired a guessed letter");
     for(const bool modern:{false,true}) {
         SubtitleFontFixture localized(modern?60125:60124,modern);
         // The unsupported second cell supplies a bitmap fallback baseline.
@@ -119,13 +134,13 @@ static void subtitleFontCpuContract() {
         SubtitleFontFixture russian(60126,true,64,32,true);
         const auto original=russian.color->pixels;
         const auto attempts=DarkRecomp::Native::Tests::subtitleFontRasterizerAttempts();
-        require(!subtitleFontResourceAllowsReplacement(russian.memory.data(),768),
-            "Russian font authorized guessed character substitution");
+        require(subtitleFontResourceAllowsReplacement(russian.memory.data(),768),
+            "Russian TEXT resource was excluded before its fingerprint could be checked");
         previewPublishTexture(russian.textureId,0x80000000u+russian.textureId,russian.color);
         ensureSubtitleFontRegistered(russian.memory.data(),128);
         for(const unsigned factor:{1u,2u,4u,8u})
             require(!subtitleFontReplacementFor(russian.textureId,russian.color,factor),
-                "Russian font lost its original glyph atlas");
+                "Unrecognized Russian font lost its original glyph atlas");
         require(russian.color->pixels==original &&
             attempts==DarkRecomp::Native::Tests::subtitleFontRasterizerAttempts(),
             "Russian font pixels changed or reached the rasterizer");

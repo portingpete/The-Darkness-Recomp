@@ -31,6 +31,14 @@ std::optional<uint32_t> westernSubtitleCodepoint(uint16_t slot) noexcept {
         if (codepoint && codepoint == slot) return slot;
     return {};
 }
+std::optional<uint32_t> russianSubtitleCodepoint(uint16_t slot) noexcept {
+    if (slot < 0x80) return slot;
+    if (slot == 0xa8) return 0x0401;
+    if (slot == 0xb8) return 0x0451;
+    if (slot >= 0xc0 && slot <= 0xff) return 0x0410 + slot - 0xc0;
+    if (slot >= 0x100) return westernSubtitleCodepoint(slot);
+    return {};
+}
 namespace {
 template<class T> using Ptr = Microsoft::WRL::ComPtr<T>;
 struct Cell {
@@ -42,6 +50,7 @@ struct Definition {
     uint32_t textureId = 0;
     uint32_t font = 0;
     unsigned width = 0, height = 0;
+    bool russian = false;
     std::vector<Cell> cells;
     std::shared_ptr<const AlphaImage> alpha;
     std::shared_ptr<const ColorImage> color;
@@ -77,6 +86,20 @@ uint64_t rasterizerAttempts = 0;
 uint64_t generation = 0, use = 0;
 size_t cacheBytes = 0;
 constexpr size_t cacheBudget = 64 * 1024 * 1024;
+constexpr uint64_t fnvOffset = 0xcbf29ce484222325ull, fnvPrime = 0x100000001b3ull;
+// Approved Russian Text.xfc SHA256 318b5936b9f51c26310becb383015a53f7e51b9ff165924c5aeabb10dae538fd.
+// Match the ordered slot/UV cells AND the original A8 coverage before interpreting CP1251.
+constexpr uint64_t russianMetadata = 0xe92ff58209a1b22cull;
+constexpr uint64_t russianAlpha = 0x61546e11bd70369dull;
+bool approvedRussianMetadata(const Definition& definition) {
+    if (definition.width != 512 || definition.height != 256 || definition.cells.size() != 214) return false;
+    uint64_t hash = fnvOffset;
+    for (const auto& cell : definition.cells)
+        for (const auto value : {cell.codepoint, cell.left, cell.top, cell.right, cell.bottom})
+            for (unsigned shift = 0; shift < 32; shift += 8)
+                hash = (hash ^ uint8_t(value >> shift)) * fnvPrime;
+    return hash == russianMetadata;
+}
 bool diagnostics() {
     static const bool enabled=GetEnvironmentVariableA("DARK_TRACE_SUBTITLE_FONT",nullptr,0)!=0;
     return enabled;
@@ -123,6 +146,7 @@ std::shared_ptr<Definition> snapshot(uint8_t* base,uint32_t font,const char*& re
     if(width<1 || height<1 || width>512.02 || height>256.02 ||
        std::abs(width-std::round(width))>0.02 || std::abs(height-std::round(height))>0.02)return reject("atlas-dimensions");
     auto result=std::make_shared<Definition>();result->textureId=id;result->font=font;
+    result->russian=russianNativeMenus();
     result->width=unsigned(std::round(width));result->height=unsigned(std::round(height));
     std::vector<uint8_t> bytes(size_t(count)*40);
     if(!copy(base,records,bytes.data(),bytes.size()))return reject("glyph-records");
@@ -230,7 +254,8 @@ std::shared_ptr<const ColorImage> rasterize(const Definition& definition,const C
     unsigned rendered=0,kept=0;
     std::vector<uint8_t> coverage;
     for(const auto& cell:definition.cells) {
-        const auto codepoint=westernSubtitleCodepoint(uint16_t(cell.codepoint));
+        const auto codepoint=definition.russian ? russianSubtitleCodepoint(uint16_t(cell.codepoint)) :
+            westernSubtitleCodepoint(uint16_t(cell.codepoint));
         if(!codepoint) {++kept;continue;}
         unsigned left=cell.right,top=cell.bottom,right=cell.left,bottom=cell.top;
         for(unsigned y=cell.top;y<cell.bottom;++y)for(unsigned x=cell.left;x<cell.right;++x)
@@ -269,12 +294,15 @@ std::shared_ptr<const ColorImage> replacementLocked(uint32_t textureId,const std
         [&](const auto& original){return original.lock()==source;});
     if(!verified) {
         if(!modern && definition->alpha->pixels.size()!=source->pixels.size()/4) {traceReplacement("alpha-size",textureId,source,factor,definition.get());return {};}
+        uint64_t alphaHash=fnvOffset;
         for(size_t i=0;i<source->pixels.size()/4;++i) {
             const auto* pixel=source->pixels.data()+i*4;
             if(pixel[0]!=255 || pixel[1]!=255 || pixel[2]!=255 || (!modern && pixel[3]!=definition->alpha->pixels[i])) {
                 traceReplacement("rgb/alpha",textureId,source,factor,definition.get());return {};
             }
+            if(definition->russian)alphaHash=(alphaHash^pixel[3])*fnvPrime;
         }
+        if(definition->russian && alphaHash!=russianAlpha) {traceReplacement("russian-alpha",textureId,source,factor,definition.get());return {};}
         std::erase_if(registration->sources,[](const auto& original){return original.expired();});
         if(registration->sources.size()>=16)return {};
         registration->sources.push_back(source);
@@ -331,7 +359,7 @@ bool subtitleFontResourceAllowsReplacement(uint8_t* base,uint32_t resource) noex
         const auto slash=leaf.find_last_of("\\/:");
         if(slash!=leaf.npos)leaf.remove_prefix(slash+1);
         leaf=leaf.substr(0,leaf.find('.'));
-        const bool replaceable=!russianNativeMenus() && leaf.size()==4 && (leaf[0]=='T' || leaf[0]=='t') &&
+        const bool replaceable=leaf.size()==4 && (leaf[0]=='T' || leaf[0]=='t') &&
             (leaf[1]=='E' || leaf[1]=='e') && (leaf[2]=='X' || leaf[2]=='x') && (leaf[3]=='T' || leaf[3]=='t');
         if(diagnostics())std::fprintf(stderr,"[SubtitleFontTrace] resource=%s replaceable=%u\n",name.data(),unsigned(replaceable));
         return replaceable;
@@ -359,6 +387,11 @@ void registerSubtitleFont(uint8_t* base,uint32_t font,bool replaceable) noexcept
             std::fprintf(stderr,"[SubtitleFontTrace] register font=%08X reason=%s id=%u records=%u\n",font,reason,id,count);
         }
         if(!definition)return;
+        if(definition->russian && !approvedRussianMetadata(*definition)) {
+            // Invalidate a previous approved definition if this address is reused by another font.
+            registerSubtitleFont(base,font,false);
+            return;
+        }
         definition->alpha=previewAlphaImageForSubtitleFont(definition->textureId);
         definition->color=previewColorImageForSubtitleFont(definition->textureId);
         if(definition->alpha && (definition->alpha->width!=definition->width || definition->alpha->height!=definition->height ||
@@ -375,6 +408,7 @@ void registerSubtitleFont(uint8_t* base,uint32_t font,bool replaceable) noexcept
         if(existing!=registrations.end()) {
             const auto& previous=*existing->definition;
             if(previous.font==definition->font && previous.width==definition->width && previous.height==definition->height &&
+               previous.russian==definition->russian &&
                previous.alpha==definition->alpha && previous.color==definition->color && previous.cells==definition->cells)return;
         }
         definition->generation=++generation;
