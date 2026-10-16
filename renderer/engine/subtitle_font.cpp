@@ -108,13 +108,12 @@ std::shared_ptr<Definition> snapshot(uint8_t* base,uint32_t font,const char*& re
        std::abs(width-std::round(width))>0.02 || std::abs(height-std::round(height))>0.02)return reject("atlas-dimensions");
     auto result=std::make_shared<Definition>();result->textureId=id;result->font=font;
     result->width=unsigned(std::round(width));result->height=unsigned(std::round(height));
-    const bool russian=russianNativeMenus();
     std::vector<uint8_t> bytes(size_t(count)*40);
     if(!copy(base,records,bytes.data(),bytes.size()))return reject("glyph-records");
     for(unsigned index=0;index<count;++index) {
         const auto* r=bytes.data()+size_t(index)*40;
         if(be16(r+28)>=0x8000)continue;
-        Cell c{subtitleFontCodepoint(be16(r+32),russian),0,0,0,0};
+        Cell c{be16(r+32),0,0,0,0};
         if(!coordinate(number(r),result->width,c.left) || !coordinate(number(r+4),result->height,c.top) ||
            !coordinate(number(r+8),result->width,c.right) || !coordinate(number(r+12),result->height,c.bottom) ||
            c.left>c.right || c.top>c.bottom)return reject("glyph-uv");
@@ -215,6 +214,10 @@ std::shared_ptr<const ColorImage> rasterize(const Definition& definition,const C
     unsigned rendered=0,kept=0;
     std::vector<uint8_t> coverage;
     for(const auto& cell:definition.cells) {
+        // Translation fonts can assign their own letters to extended slots.
+        // Keep their authored coverage instead of interpreting a font slot as
+        // a Windows codepage or Unicode character.
+        if(cell.codepoint>=0x80) {++kept;continue;}
         unsigned left=cell.right,top=cell.bottom,right=cell.left,bottom=cell.top;
         for(unsigned y=cell.top;y<cell.bottom;++y)for(unsigned x=cell.left;x<cell.right;++x)
             if(source.pixels[(size_t(y)*source.width+x)*4+3]) {
@@ -300,11 +303,6 @@ unsigned subtitleFontRasterScale(unsigned renderHeight,unsigned subtitlePercent)
     unsigned factor=1;while(factor<8 && demand>uint64_t(720)*100*factor)factor*=2;
     return factor;
 }
-uint32_t subtitleFontCodepoint(uint16_t guestCode,bool russian) noexcept {
-    if(guestCode<128 || guestCode>=256)return guestCode;
-    const char byte=char(guestCode);wchar_t codepoint=0;
-    return MultiByteToWideChar(russian?1251:1252,0,&byte,1,&codepoint,1)==1?uint32_t(codepoint):uint32_t(guestCode);
-}
 bool subtitleFontResourceAllowsReplacement(uint8_t* base,uint32_t resource) noexcept {
     // CStr::Str (821F76B8): +4 points at a big-endian flags word followed
     // by narrow characters. Wide/invalid strings do not authorize substitution.
@@ -319,7 +317,7 @@ bool subtitleFontResourceAllowsReplacement(uint8_t* base,uint32_t resource) noex
         const auto slash=leaf.find_last_of("\\/:");
         if(slash!=leaf.npos)leaf.remove_prefix(slash+1);
         leaf=leaf.substr(0,leaf.find('.'));
-        const bool replaceable=leaf.size()==4 && (leaf[0]=='T' || leaf[0]=='t') &&
+        const bool replaceable=!russianNativeMenus() && leaf.size()==4 && (leaf[0]=='T' || leaf[0]=='t') &&
             (leaf[1]=='E' || leaf[1]=='e') && (leaf[2]=='X' || leaf[2]=='x') && (leaf[3]=='T' || leaf[3]=='t');
         if(diagnostics())std::fprintf(stderr,"[SubtitleFontTrace] resource=%s replaceable=%u\n",name.data(),unsigned(replaceable));
         return replaceable;

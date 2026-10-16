@@ -2,6 +2,7 @@
 #include "renderer/engine/subtitle_font.h"
 #include "renderer/d3d11/engine_preview.h"
 #include "runtime/native/graphics_settings.h"
+#include "runtime/native/native_menu_text.h"
 
 namespace DarkRecomp::Native::Tests {
 void forceSubtitleFontRasterizerUnavailable(bool unavailable) noexcept;
@@ -62,8 +63,49 @@ static void subtitleFontCpuContract() {
     require(subtitleFontRasterScale(720,100)==1 && subtitleFontRasterScale(720,50)==1 &&
         subtitleFontRasterScale(1080,100)==2 && subtitleFontRasterScale(2160,100)==4 &&
         subtitleFontRasterScale(2160,200)==8 && subtitleFontRasterScale(2160,50)==2,"Font raster density differs");
-    require(subtitleFontCodepoint(0x80,false)==0x20ac && subtitleFontCodepoint(0xc0,true)==0x0410 &&
-        subtitleFontCodepoint(0x0410,false)==0x0410,"Font byte-code translation differs");
+    for(const bool modern:{false,true}) {
+        SubtitleFontFixture localized(modern?60125:60124,modern);
+        // The second cell starts with an unsupported slot, so it retains the
+        // authored marker. Real localized slots must retain identical coverage.
+        std::array<std::shared_ptr<const ColorImage>,3> authored;
+        for(unsigned i=0;i<authored.size();++i) {
+            authored[i]=subtitleFontReplacementFor(localized.textureId,localized.color,2u<<i);
+            require(bool(authored[i]),"ASCII glyph lost its vector replacement");
+        }
+        for(const uint16_t slot:{0xc4,0xe9,0xf1,0xdf,0xc6,0x0416,0x0401,0x20ac}) {
+            auto* code=localized.memory.data()+512+40+32;
+            code[0]=uint8_t(slot>>8);code[1]=uint8_t(slot);
+            registerSubtitleFont(localized.memory.data(),128,true);
+            for(unsigned i=0;i<authored.size();++i) {
+                const unsigned factor=2u<<i;
+                const auto result=subtitleFontReplacementFor(localized.textureId,localized.color,factor);
+                require(bool(result),"Localized slot disabled unrelated ASCII rendering");
+                for(unsigned y=0;y<localized.height*factor;++y)
+                    for(unsigned x=localized.width/4*factor;x<localized.width/2*factor;++x) {
+                        const auto at=(size_t(y)*result->width+x)*4;
+                        require(std::memcmp(result->pixels.data()+at,authored[i]->pixels.data()+at,4)==0,
+                            "Localized glyph was reinterpreted instead of preserving authored coverage");
+                    }
+            }
+        }
+    }
+    {
+        initializeNativeMenuText(true,1);
+        struct LocaleOwner {~LocaleOwner(){initializeNativeMenuText(false,1);}} localeOwner;
+        SubtitleFontFixture russian(60126,true,64,32,true);
+        const auto original=russian.color->pixels;
+        const auto attempts=DarkRecomp::Native::Tests::subtitleFontRasterizerAttempts();
+        require(!subtitleFontResourceAllowsReplacement(russian.memory.data(),768),
+            "Russian font authorized guessed character substitution");
+        previewPublishTexture(russian.textureId,0x80000000u+russian.textureId,russian.color);
+        ensureSubtitleFontRegistered(russian.memory.data(),128);
+        for(const unsigned factor:{1u,2u,4u,8u})
+            require(!subtitleFontReplacementFor(russian.textureId,russian.color,factor),
+                "Russian font lost its original glyph atlas");
+        require(russian.color->pixels==original &&
+            attempts==DarkRecomp::Native::Tests::subtitleFontRasterizerAttempts(),
+            "Russian font pixels changed or reached the rasterizer");
+    }
     for(const bool modern:{false,true}) {
         SubtitleFontFixture decorative(modern?60121:60120,modern,64,32,false,"DARKNESS");
         const auto original=decorative.color->pixels;
@@ -188,7 +230,7 @@ static void subtitleFontCpuContract() {
     registerSubtitleFont(unavailable.memory.data(),128,true);
     require(bool(subtitleFontReplacementFor(unavailable.textureId,unavailable.color,4)) &&
         subtitleFontRasterizerAttempts()==attempts+4,"Fresh font generation did not recover after rasterizer failure");
-    std::puts("SubtitleFont CPU: vector2/4/8 density, glyph/blank/fallback bounds, codepages, immutable cache and generation guards passed.");
+    std::puts("SubtitleFont CPU: vector2/4/8 density, authored localized glyphs, Russian atlas preservation, immutable cache and generation guards passed.");
 }
 static void subtitleFontBoundTexture(ID3D11DeviceContext* context,unsigned slot,unsigned width,unsigned height,bool samplerCheck,unsigned mips=1) {
     ComPtr<ID3D11ShaderResourceView> view;context->PSGetShaderResources(slot,1,&view);
