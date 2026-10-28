@@ -1,0 +1,73 @@
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] register font=00000080 reason=metadata-valid id=62001 records=152
+[SubtitleFontTrace] register-owned id=62001 size=512x256 alpha=000001CE1D7DC140 color=0000000000000000
+[SubtitleFont] vector atlas id=62001 factor=2 size=1024x512 glyphs=151 fallback=0
+[SubtitleFont] vector atlas id=62001 factor=4 size=2048x1024 glyphs=151 fallback=0
+[SubtitleFont] vector atlas id=62001 factor=8 size=4096x2048 glyphs=151 fallback=0
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] register font=00000080 reason=metadata-valid id=62002 records=152
+[SubtitleFontTrace] register-owned id=62002 size=512x256 alpha=000001CE1D7D2E30 color=0000000000000000
+[SubtitleFontTrace] replacement reason=font-alpha id=62002 factor=2 source=000001CE1D7DCC80 size=512x256 codec=2 definitions=2 registeredAlpha=000001CE1D7D2E30 registeredColor=0000000000000000 currentAlpha=000001CE1D7D2E30 currentColor=0000000000000000
+[SubtitleFontTrace] replacement reason=font-alpha id=62002 factor=4 source=000001CE1D7DCC80 size=512x256 codec=2 definitions=2 registeredAlpha=000001CE1D7D2E30 registeredColor=0000000000000000 currentAlpha=000001CE1D7D2E30 currentColor=0000000000000000
+[SubtitleFontTrace] replacement reason=font-alpha id=62002 factor=8 source=000001CE1D7DCC80 size=512x256 codec=2 definitions=2 registeredAlpha=000001CE1D7D2E30 registeredColor=0000000000000000 currentAlpha=000001CE1D7D2E30 currentColor=0000000000000000
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] register font=00000080 reason=unknown-font-encoding id=62003 records=152
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] register font=00000080 reason=metadata-valid id=62004 records=214
+[SubtitleFontTrace] register-owned id=62004 size=512x256 alpha=000001CE1D7D2F70 color=0000000000000000
+[SubtitleFont] vector atlas id=62004 factor=2 size=1024x512 glyphs=185 fallback=28
+[SubtitleFont] vector atlas id=62004 factor=4 size=2048x1024 glyphs=185 fallback=28
+[SubtitleFont] vector atlas id=62004 factor=8 size=4096x2048 glyphs=185 fallback=28
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] register font=00000080 reason=metadata-valid id=62005 records=214
+[SubtitleFontTrace] register-owned id=62005 size=512x256 alpha=000001CE1D7D2070 color=0000000000000000
+[SubtitleFontTrace] replacement reason=font-alpha id=62005 factor=2 source=000001CE1D7DD7E0 size=512x256 codec=2 definitions=4 registeredAlpha=000001CE1D7D2070 registeredColor=0000000000000000 currentAlpha=000001CE1D7D2070 currentColor=0000000000000000
+[SubtitleFontTrace] replacement reason=font-alpha id=62005 factor=4 source=000001CE1D7DD7E0 size=512x256 codec=2 definitions=4 registeredAlpha=000001CE1D7D2070 registeredColor=0000000000000000 currentAlpha=000001CE1D7D2070 currentColor=0000000000000000
+[SubtitleFontTrace] replacement reason=font-alpha id=62005 factor=8 source=000001CE1D7DD7E0 size=512x256 codec=2 definitions=4 registeredAlpha=000001CE1D7D2070 registeredColor=0000000000000000 currentAlpha=000001CE1D7D2070 currentColor=0000000000000000
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] register font=00000080 reason=unknown-font-encoding id=62006 records=214
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] register font=00000080 reason=metadata-valid id=62007 records=152
+[SubtitleFontTrace] register-owned id=62007 size=512x256 alpha=000001CE1D7D2170 color=0000000000000000
+[SubtitleFont] vector atlas id=62007 factor=2 size=1024x512 glyphs=151 fallback=0
+[SubtitleFont] vector atlas id=62007 factor=4 size=2048x1024 glyphs=151 fallback=0
+[SubtitleFont] vector atlas id=62007 factor=8 size=4096x2048 glyphs=151 fallback=0
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] register font=00000080 reason=metadata-valid id=62008 records=152
+[SubtitleFontTrace] register-owned id=62008 size=512x256 alpha=000001CE1D7D28F0 color=0000000000000000
+[SubtitleFontTrace] replacement reason=font-alpha id=62008 factor=2 source=000001CE1D7DCD60 size=512x256 codec=2 definitions=6 registeredAlpha=000001CE1D7D28F0 registeredColor=0000000000000000 currentAlpha=000001CE1D7D28F0 currentColor=0000000000000000
+[SubtitleFontTrace] replacement reason=font-alpha id=62008 factor=4 source=000001CE1D7DCD60 size=512x256 codec=2 definitions=6 registeredAlpha=000001CE1D7D28F0 registeredColor=0000000000000000 currentAlpha=000001CE1D7D28F0 currentColor=0000000000000000
+[SubtitleFontTrace] replacement reason=font-alpha id=62008 factor=8 source=000001CE1D7DCD60 size=512x256 codec=2 definitions=6 registeredAlpha=000001CE1D7D28F0 registeredColor=0000000000000000 currentAlpha=000001CE1D7D28F0 currentColor=0000000000000000
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] register font=00000080 reason=unknown-font-encoding id=62009 records=152
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] register font=00000080 reason=metadata-valid id=62010 records=214
+[SubtitleFontTrace] register-owned id=62010 size=512x256 alpha=000001CE1D7D2C70 color=0000000000000000
+[SubtitleFont] vector atlas id=62010 factor=2 size=1024x512 glyphs=185 fallback=28
+[SubtitleFont] vector atlas id=62010 factor=4 size=2048x1024 glyphs=185 fallback=28
+[SubtitleFont] vector atlas id=62010 factor=8 size=4096x2048 glyphs=185 fallback=28
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] register font=00000080 reason=metadata-valid id=62011 records=214
+[SubtitleFontTrace] register-owned id=62011 size=512x256 alpha=000001CE1D7D2B30 color=0000000000000000
+[SubtitleFontTrace] replacement reason=font-alpha id=62011 factor=2 source=000001CE1D7DD850 size=512x256 codec=2 definitions=8 registeredAlpha=000001CE1D7D2B30 registeredColor=0000000000000000 currentAlpha=000001CE1D7D2B30 currentColor=0000000000000000
+[SubtitleFontTrace] replacement reason=font-alpha id=62011 factor=4 source=000001CE1D7DD850 size=512x256 codec=2 definitions=8 registeredAlpha=000001CE1D7D2B30 registeredColor=0000000000000000 currentAlpha=000001CE1D7D2B30 currentColor=0000000000000000
+[SubtitleFontTrace] replacement reason=font-alpha id=62011 factor=8 source=000001CE1D7DD850 size=512x256 codec=2 definitions=8 registeredAlpha=000001CE1D7D2B30 registeredColor=0000000000000000 currentAlpha=000001CE1D7D2B30 currentColor=0000000000000000
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] register font=00000080 reason=unknown-font-encoding id=62012 records=214
+PASS locale=Original fixture=Western factor=2 mapped=151 Cyrillic=0 custom=0
+PASS locale=Original fixture=Western factor=4 mapped=151 Cyrillic=0 custom=0
+PASS locale=Original fixture=Western factor=8 mapped=151 Cyrillic=0 custom=0
+PASS locale=Original fixture=Western mismatched-alpha and mutated-metadata preserved
+PASS locale=Original fixture=Russian factor=2 mapped=185 Cyrillic=66 custom=28
+PASS locale=Original fixture=Russian factor=4 mapped=185 Cyrillic=66 custom=28
+PASS locale=Original fixture=Russian factor=8 mapped=185 Cyrillic=66 custom=28
+PASS locale=Original fixture=Russian mismatched-alpha and mutated-metadata preserved
+PASS locale=Russian fixture=Western factor=2 mapped=151 Cyrillic=0 custom=0
+PASS locale=Russian fixture=Western factor=4 mapped=151 Cyrillic=0 custom=0
+PASS locale=Russian fixture=Western factor=8 mapped=151 Cyrillic=0 custom=0
+PASS locale=Russian fixture=Western mismatched-alpha and mutated-metadata preserved
+PASS locale=Russian fixture=Russian factor=2 mapped=185 Cyrillic=66 custom=28
+PASS locale=Russian fixture=Russian factor=4 mapped=185 Cyrillic=66 custom=28
+PASS locale=Russian fixture=Russian factor=8 mapped=185 Cyrillic=66 custom=28
+PASS locale=Russian fixture=Russian mismatched-alpha and mutated-metadata preserved
+Authentic font replay passed; no game launched.

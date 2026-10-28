@@ -5,9 +5,10 @@
 #include <optional>
 
 namespace DarkRecomp::Native {
-// Western glyphs and the fingerprinted Russian ordinary TEXT font may be
-// replaced. Decorative and unknown fonts retain their authored glyphs. Read the
-// original CStr before the font loader consumes it.
+// Only ordinary TEXT resources may be replaced. Encoded non-ASCII alphabets
+// additionally require matching glyph metadata and original atlas coverage,
+// independently of the executable's language. Read the original CStr before the
+// font loader consumes it. Decorative/unknown alphabets keep authored glyphs.
 bool subtitleFontResourceAllowsReplacement(uint8_t* base, uint32_t resource) noexcept;
 // TEXT uses Latin-1 and Windows-1252 slots, including Unicode punctuation.
 // Unknown/custom slots retain their authored coverage.

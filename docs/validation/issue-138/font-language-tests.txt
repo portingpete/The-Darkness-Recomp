@@ -1,0 +1,13 @@
+Test project <repo>/build_native
+    Start  57: SubtitleFontContract
+1/4 Test  #57: SubtitleFontContract .............   Passed    2.12 sec
+    Start  58: SubtitleFontWarpContract
+2/4 Test  #58: SubtitleFontWarpContract .........   Passed    1.43 sec
+    Start 120: NativeLanguageContract
+3/4 Test #120: NativeLanguageContract ...........   Passed    0.13 sec
+    Start 121: NativeRevisionGlyphContract
+4/4 Test #121: NativeRevisionGlyphContract ......   Passed    0.13 sec
+
+100% tests passed, 0 tests failed out of 4
+
+Total Test time (real) =   3.84 sec

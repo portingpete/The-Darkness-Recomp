@@ -60,6 +60,8 @@ original text size; the setting is saved for the next launch.
 Higher-resolution subtitles use scalable Arial glyphs with grayscale antialiasing,
 while retaining the game's spacing, wrapping, fades and outlines. Original bitmap
 glyphs remain the fallback when the system font or a character is unavailable.
+Encoded alphabets require a verified font atlas, independently of the executable's
+language. Other translations retain their original bitmap subtitles.
 
 **Menus and bindings.** Click menu choices to select them; the mouse wheel also
 changes choices and **E** confirms. Use **Options > Controls > Keyboard bindings**

@@ -1,0 +1,13 @@
+Test project <repo>/build_native
+    Start 89: NativeTitleTextLayoutContract
+1/4 Test #89: NativeTitleTextLayoutContract ....   Passed    0.23 sec
+    Start 90: NativeTitleTextShadowContract
+2/4 Test #90: NativeTitleTextShadowContract ....   Passed    0.15 sec
+    Start 91: NativeTitleTextHeadingContract
+3/4 Test #91: NativeTitleTextHeadingContract ...   Passed    0.16 sec
+    Start 92: NativeSubtitleScaleContract
+4/4 Test #92: NativeSubtitleScaleContract ......   Passed   36.18 sec
+
+100% tests passed, 0 tests failed out of 4
+
+Total Test time (real) =  36.75 sec

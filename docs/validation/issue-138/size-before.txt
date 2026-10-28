@@ -1,0 +1,4 @@
+[Menu] Using original menus: missing or invalid menu asset.
+[DisplayMenu] caller=8235F03C context=10000000 fitted=0
+TEST FAILED: 100 percent contextual subtitle changed retail layout
+[AOT] Verified game image (Original disc revision); mapped 22127 native functions.

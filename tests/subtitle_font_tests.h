@@ -18,7 +18,7 @@ struct SubtitleFontFixture {
     std::shared_ptr<const ColorImage> color;
     const unsigned width,height;
     explicit SubtitleFontFixture(uint32_t id,bool modern=false,unsigned w=64,unsigned h=32,bool deferred=false,
-                                 const char* resource="TEXT"):
+                                 const char* resource="TEXT",uint16_t secondSlot=0xffff):
         memory(4096+size_t(w)*h),textureId(id),width(w),height(h) {
         auto* b=memory.data();
         put(b+64,0x82097610);put(b+72,4096);put(b+76,width*height);
@@ -27,7 +27,7 @@ struct SubtitleFontFixture {
         put(b+128,0x82073268);put(b+140,256);put(b+192,std::bit_cast<uint32_t>(1.f/width));
         put(b+196,std::bit_cast<uint32_t>(1.f/height));put(b+212,384);put(b+216,id);
         put(b+260,4);put(b+280,512);put(b+440,448);put(b+452,1);
-        const uint16_t codes[]{'A',0xffff,' ','.'};
+        const uint16_t codes[]{'A',secondSlot,' ','.'};
         for(unsigned i=0;i<4;++i) {
             auto* r=b+512+i*40;
             put(r,std::bit_cast<uint32_t>(float(i)/4));put(r+4,0);
@@ -49,10 +49,12 @@ struct SubtitleFontFixture {
                 require(color==image && !previewAlphaImageForSubtitleFont(id),"Modern font fixture did not capture owned color generation");
             }
         } else {
-            previewObserveImage(b,64,id,0);
-            alpha=previewAlphaImageForSubtitleFont(id);require(bool(alpha),"Font fixture alpha upload failed");
+            if(!deferred) {
+                previewObserveImage(b,64,id,0);
+                alpha=previewAlphaImageForSubtitleFont(id);require(bool(alpha),"Font fixture alpha upload failed");
+            }
             image->pixels.resize(size_t(width)*height*4,255);
-            for(size_t i=0;i<alpha->pixels.size();++i)image->pixels[i*4+3]=alpha->pixels[i];
+            for(size_t i=0;i<size_t(width)*height;++i)image->pixels[i*4+3]=b[4096+i];
             color=std::move(image);
         }
         put(b+772,800);std::memcpy(b+802,resource,std::strlen(resource)+1);
@@ -78,6 +80,55 @@ static void subtitleFontCpuContract() {
         "Russian Yo, ASCII or Unicode punctuation lost vector mapping");
     for(const uint16_t slot:{0x80,0x81,0xa1,0xa9,0xab,0xbf,0x0416,0xffff})
         require(!russianSubtitleCodepoint(slot),"Russian custom glyph acquired a guessed letter");
+    {
+        struct LocaleOwner {~LocaleOwner(){initializeNativeMenuText(false,1);}} localeOwner;
+        for(const bool russianMenu:{false,true})for(const bool modern:{false,true})for(const bool deferred:{false,true}) {
+            initializeNativeMenuText(russianMenu,1);
+            const uint32_t id=60200+unsigned(russianMenu)*4+unsigned(modern)*2+unsigned(deferred);
+            SubtitleFontFixture unknown(id,modern,64,32,deferred,"TEXT",0xc0);
+            const auto original=unknown.color->pixels;
+            const auto attempts=DarkRecomp::Native::Tests::subtitleFontRasterizerAttempts();
+            require(subtitleFontResourceAllowsReplacement(unknown.memory.data(),768),
+                "TEXT resource was excluded before its fingerprint could be checked");
+            if(deferred) {
+                if(modern)previewPublishTexture(id,0x80000000u+id,unknown.color);
+                else {
+                    previewObserveImage(unknown.memory.data(),64,id,0);
+                    unknown.alpha=previewAlphaImageForSubtitleFont(id);
+                    require(bool(unknown.alpha),"Deferred alpha fixture upload failed");
+                }
+            }
+            const auto alphaOriginal=unknown.alpha ? unknown.alpha->pixels : std::vector<uint8_t>{};
+            ensureSubtitleFontRegistered(unknown.memory.data(),128);
+            for(const unsigned factor:{1u,2u,4u,8u}) {
+                require(!subtitleFontReplacementFor(id,unknown.color,factor),
+                    "Unrecognized encoded font lost its original color atlas");
+                if(unknown.alpha)require(!subtitleFontReplacementFor(id,unknown.alpha,factor),
+                    "Unrecognized encoded font lost its original alpha atlas");
+            }
+            require(unknown.color->pixels==original && (!unknown.alpha || unknown.alpha->pixels==alphaOriginal) &&
+                attempts==DarkRecomp::Native::Tests::subtitleFontRasterizerAttempts(),
+                "Unrecognized font pixels changed or reached the rasterizer");
+        }
+        for(const bool russianMenu:{false,true})for(const bool modern:{false,true}) {
+            initializeNativeMenuText(russianMenu,1);
+            SubtitleFontFixture changed(60220+unsigned(russianMenu)*2+unsigned(modern),modern);
+            const auto original=changed.color->pixels;
+            require(bool(subtitleFontReplacementFor(changed.textureId,changed.color,4)),
+                "Safe ASCII fixture did not establish a cached atlas");
+            const auto attempts=DarkRecomp::Native::Tests::subtitleFontRasterizerAttempts();
+            changed.memory[512+40+32]=0;changed.memory[512+40+33]=0xc0;
+            registerSubtitleFont(changed.memory.data(),128,true);
+            for(const unsigned factor:{1u,2u,4u,8u}) {
+                require(!subtitleFontReplacementFor(changed.textureId,changed.color,factor),
+                    "Unsafe metadata retained a previous cached color atlas");
+                if(changed.alpha)require(!subtitleFontReplacementFor(changed.textureId,changed.alpha,factor),
+                    "Unsafe metadata retained a previous cached alpha atlas");
+            }
+            require(changed.color->pixels==original && attempts==DarkRecomp::Native::Tests::subtitleFontRasterizerAttempts(),
+                "Unsafe metadata mutated the source or reached the rasterizer");
+        }
+    }
     for(const bool modern:{false,true}) {
         SubtitleFontFixture localized(modern?60125:60124,modern);
         // The unsupported second cell supplies a bitmap fallback baseline.
@@ -106,45 +157,23 @@ static void subtitleFontCpuContract() {
         for(const uint16_t slot:{0xa1,0xbf,0xc4,0xc6,0xc7,0xdf,0xe1,0xe9,0xed,0xf1,0xf3,0xfa,0xfc,
                                   0x80,0x93,0x96,0x0152,0x0160,0x2014,0x201c,0x20ac}) {
             const auto mapped=westernSubtitleCodepoint(slot);
-            require(mapped.has_value(),"Known Western character retained blurry bitmap fallback");
+            require(mapped.has_value(),"Known Western character lost its semantic mapping");
             if(slot>=0xa0)require(*mapped==slot,"Western Unicode character changed identity");
             auto* code=localized.memory.data()+512+40+32;
             code[0]=uint8_t(slot>>8);code[1]=uint8_t(slot);
+            const auto attempts=DarkRecomp::Native::Tests::subtitleFontRasterizerAttempts();
             registerSubtitleFont(localized.memory.data(),128,true);
             for(unsigned i=0;i<authored.size();++i) {
                 const unsigned factor=2u<<i;
                 const auto result=subtitleFontReplacementFor(localized.textureId,localized.color,factor);
-                require(bool(result),"Western character lost its vector atlas");
-                bool changed=false,visible=false;
-                for(unsigned y=0;y<localized.height*factor;++y)
-                    for(unsigned x=localized.width/4*factor;x<localized.width/2*factor;++x) {
-                        const auto at=(size_t(y)*result->width+x)*4+3;
-                        changed|=result->pixels[at]!=authored[i]->pixels[at];
-                        visible|=result->pixels[at]!=0;
-                    }
-                require(changed && visible,"Western accent did not receive sharp vector lettering");
+                require(!result,"Unverified Western-encoded font acquired vector lettering");
             }
+            require(attempts==DarkRecomp::Native::Tests::subtitleFontRasterizerAttempts(),
+                "Unverified Western-encoded font reached the rasterizer");
         }
     }
     require(westernSubtitleCodepoint(0x80)==0x20ac && westernSubtitleCodepoint(0x93)==0x201c &&
         westernSubtitleCodepoint(0x96)==0x2013,"Windows-1252 punctuation mapped to the wrong character");
-    {
-        initializeNativeMenuText(true,1);
-        struct LocaleOwner {~LocaleOwner(){initializeNativeMenuText(false,1);}} localeOwner;
-        SubtitleFontFixture russian(60126,true,64,32,true);
-        const auto original=russian.color->pixels;
-        const auto attempts=DarkRecomp::Native::Tests::subtitleFontRasterizerAttempts();
-        require(subtitleFontResourceAllowsReplacement(russian.memory.data(),768),
-            "Russian TEXT resource was excluded before its fingerprint could be checked");
-        previewPublishTexture(russian.textureId,0x80000000u+russian.textureId,russian.color);
-        ensureSubtitleFontRegistered(russian.memory.data(),128);
-        for(const unsigned factor:{1u,2u,4u,8u})
-            require(!subtitleFontReplacementFor(russian.textureId,russian.color,factor),
-                "Unrecognized Russian font lost its original glyph atlas");
-        require(russian.color->pixels==original &&
-            attempts==DarkRecomp::Native::Tests::subtitleFontRasterizerAttempts(),
-            "Russian font pixels changed or reached the rasterizer");
-    }
     for(const bool modern:{false,true}) {
         SubtitleFontFixture decorative(modern?60121:60120,modern,64,32,false,"DARKNESS");
         const auto original=decorative.color->pixels;
@@ -269,7 +298,7 @@ static void subtitleFontCpuContract() {
     registerSubtitleFont(unavailable.memory.data(),128,true);
     require(bool(subtitleFontReplacementFor(unavailable.textureId,unavailable.color,4)) &&
         subtitleFontRasterizerAttempts()==attempts+4,"Fresh font generation did not recover after rasterizer failure");
-    std::puts("SubtitleFont CPU: vector2/4/8 density, authored localized glyphs, Russian atlas preservation, immutable cache and generation guards passed.");
+    std::puts("SubtitleFont CPU: vector2/4/8 density, custom glyph preservation, unverified encoded fonts, immutable cache and generation guards passed.");
 }
 static void subtitleFontBoundTexture(ID3D11DeviceContext* context,unsigned slot,unsigned width,unsigned height,bool samplerCheck,unsigned mips=1) {
     ComPtr<ID3D11ShaderResourceView> view;context->PSGetShaderResources(slot,1,&view);
