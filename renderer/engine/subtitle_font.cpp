@@ -1,5 +1,4 @@
 #include "subtitle_font.h"
-#include "runtime/native/native_menu_text.h"
 #include <Windows.h>
 #include <dwrite_1.h>
 #include <wrl/client.h>
@@ -51,6 +50,7 @@ struct Definition {
     uint32_t font = 0;
     unsigned width = 0, height = 0;
     bool russian = false;
+    uint64_t alphaFingerprint = 0;
     std::vector<Cell> cells;
     std::shared_ptr<const AlphaImage> alpha;
     std::shared_ptr<const ColorImage> color;
@@ -91,14 +91,18 @@ constexpr uint64_t fnvOffset = 0xcbf29ce484222325ull, fnvPrime = 0x100000001b3ul
 // Match the ordered slot/UV cells AND the original A8 coverage before interpreting CP1251.
 constexpr uint64_t russianMetadata = 0xe92ff58209a1b22cull;
 constexpr uint64_t russianAlpha = 0x61546e11bd70369dull;
-bool approvedRussianMetadata(const Definition& definition) {
-    if (definition.width != 512 || definition.height != 256 || definition.cells.size() != 214) return false;
+// Stock TEXT's ordered glyph cells and original decoded A8 coverage. Translated
+// dumps can replace these assets while retaining the original disc executable.
+constexpr uint64_t westernMetadata = 0x9b0853356984a780ull;
+constexpr uint64_t westernAlpha = 0x3176b467ec7969c6ull;
+bool approvedMetadata(const Definition& definition, size_t count, uint64_t fingerprint) {
+    if (definition.width != 512 || definition.height != 256 || definition.cells.size() != count) return false;
     uint64_t hash = fnvOffset;
     for (const auto& cell : definition.cells)
         for (const auto value : {cell.codepoint, cell.left, cell.top, cell.right, cell.bottom})
             for (unsigned shift = 0; shift < 32; shift += 8)
                 hash = (hash ^ uint8_t(value >> shift)) * fnvPrime;
-    return hash == russianMetadata;
+    return hash == fingerprint;
 }
 bool diagnostics() {
     static const bool enabled=GetEnvironmentVariableA("DARK_TRACE_SUBTITLE_FONT",nullptr,0)!=0;
@@ -146,7 +150,6 @@ std::shared_ptr<Definition> snapshot(uint8_t* base,uint32_t font,const char*& re
     if(width<1 || height<1 || width>512.02 || height>256.02 ||
        std::abs(width-std::round(width))>0.02 || std::abs(height-std::round(height))>0.02)return reject("atlas-dimensions");
     auto result=std::make_shared<Definition>();result->textureId=id;result->font=font;
-    result->russian=russianNativeMenus();
     result->width=unsigned(std::round(width));result->height=unsigned(std::round(height));
     std::vector<uint8_t> bytes(size_t(count)*40);
     if(!copy(base,records,bytes.data(),bytes.size()))return reject("glyph-records");
@@ -172,6 +175,19 @@ std::shared_ptr<Definition> snapshot(uint8_t* base,uint32_t font,const char*& re
         if(!duplicate)result->cells.push_back(c);
     }
     if(result->cells.empty())return reject("empty-glyphs");
+    // The executable/menu language does not identify a font's encoding. A
+    // CP1251 translation using the stock XEX would otherwise turn into Latin
+    // accents. Only substitute encoded alphabets with verified slot identities;
+    // unsupported glyphs keep their authored coverage as before.
+    if(approvedMetadata(*result,214,russianMetadata)) {
+        result->russian=true;
+        result->alphaFingerprint=russianAlpha;
+    } else if(std::any_of(result->cells.begin(),result->cells.end(),[](const auto& cell) {
+        return cell.codepoint>=0x80 && westernSubtitleCodepoint(uint16_t(cell.codepoint)).has_value();
+    })) {
+        if(!approvedMetadata(*result,152,westernMetadata))return reject("unknown-font-encoding");
+        result->alphaFingerprint=westernAlpha;
+    }
     reason="metadata-valid";return result;
 }
 struct Rasterizer {
@@ -300,9 +316,11 @@ std::shared_ptr<const ColorImage> replacementLocked(uint32_t textureId,const std
             if(pixel[0]!=255 || pixel[1]!=255 || pixel[2]!=255 || (!modern && pixel[3]!=definition->alpha->pixels[i])) {
                 traceReplacement("rgb/alpha",textureId,source,factor,definition.get());return {};
             }
-            if(definition->russian)alphaHash=(alphaHash^pixel[3])*fnvPrime;
+            if(definition->alphaFingerprint)alphaHash=(alphaHash^pixel[3])*fnvPrime;
         }
-        if(definition->russian && alphaHash!=russianAlpha) {traceReplacement("russian-alpha",textureId,source,factor,definition.get());return {};}
+        if(definition->alphaFingerprint && alphaHash!=definition->alphaFingerprint) {
+            traceReplacement("font-alpha",textureId,source,factor,definition.get());return {};
+        }
         std::erase_if(registration->sources,[](const auto& original){return original.expired();});
         if(registration->sources.size()>=16)return {};
         registration->sources.push_back(source);
@@ -386,9 +404,9 @@ void registerSubtitleFont(uint8_t* base,uint32_t font,bool replaceable) noexcept
             if(vector)word(base,uint64_t(vector)+4,count);
             std::fprintf(stderr,"[SubtitleFontTrace] register font=%08X reason=%s id=%u records=%u\n",font,reason,id,count);
         }
-        if(!definition)return;
-        if(definition->russian && !approvedRussianMetadata(*definition)) {
-            // Invalidate a previous approved definition if this address is reused by another font.
+        if(!definition) {
+            // A rejected load must not retain a previous approved definition at
+            // this address, even when the atlas has not been uploaded again.
             registerSubtitleFont(base,font,false);
             return;
         }
@@ -409,6 +427,7 @@ void registerSubtitleFont(uint8_t* base,uint32_t font,bool replaceable) noexcept
             const auto& previous=*existing->definition;
             if(previous.font==definition->font && previous.width==definition->width && previous.height==definition->height &&
                previous.russian==definition->russian &&
+               previous.alphaFingerprint==definition->alphaFingerprint &&
                previous.alpha==definition->alpha && previous.color==definition->color && previous.cells==definition->cells)return;
         }
         definition->generation=++generation;
