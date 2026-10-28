@@ -220,19 +220,6 @@ inline void originalCanvasInsideClip(const Draw& draw, double mx, double my,
           maximumY + tolerance >= 480 && maximumY - 480 <= scale + tolerance,
           "Subtitle scaling moved its original physical clipping canvas");
 }
-struct SyntheticInkBox { double left, top, right, bottom; };
-inline SyntheticInkBox syntheticTextCell(const Draw& draw, double mx, double my,
-                                        double tx, double ty, double originalSize,
-                                        double cellWidth=20, double cellTop=-5, double cellBottom=30) {
-    // An opaque synthetic glyph with the measured Text E cell dimensions and
-    // bearing. The retail glyph's alpha coverage need not fill its entire cell.
-    const double ratio = draw.fontSize / originalSize;
-    const double x0 = (draw.origin[0] - tx) / mx;
-    const double x1 = (draw.origin[0] + double(draw.horizontal[0]) * cellWidth * ratio - tx) / mx;
-    const double y0 = (draw.origin[1] + double(draw.vertical[1]) * cellTop * ratio - ty) / my;
-    const double y1 = (draw.origin[1] + double(draw.vertical[1]) * cellBottom * ratio - ty) / my;
-    return {(std::min)(x0,x1), (std::min)(y0,y1), (std::max)(x0,x1), (std::max)(y0,y1)};
-}
 } // namespace SubtitleScaleTestDetail
 
 static void testSubtitleScale(PPCContext& ctx) {
@@ -449,24 +436,20 @@ static void testSubtitleScale(PPCContext& ctx) {
             ++clippingCases;
         }
     }
-    // The actor canvas scales glyphs independently of line origins. Exercise
-    // actual native C900/B410 line output with a synthetic Text-like ink cell,
-    // rather than equating the integer line metric with the visible glyph size.
+    // Contextual font scales are part of the retail glyph size. A custom SIZE
+    // multiplies that output directly, while actor wrapping accounts for the
+    // independent horizontal scale and line spacing accounts for lineScale.
     unsigned spacingCases = 0;
     constexpr uint32_t nativeFontSizeAddress = 0x82A47C90;
-    constexpr unsigned spacingGap = 10;
-    // Actual stock/Russian ORIGINALSIZE values and E-cell ink metrics differ.
     for (const float textOriginalSize : {26.9230785f, 22.3076935f})
     for (const NativeVideoMode mode : {NativeVideoMode{1280,720}, NativeVideoMode{3440,1440}})
-    for (float contextualScale : {1.3f, 1.5f})
-    for (float globalFontSize : {14.0f, -1.0f})
-    for (const std::u16string& text : {std::u16string(u"E"), std::u16string(u"E|E"),
+    for (const float lineScale : {1.3f, 1.5f})
+    for (const float widthScale : {1.15f, 1.5f})
+    for (const float globalFontSize : {14.0f, -1.0f})
+    for (const unsigned profile : {0u, 1u, 2u})
+    for (const std::u16string& text : {
+            std::u16string(u"E"), std::u16string(u"E|E"),
             std::u16string(u"Oh, oh. Ap\u00e1rtate de esa peque\u00f1a rata como de la peste bub\u00f3nica.|\u00bfQu\u00e9 diablos has hecho?"),
-            // Representative test phrases exercise each supported script/locale, not captured dialogue.
-            std::u16string(u"Keep away from that little rat as if he carried the plague.|What have you done?"),
-            std::u16string(u"Hüte dich vor dieser kleinen Ratte wie vor der Pest.|Was hast du bloß getan?"),
-            std::u16string(u"Éloigne-toi de ce petit rat comme de la peste.|Qu'est-ce que tu as fait ?"),
-            std::u16string(u"Stai lontano da quel piccolo ratto come dalla peste.|Che cosa hai fatto?"),
             std::u16string(u"Держись подальше от этой маленькой крысы, словно от чумы.|Что же ты наделал? Ёжик, ёжик!")}) {
         const float previousHeight = fontHeightValue;
         fixture.rebuild(ctx, mode, 500);
@@ -486,99 +469,120 @@ static void testSubtitleScale(PPCContext& ctx) {
                   previousHeight};
         fontHeightValue = textOriginalSize;
         putFloat(nativeFontSizeAddress, globalFontSize);
-        putFloat(fixture.font.block + 344, contextualScale);
-        putFloat(fixture.font.block + 348, contextualScale);
+        putFloat(fixture.font.block + 344, widthScale);
+        putFloat(fixture.font.block + 348, lineScale);
+        const bool actor = profile == 2;
+        const unsigned gap = profile == 1 ? 0 : 10;
+        const unsigned width = actor ? 490 : 520;
+        const float top = actor ? 390 : 376;
+        const uint32_t foregroundCaller = actor ? 0x82331F38 : profile == 1 ? 0x823A1394 : 0x8235F28C;
+        const uint32_t shadowCaller = actor ? 0x82331EF8 : profile == 1 ? 0x823A134C : 0x8235F24C;
         const double mx = getFloat(fixture.font.block + 272), my = getFloat(fixture.font.block + 292);
         const double tx = getFloat(fixture.font.block + 320), ty = getFloat(fixture.font.block + 324);
-        const auto retail = fixture.paint(ctx, 0x82331F38, 100, text, true, spacingGap, true, true);
-        const unsigned authoredLines = text.find(u'|') == std::u16string::npos ? 1 : 2;
-        check(retail.size() >= authoredLines, "Synthetic Text ink fixture lost an authored line");
+        const auto retail = fixture.paint(ctx, foregroundCaller, 100, text, true, gap, true, actor);
+        const auto retailMatrix = fixture.lastLayoutMatrix;
+        const auto neutral = fixture.paint(ctx, foregroundCaller, 100, text, true, gap, false, actor);
+        check(retail.size() == neutral.size() && !retail.empty() && fixture.lastLayoutMatrix == retailMatrix,
+              "100 percent contextual subtitle changed retail layout");
+        for (unsigned i = 0; i < retail.size(); ++i) sameDraw(retail[i], neutral[i]);
+        const auto neutralShadow = fixture.paint(ctx, shadowCaller, 100, text, true, gap, false, actor);
+        const auto retailShadow = fixture.paint(ctx, shadowCaller, 100, text, true, gap, true, actor);
+        check(neutralShadow.size() == retailShadow.size(), "100 percent contextual shadow changed line count");
+        for (unsigned i = 0; i < retailShadow.size(); ++i) sameDraw(retailShadow[i], neutralShadow[i]);
         const double nativeHeight = std::trunc(textOriginalSize);
-        const double adjustedAdvance = std::ceil((nativeHeight + spacingGap) * double(contextualScale));
-        const double resolvedSize = globalFontSize < 0 ? textOriginalSize : globalFontSize;
+        const double originalHeight = retail.size() * nativeHeight + (retail.size() - 1) * gap;
+        const double bottom = (std::min)(double(top) + originalHeight, 470.0);
+        const double advance = std::ceil((nativeHeight + gap) * double(lineScale));
+        const double terminal = actor ? std::ceil(nativeHeight * double(lineScale)) : nativeHeight;
         std::u16string literalText;
         for (char16_t character : text) if (character != u'|') literalText += character;
-        for (unsigned percent : {50u, 90u, 100u, 150u, 200u}) {
-            const auto foreground = fixture.paint(ctx, 0x82331F38, percent, text, true, spacingGap, false, true);
-            const auto shadow = fixture.paint(ctx, 0x82331EF8, percent, text, true, spacingGap, false, true);
-            check(foreground.size() >= authoredLines && shadow.size() == foreground.size(),
-                  "Speech fitting lost an authored line or shadow");
-            const double scale = foreground[0].horizontal[0] / retail[0].horizontal[0];
-            check(scale > 0 && scale <= double(percent) / (100 * contextualScale) + .00001,
-                  "Speech retained the extra actor-font magnification");
+        for (const unsigned percent : {50u, 90u, 150u, 200u}) {
+            const double scale = double(percent) / 100;
+            const auto foreground = fixture.paint(ctx, foregroundCaller, percent, text, true, gap, false, actor);
+            const auto fittedMatrix = fixture.lastLayoutMatrix;
+            const unsigned expectedWidth = actor ? unsigned(std::floor(width / (scale * double(widthScale)))) :
+                                                  width * 100 / percent;
+            check(std::find(wrapWidths.begin(), wrapWidths.end(), expectedWidth) != wrapWidths.end(),
+                  "Contextual subtitle reflow used the wrong original-font width");
+            check(!foreground.empty(), "Contextual subtitle lost its lines");
+            for (unsigned index : {0u, 1u, 4u, 5u})
+                layoutNear(fittedMatrix[index], retailMatrix[index] * scale,
+                           "Contextual subtitle matrix did not apply the exact requested percentage");
+            const auto shadow = fixture.paint(ctx, shadowCaller, percent, text, true, gap, false, actor);
+            check(shadow.size() == foreground.size(), "Contextual subtitle foreground/shadow line counts differ");
             std::u16string joined;
-            std::optional<SyntheticInkBox> previousInk;
             for (unsigned i = 0; i < foreground.size(); ++i) {
                 const auto& draw = foreground[i];
                 sameDraw(draw, shadow[i]);
                 joined += draw.text;
-                layoutNear(draw.fontSize, resolvedSize, "Contextual subtitle leading changed native font size");
                 for (unsigned axis = 0; axis < 3; ++axis) {
                     layoutNear(draw.horizontal[axis], retail[0].horizontal[axis] * (axis < 2 ? scale : 1),
-                               "Contextual subtitle leading changed its horizontal glyph basis");
+                               "Contextual subtitle horizontal glyph size is not proportional to SIZE");
                     layoutNear(draw.vertical[axis], retail[0].vertical[axis] * (axis < 2 ? scale : 1),
-                               "Contextual subtitle leading changed its vertical glyph basis");
+                               "Contextual subtitle vertical glyph size is not proportional to SIZE");
                 }
-                const double baseline = (draw.origin[1] - ty) / my;
-                if (i)
-                    layoutNear(baseline - (foreground[i-1].origin[1] - ty) / my,
-                               adjustedAdvance * scale, "Contextual subtitle leading ignored glyph scale or authored gap");
-                const bool russianMetrics = textOriginalSize < 25;
-                const auto ink = syntheticTextCell(draw, mx, my, tx, ty, textOriginalSize,
-                    russianMetrics ? 13 : 20, russianMetrics ? -4 : -5, russianMetrics ? 25 : 30);
-                check(ink.top > 400 && ink.bottom < 480,
-                      "Speech ink overlaps the character-name band or bottom edge");
-                layoutNear((draw.origin[0] - tx) / mx, 75, "Speech lost its left margin");
-                const double right = 75 + draw.text.size() * resolvedSize * .5 * contextualScale * scale;
-                check(right <= 565.01, "Speech glyphs exceed their horizontal canvas");
-                if (previousInk)
-                    check(previousInk->bottom <= ink.top + .002,
-                          "Adjacent synthetic Text glyph ink rectangles overlap");
-                previousInk = ink;
-                if (ink.left >= 75 && ink.right <= 565 && ink.top >= 0 && ink.bottom <= 480) {
-                    const double ratio = draw.fontSize / textOriginalSize;
-                    check(draw.clipEnd[0] <= .002 && draw.clipBegin[0] + .002 >= 20 * ratio &&
-                          draw.clipEnd[1] <= -5 * ratio + .002 && draw.clipBegin[1] + .002 >= 30 * ratio,
-                          "A complete synthetic Text cell was clipped inside the original canvas");
-                }
-                // Clip offsets are in authored line coordinates; the glyph's
-                // independent context scale must not be applied a second time.
+                const double y = (draw.origin[1] - ty) / my;
+                layoutNear(y, bottom - ((foreground.size() - 1) * advance + terminal) * scale +
+                              i * advance * scale,
+                           "Contextual subtitle lost native lower anchor or corrected leading");
+                if (actor) layoutNear((draw.origin[0] - tx) / mx, 75, "Actor subtitle lost its left margin");
+                // B410's clip offsets use line coordinates before the separate
+                // contextual glyph scale; remove it to reconstruct the canvas.
                 auto canvasDraw = draw;
                 for (unsigned axis = 0; axis < 3; ++axis) {
-                    canvasDraw.horizontal[axis] /= contextualScale;
-                    canvasDraw.vertical[axis] /= contextualScale;
+                    canvasDraw.horizontal[axis] /= widthScale;
+                    canvasDraw.vertical[axis] /= lineScale;
                 }
-                originalCanvasInsideClip(canvasDraw, mx, my, tx, ty, 75, 565, scale);
-                check(draw.color == retail[0].color && draw.origin[2] == retail[0].origin[2],
-                      "Contextual subtitle leading changed native fade, material or depth");
+                originalCanvasInsideClip(canvasDraw, mx, my, tx, ty, actor ? 75 : 0,
+                                         actor ? 565 : 640, scale);
+                check(draw.fontSize == retail[0].fontSize && draw.color == retail[0].color &&
+                      draw.origin[2] == retail[0].origin[2],
+                      "Contextual subtitle changed native font, fade or depth");
             }
-            check(joined == literalText, "Speech fitting dropped translated text");
-            check((foreground[0].origin[1] - ty) / my >= 410 - .002,
-                  "Speech fitting grew into the character-name area");
-            layoutNear((foreground.back().origin[1] - ty) / my,
-                       466 - std::ceil(nativeHeight * contextualScale) * scale,
-                       "Speech fitting lost its lower anchor");
-            const auto unrelated = fixture.paint(ctx, 0x82331F3C, percent, text, true, spacingGap, false, true);
-            check(unrelated.size() == retail.size(), "Contextual subtitle leading leaked into another caller");
+            check(joined == literalText, "Contextual subtitle reflow dropped translated text");
+            if (text.size() > 70 && percent == 200) {
+                check(foreground.size() > retail.size(), "Long translation did not reflow at 200 percent");
+                check((foreground[0].origin[1] - ty) / my < (retail[0].origin[1] - ty) / my,
+                      "Long translation did not grow upward");
+            }
+            const auto unrelated = fixture.paint(ctx, foregroundCaller + 4, percent, text, true, gap, false, actor);
+            check(unrelated.size() == retail.size(), "Contextual subtitle scale leaked into another caller");
             for (unsigned i = 0; i < retail.size(); ++i) sameDraw(retail[i], unrelated[i]);
             ++spacingCases;
         }
-        if (text == u"E|E") {
-            fixture.paint(ctx, 0x8230D96C, 100, text, true, spacingGap, false, true, 390.f, true);
-            const auto resting = fixture.lastLayoutMatrix;
-            const double restingY = (resting[5] * 390 + resting[13] - ty) / my;
-            check(restingY >= 410 - .002, "Animated speech rests in the character-name area");
-            fixture.paint(ctx, 0x8230D96C, 100, text, true, spacingGap, false, true, 342.5f, true);
-            const auto moving = fixture.lastLayoutMatrix;
-            const double movingY = (moving[5] * 342.5 + moving[13] - ty) / my;
-            layoutNear(movingY - restingY, -47.5, "Speech fitting lost the native effect motion");
-            layoutNear(moving[0], resting[0], "Animated speech changed size during its motion");
+        if (actor && text == u"E|E") {
+            for (const unsigned percent : {100u, 150u}) {
+                std::array<double,2> lower{};
+                unsigned index = 0;
+                for (const float animatedTop : {395.0f, 342.5f}) {
+                    fixture.paint(ctx, 0x8230D96C, 100, text, true, gap, true, true, animatedTop, true);
+                    const auto originalMatrix = fixture.lastLayoutMatrix;
+                    const unsigned originalLines = fixture.lastLineCount;
+                    fixture.paint(ctx, 0x8230D96C, percent, text, true, gap, false, true, animatedTop, true);
+                    const auto matrix = fixture.lastLayoutMatrix;
+                    if (percent == 100) {
+                        check(matrix == originalMatrix && fixture.lastLineCount == originalLines,
+                              "100 percent animated actor changed retail layout");
+                    } else {
+                        const double scale = double(percent) / 100;
+                        const double height = (fixture.lastLineCount - 1) * advance + terminal;
+                        lower[index] = (matrix[5] * (animatedTop + height) + matrix[13] - ty) / my;
+                        const double originalBottom = (std::min)(double(animatedTop) +
+                            originalLines * nativeHeight + (originalLines - 1) * gap, 470.0);
+                        layoutNear(lower[index], originalBottom, "Animated actor lost its native lower anchor");
+                        layoutNear(matrix[5], originalMatrix[5] * scale, "Animated actor size changed during motion");
+                    }
+                    ++index;
+                }
+                if (percent != 100)
+                    layoutNear(lower[1] - lower[0], -52.5, "Animated actor lost relative vertical motion");
+            }
         }
-        if (text == u"E") {
+        if (actor && text == u"E") {
             putFloat(fixture.font.block + 344, 1e-30f);
-            const auto original = fixture.paint(ctx, 0x82331F38, 200, text, true, spacingGap, true, true);
-            const auto unsupported = fixture.paint(ctx, 0x82331F38, 200, text, true, spacingGap, false, true);
-            check(original.size() == unsupported.size(), "Unsupported speech scale lost a line");
+            const auto original = fixture.paint(ctx, foregroundCaller, 200, text, true, gap, true, true);
+            const auto unsupported = fixture.paint(ctx, foregroundCaller, 200, text, true, gap, false, true);
+            check(original.size() == unsupported.size(), "Unsupported speech width scale lost a line");
             for (unsigned i = 0; i < original.size(); ++i) sameDraw(original[i], unsupported[i]);
         }
     }
@@ -596,5 +600,5 @@ static void testSubtitleScale(PPCContext& ctx) {
         check((_mm_getcsr() & _MM_ROUND_MASK) == rounding,
               "Subtitle scaling changed guest rounding mode");
     }
-    std::printf("NativeSubtitleScaleContract: %u synthetic-font draw cases plus %u no-frame NPC effect layout cases, %u ultrawide Enzo clipping cases and %u contextual Text ink/leading cases; ASCII/Unicode, original-size output, authored-line reflow, visible glyph bounds, preserved clipping canvas, nonoverlapping synthetic ink, animated lower/center/left anchors, caller scopes, depth/fade and borrowed-state restoration. NPC effect mesh expansion requires live-game validation.\n", cases + darknessCases, effectCases, clippingCases, spacingCases);
+    std::printf("NativeSubtitleScaleContract: %u synthetic-font draw cases plus %u no-frame NPC effect layout cases, %u ultrawide Enzo clipping cases and %u contextual size/leading cases; ASCII/Unicode, retail output, proportional glyphs, authored-line reflow, preserved clipping canvas, animated lower/center/left anchors, caller scopes, depth/fade and borrowed-state restoration. NPC effect mesh expansion requires live-game validation.\n", cases + darknessCases, effectCases, clippingCases, spacingCases);
 }
