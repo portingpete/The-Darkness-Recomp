@@ -1,0 +1,111 @@
+{
+  "issue": "https://github.com/portingpete/The-Darkness-Recomp/issues/138",
+  "pullRequest": "https://github.com/portingpete/The-Darkness-Recomp/pull/139",
+  "behaviorSourceCommit": "e3f094cca8ca9b275098db80102db37630f0bc66",
+  "baselineExeSha256": "634c4813574acd6851d1618f1ed156338454a0fed6b5027d8ea22968da920e17",
+  "candidateExeSha256": "11908354202d0194ed21b7c383857a5cd8ba735420656f321ce5b93e6d5b7242",
+  "subtitleScalePercent": 100,
+  "nativeRenderResolution": [
+    1920,
+    1080
+  ],
+  "windowResolution": [
+    1280,
+    720
+  ],
+  "screenshots": [
+    {
+      "image": "../../images/issue-138/dialogue-before-100.png",
+      "pngSha256": "33b02b3dfd2005b4cd445040d68fcd249527b774c87354fd283852fac7e5454c",
+      "sourceBmpSha256": "de0638bcb1175846fb0c2cbdd7954381aeadae1fe02f88960a4adbaaa516169e",
+      "resolution": [
+        1920,
+        1080
+      ],
+      "pngPixelsEqualOriginalBmp": true
+    },
+    {
+      "image": "../../images/issue-138/dialogue-after-100.png",
+      "pngSha256": "d668757036d9e8dc4fee1dc90bcb74bab2f1983c4f88a21e6319cfa93730d4c1",
+      "sourceBmpSha256": "60940da9472845a1a6c6efa792ebccf961e017fffaec9adde3b5f17f754b03bd",
+      "resolution": [
+        1920,
+        1080
+      ],
+      "pngPixelsEqualOriginalBmp": true
+    },
+    {
+      "image": "../../images/issue-138/narration-before-100.png",
+      "pngSha256": "26229c13ca356b9710ff4398996daf63f948c69a8e676b83243a109776a0b17c",
+      "sourceBmpSha256": "246c67de1b69c6097651c95dea6d5d4dc1fd28ec6acb511ac58c8c7aa02eafc8",
+      "resolution": [
+        1920,
+        1080
+      ],
+      "pngPixelsEqualOriginalBmp": true
+    },
+    {
+      "image": "../../images/issue-138/narration-after-100.png",
+      "pngSha256": "f41621b10215b21d32206736957a82d3ddd698ebc5e0f827896b20bd94108376",
+      "sourceBmpSha256": "56a43035f2d7d4359ca3a88537f5aa9dec1e9fd3adb37fc766317f7e3a6d9d32",
+      "resolution": [
+        1920,
+        1080
+      ],
+      "pngPixelsEqualOriginalBmp": true
+    },
+    {
+      "image": "../../images/issue-138/russian-narration-after-100.png",
+      "pngSha256": "76d53408a873b5cda8d9eb5eb819f6260ef0fd21cdd5bdd165047e8f2bfaa8b6",
+      "sourceBmpSha256": "d10596ebd648987438cc2c3dfb7b99b62ec9e3d74baf8488814b82fbe1e209c1",
+      "resolution": [
+        1920,
+        1080
+      ],
+      "pngPixelsEqualOriginalBmp": true
+    },
+    {
+      "image": "../../images/issue-138/russian-after-100.png",
+      "pngSha256": "25794afe2c85fe6042a57368983b0db4cc54074410219f870b550b474649056f",
+      "sourceBmpSha256": "4a294bdd800a93becec031642349eb676f3eb4d1369c89dcfa11cd5a19a982d1",
+      "resolution": [
+        1920,
+        1080
+      ],
+      "pngPixelsEqualOriginalBmp": true
+    }
+  ],
+  "narrationComparison": {
+    "crop": [
+      400,
+      820,
+      1500,
+      930
+    ],
+    "sameResolution": true,
+    "narratorSubtitleRegionPixelIdentical": true
+  },
+  "checks": {
+    "targetedCtestsPassed": 8,
+    "aotOutputs": 93,
+    "semanticDiagnostics": 0,
+    "contextualSizeCases": 1536,
+    "encodingParentFailureExpected": true,
+    "sizeParentFailureExpected": true,
+    "authenticFonts": "Western and verified Russian at 2x/4x/8x in both executable-language modes"
+  },
+  "limitations": [
+    "Reporter exact older asset-only translation dump unavailable; live screenshots use retained stock and verified Russian dumps.",
+    "Only 100% was checked live; other supported percentages were covered by native layout tests.",
+    "No hosted check runs were configured for the PR at evidence collection."
+  ],
+  "logs": [
+    "layout-tests.txt",
+    "font-language-tests.txt",
+    "encoding-before.txt",
+    "encoding-after.txt",
+    "size-before.txt",
+    "authentic-font-replay.txt",
+    "release-build.txt"
+  ]
+}

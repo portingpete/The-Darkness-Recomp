@@ -1,0 +1,19 @@
+MSBuild version 17.14.18+a338add32 for .NET Framework
+
+  Native inputs bac8be24efed57aa405795697439aa22185f775d65f0821efcd9a4dadd355207: 367 files, recompile required.
+  AOT manifest verified: 93 files; 0 semantic diagnostics.
+  DarkRecompPPC.vcxproj -> <repo>\build_native\Release\DarkRecompPPC.lib
+  DarkXmaRaw.vcxproj -> <repo>\build_native\Release\DarkXmaRaw.lib
+<repo>\runtime\native\kernel.cpp(1915,26): warning : extra qualification on member 'setNativeDisplayContext' [-Wextra-qualification] [<repo>\build_native\DarkRuntime.vcxproj]
+<repo>\runtime\native\kernel.cpp(1916,26): warning : extra qualification on member 'nativeDisplayPresent' [-Wextra-qualification] [<repo>\build_native\DarkRuntime.vcxproj]
+<repo>\runtime\native\kernel.cpp(2792,10): warning : unused variable 'expected' [-Wunused-variable] [<repo>\build_native\DarkRuntime.vcxproj]
+  DarkRuntime.vcxproj -> <repo>\build_native\Release\DarkRuntime.lib
+  DarkRecomp.vcxproj -> <repo>\build_native\Release\DarkRecomp.exe
+MSBuild version 17.14.18+a338add32 for .NET Framework
+
+  Native inputs bac8be24efed57aa405795697439aa22185f775d65f0821efcd9a4dadd355207: 367 files, unchanged.
+  DarkXmaRaw.vcxproj -> <repo>\build_native\Release\DarkXmaRaw.lib
+  AOT manifest verified: 93 files; 0 semantic diagnostics.
+  DarkRecompPPC.vcxproj -> <repo>\build_native\Release\DarkRecompPPC.lib
+  DarkRuntime.vcxproj -> <repo>\build_native\Release\DarkRuntime.lib
+  NativeTests.vcxproj -> <repo>\build_native\Release\NativeTests.exe

@@ -1,0 +1,6 @@
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] register font=00000080 reason=metadata-valid id=60200 records=4
+[SubtitleFontTrace] register-owned id=60200 size=64x32 alpha=000001AE498A19E0 color=0000000000000000
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFont] vector atlas id=60200 factor=2 size=128x64 glyphs=3 fallback=0
+WorldRendererContract failed: Unrecognized encoded font lost its original color atlas

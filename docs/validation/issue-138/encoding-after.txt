@@ -1,0 +1,207 @@
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] register font=00000080 reason=unknown-font-encoding id=60200 records=4
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] replacement reason=unregistered id=60200 factor=2 source=0000025A95B0D5C0 size=64x32 codec=0 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000025A95B42900 currentColor=0000000000000000
+[SubtitleFontTrace] replacement reason=unregistered id=60200 factor=4 source=0000025A95B0D5C0 size=64x32 codec=0 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000025A95B42900 currentColor=0000000000000000
+[SubtitleFontTrace] replacement reason=unregistered id=60200 factor=8 source=0000025A95B0D5C0 size=64x32 codec=0 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000025A95B42900 currentColor=0000000000000000
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] register font=00000080 reason=unknown-font-encoding id=60201 records=4
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] replacement reason=unregistered id=60201 factor=2 source=0000025A95B0CB40 size=64x32 codec=0 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000025A95B43480 currentColor=0000000000000000
+[SubtitleFontTrace] replacement reason=unregistered id=60201 factor=4 source=0000025A95B0CB40 size=64x32 codec=0 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000025A95B43480 currentColor=0000000000000000
+[SubtitleFontTrace] replacement reason=unregistered id=60201 factor=8 source=0000025A95B0CB40 size=64x32 codec=0 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000025A95B43480 currentColor=0000000000000000
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] register font=00000080 reason=unknown-font-encoding id=60202 records=4
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] replacement reason=unregistered id=60202 factor=2 source=0000025A95B0D6A0 size=64x32 codec=262144 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000000000000000 currentColor=0000025A95B0D6A0
+[SubtitleFontTrace] replacement reason=unregistered id=60202 factor=4 source=0000025A95B0D6A0 size=64x32 codec=262144 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000000000000000 currentColor=0000025A95B0D6A0
+[SubtitleFontTrace] replacement reason=unregistered id=60202 factor=8 source=0000025A95B0D6A0 size=64x32 codec=262144 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000000000000000 currentColor=0000025A95B0D6A0
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] register font=00000080 reason=unknown-font-encoding id=60203 records=4
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] replacement reason=unregistered id=60203 factor=2 source=0000025A95B0D8D0 size=64x32 codec=262144 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000000000000000 currentColor=0000025A95B0D8D0
+[SubtitleFontTrace] replacement reason=unregistered id=60203 factor=4 source=0000025A95B0D8D0 size=64x32 codec=262144 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000000000000000 currentColor=0000025A95B0D8D0
+[SubtitleFontTrace] replacement reason=unregistered id=60203 factor=8 source=0000025A95B0D8D0 size=64x32 codec=262144 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000000000000000 currentColor=0000025A95B0D8D0
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] register font=00000080 reason=unknown-font-encoding id=60204 records=4
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] replacement reason=unregistered id=60204 factor=2 source=0000025A95B0D860 size=64x32 codec=0 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000025A95B42E80 currentColor=0000000000000000
+[SubtitleFontTrace] replacement reason=unregistered id=60204 factor=4 source=0000025A95B0D860 size=64x32 codec=0 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000025A95B42E80 currentColor=0000000000000000
+[SubtitleFontTrace] replacement reason=unregistered id=60204 factor=8 source=0000025A95B0D860 size=64x32 codec=0 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000025A95B42E80 currentColor=0000000000000000
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] register font=00000080 reason=unknown-font-encoding id=60205 records=4
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] replacement reason=unregistered id=60205 factor=2 source=0000025A95B0D7F0 size=64x32 codec=0 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000025A95B42F40 currentColor=0000000000000000
+[SubtitleFontTrace] replacement reason=unregistered id=60205 factor=4 source=0000025A95B0D7F0 size=64x32 codec=0 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000025A95B42F40 currentColor=0000000000000000
+[SubtitleFontTrace] replacement reason=unregistered id=60205 factor=8 source=0000025A95B0D7F0 size=64x32 codec=0 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000025A95B42F40 currentColor=0000000000000000
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] register font=00000080 reason=unknown-font-encoding id=60206 records=4
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] replacement reason=unregistered id=60206 factor=2 source=0000025A95B0D9B0 size=64x32 codec=262144 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000000000000000 currentColor=0000025A95B0D9B0
+[SubtitleFontTrace] replacement reason=unregistered id=60206 factor=4 source=0000025A95B0D9B0 size=64x32 codec=262144 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000000000000000 currentColor=0000025A95B0D9B0
+[SubtitleFontTrace] replacement reason=unregistered id=60206 factor=8 source=0000025A95B0D9B0 size=64x32 codec=262144 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000000000000000 currentColor=0000025A95B0D9B0
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] register font=00000080 reason=unknown-font-encoding id=60207 records=4
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] replacement reason=unregistered id=60207 factor=2 source=0000025A95B0CAD0 size=64x32 codec=262144 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000000000000000 currentColor=0000025A95B0CAD0
+[SubtitleFontTrace] replacement reason=unregistered id=60207 factor=4 source=0000025A95B0CAD0 size=64x32 codec=262144 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000000000000000 currentColor=0000025A95B0CAD0
+[SubtitleFontTrace] replacement reason=unregistered id=60207 factor=8 source=0000025A95B0CAD0 size=64x32 codec=262144 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000000000000000 currentColor=0000025A95B0CAD0
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] register font=00000080 reason=metadata-valid id=60220 records=4
+[SubtitleFontTrace] register-owned id=60220 size=64x32 alpha=0000025A95B425C0 color=0000000000000000
+[SubtitleFont] vector atlas id=60220 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFontTrace] register font=00000080 reason=unknown-font-encoding id=60220 records=4
+[SubtitleFontTrace] replacement reason=unregistered id=60220 factor=2 source=0000025A95B0CD70 size=64x32 codec=0 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000025A95B425C0 currentColor=0000000000000000
+[SubtitleFontTrace] replacement reason=unregistered id=60220 factor=4 source=0000025A95B0CD70 size=64x32 codec=0 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000025A95B425C0 currentColor=0000000000000000
+[SubtitleFontTrace] replacement reason=unregistered id=60220 factor=8 source=0000025A95B0CD70 size=64x32 codec=0 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000025A95B425C0 currentColor=0000000000000000
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] register font=00000080 reason=metadata-valid id=60221 records=4
+[SubtitleFontTrace] register-owned id=60221 size=64x32 alpha=0000000000000000 color=0000025A95B0CC90
+[SubtitleFont] vector atlas id=60221 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFontTrace] register font=00000080 reason=unknown-font-encoding id=60221 records=4
+[SubtitleFontTrace] replacement reason=unregistered id=60221 factor=2 source=0000025A95B0CC90 size=64x32 codec=262144 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000000000000000 currentColor=0000025A95B0CC90
+[SubtitleFontTrace] replacement reason=unregistered id=60221 factor=4 source=0000025A95B0CC90 size=64x32 codec=262144 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000000000000000 currentColor=0000025A95B0CC90
+[SubtitleFontTrace] replacement reason=unregistered id=60221 factor=8 source=0000025A95B0CC90 size=64x32 codec=262144 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000000000000000 currentColor=0000025A95B0CC90
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] register font=00000080 reason=metadata-valid id=60222 records=4
+[SubtitleFontTrace] register-owned id=60222 size=64x32 alpha=0000025A95B76510 color=0000000000000000
+[SubtitleFont] vector atlas id=60222 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFontTrace] register font=00000080 reason=unknown-font-encoding id=60222 records=4
+[SubtitleFontTrace] replacement reason=unregistered id=60222 factor=2 source=0000025A95B0D320 size=64x32 codec=0 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000025A95B76510 currentColor=0000000000000000
+[SubtitleFontTrace] replacement reason=unregistered id=60222 factor=4 source=0000025A95B0D320 size=64x32 codec=0 definitions=0 registeredAlpha=0000000000000000 registeredColor=0000000000000000 currentAlpha=0000025A95B76510 currentColor=0000000000000000
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] register font=00000080 reason=metadata-valid id=60223 records=4
+[SubtitleFontTrace] register-owned id=60223 size=64x32 alpha=0000000000000000 color=0000025A95B0D400
+[SubtitleFont] vector atlas id=60223 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFontTrace] register font=00000080 reason=unknown-font-encoding id=60223 records=4
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFont] vector atlas id=60124 factor=2 size=128x64 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60124 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60124 factor=8 size=512x256 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60124 factor=2 size=128x64 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60124 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60124 factor=8 size=512x256 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60124 factor=2 size=128x64 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60124 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60124 factor=8 size=512x256 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60124 factor=2 size=128x64 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60124 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60124 factor=8 size=512x256 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60124 factor=2 size=128x64 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60124 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60124 factor=8 size=512x256 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60124 factor=2 size=128x64 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60124 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60124 factor=8 size=512x256 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60124 factor=2 size=128x64 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60124 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60124 factor=8 size=512x256 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60124 factor=2 size=128x64 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60124 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60124 factor=8 size=512x256 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60124 factor=2 size=128x64 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60124 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60124 factor=8 size=512x256 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60124 factor=2 size=128x64 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60124 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60124 factor=8 size=512x256 glyphs=2 fallback=1
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFont] vector atlas id=60125 factor=2 size=128x64 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60125 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60125 factor=8 size=512x256 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60125 factor=2 size=128x64 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60125 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60125 factor=8 size=512x256 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60125 factor=2 size=128x64 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60125 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60125 factor=8 size=512x256 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60125 factor=2 size=128x64 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60125 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60125 factor=8 size=512x256 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60125 factor=2 size=128x64 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60125 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60125 factor=8 size=512x256 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60125 factor=2 size=128x64 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60125 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60125 factor=8 size=512x256 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60125 factor=2 size=128x64 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60125 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60125 factor=8 size=512x256 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60125 factor=2 size=128x64 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60125 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60125 factor=8 size=512x256 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60125 factor=2 size=128x64 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60125 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60125 factor=8 size=512x256 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60125 factor=2 size=128x64 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60125 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60125 factor=8 size=512x256 glyphs=2 fallback=1
+[SubtitleFontTrace] resource=DARKNESS replaceable=0
+[SubtitleFontTrace] resource=DARKNESS replaceable=0
+[SubtitleFontTrace] resource=fonts\text.xfc replaceable=1
+[SubtitleFont] vector atlas id=60122 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFontTrace] resource=DARKNESS replaceable=0
+[SubtitleFontTrace] resource=fonts/DARKNESS.xfc replaceable=0
+[SubtitleFontTrace] resource=TEXTURE replaceable=0
+[SubtitleFontTrace] resource=UNKNOWN replaceable=0
+[SubtitleFontTrace] resource= replaceable=0
+[SubtitleFontTrace] resource=DARKNESS replaceable=0
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFont] vector atlas id=60101 factor=2 size=128x64 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60101 factor=2 size=128x64 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60101 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60101 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60101 factor=8 size=512x256 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60101 factor=8 size=512x256 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60101 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFont] vector atlas id=60105 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFont] vector atlas id=60105 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFont] vector atlas id=60109 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFont] vector atlas id=60108 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[TextureBudget] phase=initial adapterAs=00000000 adapterGet=00000000 adapterDesc=00000000 adapter=Microsoft Basic Render Driver dedicatedBytes=0 memorySuccess=1 memoryError=0 totalPhys=34111025152 availPhys=13404725248 memoryLoad=60 hardwareCapMiB=512 hostCapMiB=2048 selectedMiB=512
+[RenderShaderCompile] worldVS miss key=9F5568A927331881 ms=13.1 weights=0
+[RenderShaderCompile] worldVS miss key=91174117CAEE9818 ms=17.7 weights=0
+[RenderShaderCompile] worldVS miss key=91174217CAEE99CB ms=17.4 weights=0
+[RenderShaderCompile] worldVS miss key=86723A56467581E9 ms=13.5 weights=0
+[RenderShaderCompile] worldVS miss key=6EBB287653D8FDE0 ms=17.4 weights=0
+[RenderShaderCompile] worldVS miss key=6EBB297653D8FF93 ms=15.0 weights=0
+[RenderShaderCompile] worldVS miss key=8B841864A888935F ms=37.4 weights=0
+[RenderShaderCompile] worldVS miss key=92D5E08E7516EB0E ms=37.6 weights=0
+[RenderShaderCompile] worldVS miss key=92D5E18E7516ECC1 ms=39.5 weights=0
+[RenderShaderCompile] worldVS miss key=FDA760BB5F5F0EAA ms=15.9 weights=0
+[RenderShaderCompile] worldVS miss key=DFD141B586F93E39 ms=18.1 weights=0
+[RenderShaderCompile] worldVS miss key=DFD140B586F93C86 ms=18.5 weights=0
+[RenderShaderCompile] worldVS miss key=88135A958EA724A2 ms=33.2 weights=0
+[RenderShaderCompile] worldVS miss key=C9F3CFE435786DE1 ms=39.8 weights=0
+[RenderShaderCompile] worldVS miss key=C9F3CEE435786C2E ms=36.6 weights=0
+[RenderShaderCompile] worldVS miss key=2C81C6F09DE913B5 ms=28.0 weights=0
+[RenderShaderCache] worldVS=573 hits=0 misses=573 initMs=31344.31 compiler=A06C56A8FFCC476D
+[RenderShaderCache] fragments=161 hits=0 misses=161 initMs=5486.58 compiler=A06C56A8FFCC476D
+[SubtitleFont] vector atlas id=60103 factor=4 size=256x128 glyphs=2 fallback=1
+[SubtitleFontTrace] resource=DARKNESS replaceable=0
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[SubtitleFont] vector atlas id=60106 factor=8 size=4096x2048 glyphs=2 fallback=1
+[TextureBudget] phase=initial adapterAs=00000000 adapterGet=00000000 adapterDesc=00000000 adapter=Microsoft Basic Render Driver dedicatedBytes=0 memorySuccess=1 memoryError=0 totalPhys=34111025152 availPhys=13151617024 memoryLoad=61 hardwareCapMiB=512 hostCapMiB=2048 selectedMiB=512
+[RenderShaderCache] worldVS=573 hits=573 misses=0 initMs=405.33 compiler=A06C56A8FFCC476D
+[RenderShaderCache] fragments=161 hits=161 misses=0 initMs=112.30 compiler=A06C56A8FFCC476D
+[SubtitleFont] vector atlas id=60106 factor=4 size=2048x1024 glyphs=2 fallback=1
+[SubtitleFont] GPU atlas unavailable id=60106 factor=4; retaining original
+[SubtitleFontTrace] resource=TEXT replaceable=1
+[TextureBudget] phase=initial adapterAs=00000000 adapterGet=00000000 adapterDesc=00000000 adapter=Microsoft Basic Render Driver dedicatedBytes=0 memorySuccess=1 memoryError=0 totalPhys=34111025152 availPhys=14051966976 memoryLoad=58 hardwareCapMiB=512 hostCapMiB=2048 selectedMiB=512
+[RenderShaderCache] worldVS=573 hits=573 misses=0 initMs=273.22 compiler=A06C56A8FFCC476D
+[RenderShaderCache] fragments=161 hits=161 misses=0 initMs=46.10 compiler=A06C56A8FFCC476D
+[PromptSource] keyboard/mouse frame
+[PromptSource] keyboard/mouse frame
+[PromptSource] keyboard/mouse frame
+[SubtitleFont] vector atlas id=60104 factor=2 size=128x64 glyphs=2 fallback=1
+[SubtitleFontTrace] resource=DARKNESS replaceable=0
+[PromptSource] keyboard/mouse frame
+SubtitleFont CPU: vector2/4/8 density, custom glyph preservation, unverified encoded fonts, immutable cache and generation guards passed.
+SubtitleFont World GPU: native720 unchanged, high-resolution atlas bound, unrelated draws/depth/geometry retained, fade preserved.
+SubtitleFont Simple GPU: owned alpha path gained vector coverage with linear base-level atlas sampling.
+SubtitleFontContract passed: WARP.
