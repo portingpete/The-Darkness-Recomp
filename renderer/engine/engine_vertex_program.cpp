@@ -1,10 +1,12 @@
 #include "engine_vertex_program.h"
+#include "native_layer.h"
 #include "runtime/native/stall_profiler.h"
 #include "engine_performance.h"
+#include "thread_counters.h"
 #include "simple_mesh.h"
 #include "render_trace.h"
 #include "ppc_recomp_shared.h"
-#include <Windows.h>
+#include <windows.h>
 #include <atomic>
 #include <bit>
 #include <cstdio>
@@ -14,7 +16,11 @@ namespace DarkRecomp::Native {
 namespace {
 constexpr uint32_t context = 0x82A69B00;
 std::atomic<uint64_t> attempts{0}, captured{0}, compared{0}, equal{0}, found{0}, missing{0};
-std::atomic<uint64_t> bindingAttempts{0}, bindingsCaptured{0}, descriptorsRetained{0};
+ThreadCounters<3> bindingCounts;
+void incrementBindingCounter(unsigned counter) {
+    thread_local const auto writer=bindingCounts.acquireWriter();
+    writer.increment(counter);
+}
 struct PreparedBinding {
     uint8_t* base = nullptr;
     EngineVertexProgramSource source;
@@ -173,11 +179,11 @@ void finishEngineVertexProgramObservation(uint8_t* base, EngineVertexProgramObse
         binding.recordAddress = observation.selection.recordAddress; binding.bindingAddress = observation.selection.bindingAddress;
         binding.matrixAddress = observation.source.matrixAddress;
         preparedBinding = prepared;
-        ++descriptorsRetained;
+        incrementBindingCounter(2);
     }
 }
 static bool snapshotEngineVertexBindingsInto(uint8_t* base, EngineVertexBindingSnapshot& result) noexcept {
-    ++bindingAttempts;
+    incrementBindingCounter(0);
     if (!preparedBinding || preparedBinding->base != base) return false;
     const auto& prepared = *preparedBinding;
     auto current = [&] {
@@ -197,7 +203,7 @@ static bool snapshotEngineVertexBindingsInto(uint8_t* base, EngineVertexBindingS
     // checks. The comparison has the same guarded reads as the copy.
     if (!current() || !copy(base, address, result.constantBytes.data(), result.constantBytes.size()) ||
         !equalRenderMemory(base,address,result.constantBytes.data(),result.constantBytes.size()) || !current()) return false;
-    ++bindingsCaptured; return true;
+    incrementBindingCounter(1); return true;
 }
 bool snapshotEngineVertexBindings(uint8_t* base,EngineVertexBindingSnapshot& output) noexcept {
     EngineVertexBindingSnapshot result(EngineVertexBindingSnapshot::captureStorage());
@@ -221,10 +227,14 @@ void retainCompletedVertexBinding(uint8_t* base,uint32_t stack) noexcept {
     std::array<uint8_t,80> descriptor{};
     std::array<uint8_t,4> device{},selected{},active{};
     std::array<uint8_t,48> record{},again{};
+    const std::array completedReads{
+        RenderMemoryRead{stack-224,key.data(),key.size()},
+        RenderMemoryRead{stack-192,descriptor.data(),descriptor.size()},
+        RenderMemoryRead{context+15748,device.data(),device.size()},
+        RenderMemoryRead{context+17188,selected.data(),selected.size()}};
     if(!initializedModes(base) || !readSource(base,prepared.source) ||
        !buildEngineVertexProgramKey(prepared.source.input,binding.key) ||
-       !copy(base,stack-224,key.data(),key.size()) || !copy(base,stack-192,descriptor.data(),descriptor.size()) ||
-       !copy(base,context+15748,device.data(),4) || !copy(base,context+17188,selected.data(),4))return;
+       !copyRenderMemoryBatch(base,completedReads))return;
     binding.deviceAddress=be32(device.data());binding.recordAddress=be32(selected.data());
     if(!binding.deviceAddress || (binding.deviceAddress&15) || !binding.recordAddress || (binding.recordAddress&3) ||
        !copy(base,binding.recordAddress,record.data(),record.size()) ||
@@ -243,14 +253,170 @@ void retainCompletedVertexBinding(uint8_t* base,uint32_t stack) noexcept {
        !copy(base,binding.recordAddress,again.data(),again.size()) || again!=record)return;
     binding.descriptor=decodeEngineVertexDescriptor(descriptor);
     binding.descriptorAddress=stack-192;binding.matrixAddress=prepared.source.matrixAddress;
-    preparedBinding=std::move(prepared);++descriptorsRetained;
+    preparedBinding=std::move(prepared);incrementBindingCounter(2);
 }
+// NATIVE_LAYER_BEGIN: vertex-binding currency without copying the bank. readSource() and the
+// current() checks are reproduced with direct loads of exactly the fields they compare. The
+// owned 4 KiB bank copy and full re-compare are not needed: the native layer reads the used
+// constant ranges from the live device bank at snapshot time, with no guest code in between.
+namespace {
+// Direct-load readSource(): the same fields, conditions and result. Faults reach the caller's guard.
+bool fastReadSource(const uint8_t* base, EngineVertexProgramSource& result) {
+    result = {};
+    result.matrixBase = nativeGuest32(base, context + 8224);
+    result.matrixIndex = nativeGuest32(base, context + 8232);
+    const uint64_t address = uint64_t(result.matrixBase) + uint64_t(result.matrixIndex) * 656 + 16;
+    // copy(base, address + 640, model, 8): nonzero address and within the guest space.
+    if (!result.matrixBase || result.matrixIndex >= 256 || (address & 3) || !(address + 640) ||
+        address + 640 + 8 > 0x100000000ull) return false;
+    const uint32_t model = uint32_t(address + 640);
+    const uint32_t state = context + 16420;
+    result.matrixAddress = uint32_t(address);
+    result.paletteAddress = nativeGuest32(base, model);
+    result.treeRoot = nativeGuest32(base, state + 836);
+    auto& input = result.input;
+    input.declarationFlags = nativeGuest32(base, state);
+    input.conversionMask = nativeGuest32(base, state + 8);
+    input.declarationAddress = nativeGuest32(base, state + 108);
+    input.rendererFlags = nativeGuest32(base, state + 760) & 0x180000;
+    input.enabledCoordinates = nativeGuest32(base, state + 764);
+    input.modelFlags = nativeGuest32(base, model + 4);
+    input.materialFlags = nativeGuest32(base, state + 568);
+    input.palette = result.paletteAddress != 0;
+    for (unsigned s = 0; s < 8; ++s) { input.modes[s] = base[state + 524 + s]; input.coordinateSources[s] = base[state + 532 + s]; }
+    if (input.palette) {
+        const uint64_t second = uint64_t(input.declarationAddress) + 24;
+        if (!input.declarationAddress || second + 1 > 0x100000000ull) return false;
+        input.secondBlendIndices = base[second] != 0;
+    }
+    return true;
+}
+// 1 = current, 0 = the original capture fails. Faults are handled by the caller's guard.
+__attribute__((hot)) __declspec(noinline) int fastBindingImpl(const uint8_t* base, const PreparedBinding& prepared) {
+    EngineVertexProgramSource result;
+    if (!fastReadSource(base, result) || !(result == prepared.source)) return 0;
+    if (nativeGuest32(base, context + 15748) != prepared.binding.deviceAddress) return 0;
+    if (nativeGuest32(base, context + 17188) != prepared.binding.recordAddress) return 0;
+    const uint64_t binding = uint64_t(prepared.binding.deviceAddress) + 12688;
+    if (!binding || binding + 4 > 0x100000000ull) return 0;
+    if (nativeGuest32(base, uint32_t(binding)) != prepared.binding.bindingAddress) return 0;
+    // The original also copies the whole bank (device+1920, 4096 bytes) through copy().
+    const uint64_t bank = uint64_t(prepared.binding.deviceAddress) + 1920;
+    if (!bank || bank + 4096 > 0x100000000ull) return 0;
+    return 1;
+}
+int guardedBinding(const uint8_t* base, const PreparedBinding& prepared) noexcept {
+#ifdef _WIN32
+    __try { return fastBindingImpl(base, prepared); }
+    __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION || GetExceptionCode() == EXCEPTION_IN_PAGE_ERROR
+              ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) { return -1; }
+#else
+    // Preserve the original POSIX guarded-copy path until a native guard is available.
+    return -1;
+#endif
+}
+// The immutable mode tables initializedModes() compares against, built the same way.
+struct FastModeBytes { std::array<uint8_t,108> flags; std::array<uint8_t,27> counts; };
+const FastModeBytes& fastExpectedModes() {
+    static const FastModeBytes expected = [] {
+        FastModeBytes bytes;
+        const auto& modes = engineVertexModes();
+        for (unsigned i = 0; i < modes.size(); ++i) {
+            for (unsigned byte = 0; byte < 4; ++byte) bytes.flags[i*4+byte] = uint8_t(modes[i].flags >> (24 - byte*8));
+            bytes.counts[i] = modes[i].reservation;
+        }
+        return bytes;
+    }();
+    return expected;
+}
+// Mirrors retainCompletedVertexBinding() for stack >= 320 and 16-byte aligned: 1 = retained
+// (prepared filled), 0 = the original does not retain. The original's second readSource() and
+// record re-read are not needed: this thread just ran 82248C80 and no guest code runs in between.
+__attribute__((hot)) __declspec(noinline) int fastRetainImpl(const uint8_t* base, uint32_t stack, const FastModeBytes& modes,
+                                                             PreparedBinding& prepared) {
+    if (std::memcmp(base + 0x82A5CD88u, modes.flags.data(), modes.flags.size()) ||
+        std::memcmp(base + 0x82A5CDF4u, modes.counts.data(), modes.counts.size())) return 0;
+    if (!fastReadSource(base, prepared.source)) return 0;
+    auto& binding = prepared.binding;
+    if (!buildEngineVertexProgramKey(prepared.source.input, binding.key)) return 0;
+    std::array<uint8_t, 24> key;
+    std::array<uint8_t, 80> descriptor;
+    std::array<uint8_t, 48> record;
+    std::memcpy(key.data(), base + stack - 224, key.size());
+    std::memcpy(descriptor.data(), base + stack - 192, descriptor.size());
+    binding.deviceAddress = nativeGuest32(base, context + 15748);
+    binding.recordAddress = nativeGuest32(base, context + 17188);
+    if (!binding.deviceAddress || (binding.deviceAddress & 15) || !binding.recordAddress || (binding.recordAddress & 3)) return 0;
+    const uint64_t activeAddress = uint64_t(binding.deviceAddress) + 12688;
+    if (uint64_t(binding.recordAddress) + record.size() > 0x100000000ull || activeAddress + 4 > 0x100000000ull) return 0;
+    std::memcpy(record.data(), base + binding.recordAddress, record.size());
+    const uint32_t active = nativeGuest32(base, uint32_t(activeAddress));
+    for (unsigned i = 0; i < 6; ++i)
+        if (be32(key.data() + i*4) != binding.key[i] || be32(record.data() + 16 + i*4) != binding.key[i]) return 0;
+    for (unsigned i = 0; i < 5; ++i) if (be32(descriptor.data() + i*4) != binding.key[i+1]) return 0;
+    binding.bindingAddress = be32(record.data() + 8);
+    if (!binding.bindingAddress && be32(record.data())) {
+        const auto storage = be32(record.data() + 4);
+        if (storage > 0xFFFFFFFBu) return 0;
+        if (storage) binding.bindingAddress = storage + 4;
+    }
+    if (!binding.bindingAddress || binding.bindingAddress != active) return 0;
+    binding.descriptor = decodeEngineVertexDescriptor(descriptor);
+    binding.descriptorAddress = stack - 192;
+    binding.matrixAddress = prepared.source.matrixAddress;
+    return 1;
+}
+int guardedRetain(const uint8_t* base, uint32_t stack, const FastModeBytes& modes, PreparedBinding& prepared) noexcept {
+#ifdef _WIN32
+    __try { return fastRetainImpl(base, stack, modes, prepared); }
+    __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION || GetExceptionCode() == EXCEPTION_IN_PAGE_ERROR
+              ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) { return -1; }
+#else
+    // Preserve the original POSIX guarded-copy path until a native guard is available.
+    return -1;
+#endif
+}
+}
+__attribute__((hot)) NativeLayerResult currentEngineVertexBindingFast(uint8_t* base, EngineVertexBindingState& output) noexcept {
+    // Counters follow the original only on success; any other outcome runs the original capture.
+    if (!preparedBinding || preparedBinding->base != base) return NativeLayerResult::empty;
+    const int current = guardedBinding(base, *preparedBinding);
+    if (current < 0) return NativeLayerResult::fallback;
+    if (!current) return NativeLayerResult::empty;
+    incrementBindingCounter(0);
+    incrementBindingCounter(1);
+    output = preparedBinding->binding;
+    return NativeLayerResult::ok;
+}
+void retainCompletedVertexBindingLayer(uint8_t* base, uint32_t stack) noexcept {
+    const auto mode = nativeLayerMode();
+    if (mode == NativeLayerMode::off) { retainCompletedVertexBinding(base, stack); return; }
+    if (stack < 320 || (stack & 15)) { preparedBinding.reset(); return; }
+    const auto& modes = fastExpectedModes();
+    PreparedBinding prepared;
+    prepared.base = base;
+    const int fast = guardedRetain(base, stack, modes, prepared);
+    if (mode == NativeLayerMode::check) {
+        retainCompletedVertexBinding(base, stack); // The original result is the one retained.
+        if (fast >= 0) {
+            const bool same = (fast == 1) == preparedBinding.has_value() &&
+                (fast != 1 || (preparedBinding->source == prepared.source && preparedBinding->binding == prepared.binding));
+            nativeLayerReportCheck("retain", same);
+        }
+        return;
+    }
+    if (fast < 0) { retainCompletedVertexBinding(base, stack); return; }
+    preparedBinding.reset();
+    if (fast == 1) { preparedBinding = prepared; incrementBindingCounter(2); }
+}
+// NATIVE_LAYER_END
 void printEngineVertexProgramCounters() {
     const auto matches = equal.load(), comparisons = compared.load();
     std::fprintf(stderr, "[EngineVertexProgram] attempts=%llu captured=%llu compared=%llu bitExact=%llu different=%llu found=%llu missing=%llu (owned keys/cache selection; not native world shaders)\n",
         attempts.load(), captured.load(), comparisons, matches, comparisons - matches, found.load(), missing.load());
+    const auto bindings=bindingCounts.snapshot();
     std::fprintf(stderr, "[EngineVertexBindings] descriptorsRetained=%llu attempts=%llu captured=%llu (owned final descriptors/draw-time CPU constants; no world draw claim)\n",
-        descriptorsRetained.load(), bindingAttempts.load(), bindingsCaptured.load());
+        bindings[2],bindings[0],bindings[1]);
 }
 }
 extern "C" PPC_FUNC(__imp__sub_82248C80);
@@ -262,7 +428,7 @@ PPC_FUNC(sub_82248C80) {
         preparedBinding.reset();
         const auto stack=ctx.r1.u32;
         __imp__sub_82248C80(ctx,base);
-        retainCompletedVertexBinding(base,stack);
+        retainCompletedVertexBindingLayer(base,stack); // NATIVE_LAYER
         return;
     }
     EngineVertexProgramObservation observation;

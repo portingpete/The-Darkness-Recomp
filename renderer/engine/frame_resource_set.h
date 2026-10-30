@@ -13,6 +13,8 @@ template<class T> class FrameResourceSet {
     std::vector<Bucket> buckets_;
     size_t size_=0;
     uint64_t epoch_=1;
+    const T* last0_=nullptr;
+    const T* last1_=nullptr;
     static size_t hash(const T* value) noexcept {
         uint64_t bits=reinterpret_cast<uintptr_t>(value);
         bits^=bits>>33;bits*=0xff51afd7ed558ccdull;bits^=bits>>33;
@@ -34,18 +36,27 @@ public:
     size_t size() const noexcept {return size_;}
     size_t capacity() const noexcept {return buckets_.size();}
     bool contains(const T* value) const noexcept {
+        if(value && (value==last0_ || value==last1_))return true;
         return !buckets_.empty() && buckets_[slot(buckets_,value,epoch_)].epoch==epoch_;
     }
     bool insert(const T* value) {
+        if(value && (value==last0_ || value==last1_))return false;
         if(buckets_.empty())grow();
         size_t i=slot(buckets_,value,epoch_);
-        if(buckets_[i].epoch==epoch_)return false;
+        if(buckets_[i].epoch==epoch_) {
+            last1_=last0_;last0_=value;
+            return false;
+        }
         // At most half full, so probes always reach an empty bucket.
         if(size_==buckets_.size()/2) {grow();i=slot(buckets_,value,epoch_);}
-        buckets_[i]={value,epoch_};++size_;return true;
+        buckets_[i]={value,epoch_};++size_;
+        last1_=last0_;last0_=value;
+        return true;
     }
     void clear() noexcept {
         size_=0;
+        last0_=nullptr;
+        last1_=nullptr;
         if(++epoch_==0) {
             for(auto& bucket:buckets_)bucket.epoch=0;
             epoch_=1;

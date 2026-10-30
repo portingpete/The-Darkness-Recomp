@@ -108,6 +108,13 @@ struct WorldDraw : WorldSurfaceTargets {
     PromptRenderContext promptContext = PromptRenderContext::Menu;
     bool subtitle = false;
 };
+struct WorldCaptureCounters {
+    uint64_t observed=0,captured=0,rejected=0;
+    std::array<uint64_t,5> submitted{};
+    uint64_t motionBatchesSkipped=0;
+};
+WorldCaptureCounters worldCaptureCounters() noexcept;
+void recordSkippedMotionBatch();
 uint16_t worldFragmentTextureMask(std::string_view name,uint32_t flags) noexcept;
 struct WorldResolve : WorldSurfaceTargets {
     WorldTexture destination;

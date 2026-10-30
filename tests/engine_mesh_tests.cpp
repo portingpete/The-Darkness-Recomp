@@ -445,6 +445,7 @@ static void testPreviewRenderContinuation(EnginePreviewD3D11& renderer,CDisplayC
 // guest reuse and texture eviction, and unsupported state must not reuse a
 // previous texture. These fixtures are host tests, not captured game frames.
 static void testPreviewBridge(Memory& memory, PPCContext& threadContext, EnginePreviewD3D11& renderer) {
+    setPreviewTextureBudget(256ull*1024*1024);
     auto* base=memory.base();
     constexpr uint32_t context=0x82A69B00, attributes=context+16896, model=0x01000000;
     constexpr uint32_t descriptor=0x10001, positions=0x11001, colors=0x13001, indices=0x14001, id=0x42;
@@ -1543,6 +1544,24 @@ int main(int argc, char** argv) {
         require(!equalRenderMemory(base,UINT64_MAX,memoryProbe.data(),2) &&
                 !equalRenderMemory(base,1,memoryProbe.data(),SIZE_MAX),"Wrapped render comparison was accepted");
         require(VirtualProtect(base+0x12000,4096,PAGE_NOACCESS,&probeProtection),"Cannot protect render-copy test page");
+        // Short state reads must neither overread a page nor overwrite the
+        // destination around an odd-sized/unaligned register group.
+        std::array<uint8_t,80> shortCopy;
+        for(size_t size=0;size<=64;++size) {
+            for(unsigned offset=0;offset<8;++offset) {
+                const uint32_t source=0x11F80+offset;
+                for(size_t i=0;i<size;++i)base[source+i]=uint8_t(i*17+size);
+                shortCopy.fill(0xA5);
+                require(copyRenderMemory(base,source,shortCopy.data()+3,size),"Short render copy rejected readable bytes");
+                require(std::memcmp(shortCopy.data()+3,base+source,size)==0 &&
+                        std::all_of(shortCopy.begin(),shortCopy.begin()+3,[](auto b){return b==0xA5;}) &&
+                        std::all_of(shortCopy.begin()+3+size,shortCopy.end(),[](auto b){return b==0xA5;}),
+                        "Short render copy changed bytes outside its range");
+            }
+            require(copyRenderMemory(base,0x12000-size,shortCopy.data(),size),"Short render copy overread readable page end");
+            if(size)require(!copyRenderMemory(base,0x12001-size,shortCopy.data(),size),
+                            "Short cross-page render copy accepted inaccessible data");
+        }
         require(!equalRenderMemory(base,0x11FF0,memoryProbe.data(),memoryProbe.size()),"Cross-page comparison accepted inaccessible data");
         require(!copyRenderMemory(base,0x11FF0,memoryProbe.data(),memoryProbe.size()),"Cross-page render copy accepted inaccessible data");
         VirtualProtect(base+0x12000,4096,probeProtection,&probeIgnored);

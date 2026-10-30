@@ -217,6 +217,10 @@ commands install the missing generator patches and regenerate the output.
 For Windows, install Git, Visual Studio 2022 with the **C++ and ClangCL tools**,
 CMake 3.24+, Python 3.11+, MSYS2 MinGW64 GCC and `make` at `C:\msys64`, and
 standalone LLVM at `C:\Program Files\LLVM` (including `llvm-lib.exe` for audio).
+The resource-worker notification helper also requires Rust with the
+`x86_64-pc-windows-msvc` target and `rustc` on PATH (tested with Rust 1.90).
+It has no Cargo dependencies. Configure `-DDARK_RUST_RESOURCE_WAIT=OFF` to
+build the original polling path without Rust.
 Allow approximately 15 GB free. The first build requires an internet connection.
 
 1. Copy your complete original extracted dump into `Darkness/`. Keep the included
@@ -231,6 +235,9 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1
 
 The build downloads pinned XenonRecomp source and applies the bundled Darkness
 patches automatically. Checkouts from the older setup instructions are supported.
+
+See [CPU capture and resource-wait changes](docs/performance/cpu-resource-waits.md)
+for validation scope, diagnostic comparison modes, and runtime rollback.
 
 <details>
 <summary>Game-file layout and revision checks</summary>

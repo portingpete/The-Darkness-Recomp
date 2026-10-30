@@ -1,4 +1,5 @@
 #include "simple_mesh.h"
+#include "native_layer.h"
 #include "display_gamma.h"
 #include "prompt_icons.h"
 #include "texture_mip_layout.h"
@@ -11,10 +12,12 @@
 #include "engine_vertex_program.h"
 #include "world_mesh.h"
 #include "frame_resource_set.h"
+#include "thread_counters.h"
 #include "scene_work.h"
 #include "render_trace.h"
 #include "runtime/native/display_mode.h"
 #include "runtime/native/runtime.h"
+#include "runtime/native/graphics_settings.h"
 #include "runtime/native/stall_profiler.h"
 #include <windows.h>
 #include <algorithm>
@@ -27,11 +30,13 @@
 #include <cstring>
 #include <deque>
 #include <mutex>
+#include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
 
 namespace DarkRecomp::Native {
+static void flushCapturedWorldBatch(); // NATIVE_LAYER v3
 namespace {
 thread_local PromptRenderContext promptRenderContext = PromptRenderContext::Menu;
 thread_local bool subtitleRenderContext = false;
@@ -81,6 +86,7 @@ std::condition_variable frameConsumed,frameAvailable;
 bool frameBackpressure=false;
 bool streamLargeFrames=false,pendingFirst=true;
 PreviewFramePart readyPart;
+std::atomic<int> frameMotionBlur{-1};
 // A live frame may contain many lighting passes. Bound the in-flight batch,
 // not the logical frame: producer, ready slot and consumer own at most one
 // batch each. Constants/commands are bounded by 512 entries; immutable world
@@ -91,6 +97,18 @@ std::unordered_map<uint32_t, std::shared_ptr<const AlphaImage>> textures;
 std::unordered_map<uint32_t, std::shared_ptr<const ColorImage>> alphaColors;
 struct CachedColor { std::shared_ptr<const ColorImage> image; uint64_t used = 0; uint32_t resource = 0; };
 std::unordered_map<uint32_t, CachedColor> colorTextures;
+// NATIVE_LAYER: per-ID generation of colorTextures entries (guarded by queueMutex). An insert,
+// replacement or erase of an ID advances only that ID's generation; other entries' node pointers
+// stay valid across unordered_map inserts and rehashes. Published images are immutable.
+std::array<uint32_t, 65536> colorIdGenerations{};
+inline void bumpColorId(uint32_t id) noexcept { ++colorIdGenerations[id & 0xFFFF]; }
+struct ColorLookupMemo {
+    uint32_t generation = 0, id = 0; // ID 0 never matches: the draw path skips it.
+    CachedColor* entry = nullptr;
+    uint32_t resource = 0, width = 0, height = 0, faces = 0;
+    unsigned firstMip = 0;
+};
+std::array<ColorLookupMemo, 8192> colorLookupMemo;
 // Completed authored images can reach the GPU while loading is still showing
 // a prior frame. Never extend their CPU lifetime solely for this optional work.
 constexpr size_t texturePreloadLimit=4096;
@@ -118,7 +136,7 @@ bool makeColorCacheRoom(size_t bytes) {
         // Keep the cache bounded even if retained prompts fill its budget.
         if (oldest == colorTextures.end()) return false;
         colorBytes -= oldest->second.image->bytes();
-        colorTextures.erase(oldest);
+        bumpColorId(oldest->first);colorTextures.erase(oldest);
     }
     return true;
 }
@@ -136,7 +154,8 @@ FrameResourceSet<StoredGeometry> pendingGeometry;
 size_t pendingGeometryBytes=0;
 FrameResourceSet<ColorImage> pendingWorldImages;
 size_t pendingWorldImageBytes=0,pendingGuiDraws=0;
-std::atomic<uint64_t> worldQueued{},worldVertexBudgetDrops{},worldCommandBudgetDrops{};
+uint64_t worldQueued=0; // Protected by queueMutex, alongside pending commands.
+std::atomic<uint64_t> worldVertexBudgetDrops{},worldCommandBudgetDrops{};
 std::atomic<uint64_t> worldImageBudgetDrops{},streamedParts{};
 struct QueueFrameCounts {
     size_t worldDraws=0, commandDrops=0, vertexDrops=0, clearDrops=0, resolveDrops=0, guiDrops=0;
@@ -144,6 +163,23 @@ struct QueueFrameCounts {
     std::array<size_t,5> passes{};
 };
 QueueFrameCounts pendingCounts;
+// Startup-only opt-in; reads/writes below hold queueMutex. Disabled runs branch
+// only at publication, never in a per-draw timer/counter path.
+bool frameTimelineEnabled=false;
+PreviewFrameDiagnostics pendingTimeline;
+Detail::PreviewProducerClock producerTimelineClock;
+uint32_t timelinePartThread=0;
+int64_t previewTimelineNowNs() noexcept {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+uint64_t previewTimelineFileTime(FILETIME time) noexcept {return uint64_t(time.dwHighDateTime)<<32|time.dwLowDateTime;}
+Detail::PreviewProducerBoundary previewTimelineBoundary() noexcept {
+    FILETIME creation{},exit{},kernel{},user{};
+    const bool valid=GetThreadTimes(GetCurrentThread(),&creation,&exit,&kernel,&user)!=FALSE;
+    return {GetCurrentThreadId(),previewTimelineFileTime(creation),
+        previewTimelineFileTime(kernel)+previewTimelineFileTime(user),previewTimelineNowNs(),valid};
+}
 std::atomic<size_t> queueHighWater{0}, oversizedFrames{0};
 unsigned queueFrameReports=0;
 void publishPreviewPart(std::unique_lock<std::mutex>& lock,bool last);
@@ -210,6 +246,30 @@ size_t pendingVideoBytes = 0;
 // Keep the faulting instructions inside a call covered by the SEH scope.
 // Clang may lower an intrinsic memcpy in __try to unprotected inline loads.
 __declspec(noinline) void copyEngineBytes(void* output,const void* input,size_t size) {
+    // Draw validation mostly reads scalar words and short register groups.
+    // Keep their loads in this SEH-covered call, but avoid the CRT memcpy
+    // dispatcher for every word. The two end copies stay inside the requested
+    // range, including unaligned reads next to an inaccessible page.
+    auto* destination=static_cast<uint8_t*>(output);
+    const auto* source=static_cast<const uint8_t*>(input);
+    if(size<=32) {
+        if(size>=16) {
+            std::memcpy(destination,source,16);
+            std::memcpy(destination+size-16,source+size-16,16);
+        } else if(size>=8) {
+            std::memcpy(destination,source,8);
+            std::memcpy(destination+size-8,source+size-8,8);
+        } else if(size>=4) {
+            std::memcpy(destination,source,4);
+            std::memcpy(destination+size-4,source+size-4,4);
+        } else if(size>=2) {
+            std::memcpy(destination,source,2);
+            std::memcpy(destination+size-2,source+size-2,2);
+        } else if(size) {
+            *destination=*source;
+        }
+        return;
+    }
     std::memcpy(output,input,size);
 }
 __declspec(noinline) bool equalEngineBytes(const void* expected,const void* input,size_t size) {
@@ -342,6 +402,9 @@ bool queuedSubtitleContext(uint8_t* base, uint32_t manager, uint32_t draw, uint6
 
 bool copyRenderMemory(uint8_t* base, uint64_t address, void* output, size_t size) {
     if (!base || !output || !address || address >= 0x100000000ull || size > 0x100000000ull-address) return false;
+#ifndef _WIN32
+    return posixSafeCopy(output,base+address,size);
+#else
     // The AOT engine shares this process. Avoid a kernel transition for each
     // small draw-state read while still rejecting inaccessible/decommitted
     // ranges, including a decommit that races the copy. Callers publish only
@@ -355,18 +418,53 @@ bool copyRenderMemory(uint8_t* base, uint64_t address, void* output, size_t size
             std::fprintf(stderr,"[RenderMemoryFault] source=%08llX bytes=%zu\n",address,size);
         return false;
     }
+#endif
+}
+bool copyRenderMemoryBatch(uint8_t* base,std::span<const RenderMemoryRead> reads) {
+    if(reads.size()>maxRenderMemoryBatchReads)return false;
+#ifndef _WIN32
+    for(const auto& read:reads)
+        if(!copyRenderMemory(base,read.address,read.output,read.size))return false;
+    return true;
+#else
+    // A fault must retain the failing request's diagnostic attribution. Keep
+    // that request visible to the handler while the copy remains noinline,
+    // so Clang cannot move faulting loads outside the protected call.
+    const RenderMemoryRead* volatile activeRead=nullptr;
+    __try {
+        for(size_t index=0;index<reads.size();++index) {
+            const auto& read=reads[index];
+            if(!base || !read.output || !read.address || read.address>=0x100000000ull ||
+               read.size>0x100000000ull-read.address)return false;
+            activeRead=&read;
+            copyEngineBytes(read.output,base+read.address,read.size);
+        }
+        return true;
+    } __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION || GetExceptionCode()==EXCEPTION_IN_PAGE_ERROR
+               ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+        if(renderMemoryFaults.fetch_add(1,std::memory_order_relaxed)<4) {
+            const auto* read=activeRead;
+            std::fprintf(stderr,"[RenderMemoryFault] source=%08llX bytes=%zu\n",read->address,read->size);
+        }
+        return false;
+    }
+#endif
 }
 bool equalRenderMemory(uint8_t* base,uint64_t address,const void* expected,size_t size) {
     if(!base || !expected || !address || address>=0x100000000ull || size>0x100000000ull-address)return false;
+#ifndef _WIN32
+    return posixSafeEqual(expected,base+address,size);
+#else
     __try {
         return equalEngineBytes(expected,base+address,size);
     } __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION || GetExceptionCode()==EXCEPTION_IN_PAGE_ERROR
                ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
         renderMemoryFaults.fetch_add(1,std::memory_order_relaxed);return false;
     }
+#endif
 }
 void setPreviewTextureBudget(size_t bytes) {
-    std::lock_guard lock(queueMutex);
+    flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
     const auto next=std::clamp(bytes,size_t(256*1024*1024),size_t(2ull*1024*1024*1024));
     if(colorBudgetReported && next==colorBudget)return;
     const bool shrink=next<colorBudget;
@@ -723,7 +821,7 @@ void previewObserveVideo(uint8_t* base, uint32_t container, uint32_t localId) {
     if (!frame || !u16(video + 126) || !u16(video + 128) ||
         !copyRenderMemory(base, frame, timestamp.data(), timestamp.size())) return;
     {
-        std::lock_guard lock(queueMutex);
+        flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
         if (auto it = videos.find(key); it != videos.end() && it->second.owner == owner &&
             it->second.frame == frame && it->second.ownerType == ownerType && it->second.timestamp == timestamp) return;
     }
@@ -731,7 +829,7 @@ void previewObserveVideo(uint8_t* base, uint32_t container, uint32_t localId) {
     if (decodeVideoFrame(base, frame, *image)) return;
     // The original container retains this selected frame until its next
     // update on the engine thread. Only owned plane copies cross threads.
-    std::lock_guard lock(queueMutex);
+    flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
     if (!videos.contains(key) && videos.size() >= 4) videos.erase(videos.begin());
     videos[key] = {owner, frame, ownerType, timestamp, image};
     if (++videoImages == 1) std::printf("[EnginePreview] Copied original YUV video frame %ux%u, texture pair=%08X\n",
@@ -740,29 +838,37 @@ void previewObserveVideo(uint8_t* base, uint32_t container, uint32_t localId) {
 
 void enableEnginePreview() { active = true; }
 bool enginePreviewEnabled() { return active.load(std::memory_order_relaxed); }
+bool previewMotionBlurEnabled() {
+    auto value=frameMotionBlur.load(std::memory_order_acquire);
+    if(value<0) {
+        const int requested=graphicsSettings().motionBlur?1:0;
+        if(frameMotionBlur.compare_exchange_strong(value,requested,std::memory_order_acq_rel))value=requested;
+    }
+    return value!=0;
+}
 void previewPrepareTexture(uint32_t id) {
     if (!active || !id) return;
-    std::lock_guard lock(queueMutex);
+    flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
     alphaColors.erase(id);
     if (auto it = textures.find(id); it != textures.end()) {
         textureBytes -= it->second->pixels.size(); textures.erase(it);
     }
     if (auto it = colorTextures.find(id); it != colorTextures.end()) {
-        colorBytes -= it->second.image->bytes(); colorTextures.erase(it);
+        colorBytes -= it->second.image->bytes(); bumpColorId(it->first);colorTextures.erase(it);
     }
 }
 std::shared_ptr<const ColorImage> previewCapturedTexture(uint32_t id,uint32_t resource) {
-    std::lock_guard lock(queueMutex);
+    flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
     const auto it=colorTextures.find(id);
     return it!=colorTextures.end() && it->second.resource==resource?it->second.image:nullptr;
 }
 void previewPublishTexture(uint32_t id,uint32_t resource,std::shared_ptr<const ColorImage> image) {
     if(!active || !id || !resource || !image || !image->valid())return;
-    std::lock_guard lock(queueMutex);
+    flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
     if(image->bytes()>colorBudget)return;
-    if(auto it=colorTextures.find(id);it!=colorTextures.end()) {colorBytes-=it->second.image->bytes();colorTextures.erase(it);}
+    if(auto it=colorTextures.find(id);it!=colorTextures.end()) {colorBytes-=it->second.image->bytes();bumpColorId(it->first);colorTextures.erase(it);}
     if (!makeColorCacheRoom(image->bytes())) return;
-    colorBytes+=image->bytes();colorTextures[id]={image,++colorUse,resource};++colorImages;
+    colorBytes+=image->bytes();colorTextures[id]={image,++colorUse,resource};bumpColorId(id);++colorImages;
     if(image->authoredMips && !image->firstMip) {
         if(texturePreloads.size()==texturePreloadLimit) {
             texturePreloads.pop_front();++texturePreloadCounts.overflow;
@@ -777,14 +883,14 @@ bool takePreviewTexturePreload(std::shared_ptr<const ColorImage>& image) {
     // A caller's previous selection may own large pixel vectors. Release it
     // before taking the handoff lock, like the frame consumer's retire path.
     image.reset();
-    std::lock_guard lock(queueMutex);
+    flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
     if(texturePreloads.empty())return false;
     image=texturePreloads.front().lock();texturePreloads.pop_front();
     if(image)++texturePreloadCounts.taken;else ++texturePreloadCounts.expired;
     return true;
 }
 PreviewTexturePreloadCounters previewTexturePreloadCounters() {
-    std::lock_guard lock(queueMutex);
+    flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
     auto counters=texturePreloadCounts;counters.pending=texturePreloads.size();return counters;
 }
 std::shared_ptr<const ColorImage> promptReplacementFor(uint32_t textureId,
@@ -872,18 +978,18 @@ void previewObserveImage(uint8_t* base, uint32_t address, uint32_t id, uint32_t 
         auto color = std::make_shared<ColorImage>();
         if (decodeColorImage(base, address, *color)) { ++rejectedImages; return; }
         color->promptOrigin = scopedOrigin;
-        std::lock_guard lock(queueMutex);
+        flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
         if (auto it = colorTextures.find(id); it != colorTextures.end()) {
-            colorBytes -= it->second.image->bytes(); colorTextures.erase(it);
+            colorBytes -= it->second.image->bytes(); bumpColorId(it->first);colorTextures.erase(it);
         }
         if (!makeColorCacheRoom(color->bytes())) { ++rejectedImages; return; }
-        colorBytes += color->bytes(); colorTextures[id] = {color, ++colorUse}; ++colorImages;
+        colorBytes += color->bytes(); colorTextures[id] = {color, ++colorUse};bumpColorId(id); ++colorImages;
         if (TextureUploadTraceEnabled())
             std::printf("[EnginePreview] Copied original color texture id=%u size=%ux%u codec=%u\n",
                         id, color->width, color->height, color->sourceCodec);
         return;
     }
-    std::lock_guard lock(queueMutex);
+    flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
     if (textureBytes + image->pixels.size() > 32 * 1024 * 1024) { ++rejectedImages; return; }
     if (auto it = textures.find(id); it != textures.end()) textureBytes -= it->second->pixels.size();
     textureBytes += image->pixels.size(); textures[id] = image; alphaColors.erase(id); ++images;
@@ -892,14 +998,14 @@ void previewObserveImage(uint8_t* base, uint32_t address, uint32_t id, uint32_t 
 }
 std::shared_ptr<const AlphaImage> previewAlphaImageForSubtitleFont(uint32_t id) noexcept {
     try {
-        std::lock_guard lock(queueMutex);
+        flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
         const auto found = textures.find(id);
         return found == textures.end() ? nullptr : found->second;
     } catch (...) { return {}; }
 }
 std::shared_ptr<const ColorImage> previewColorImageForSubtitleFont(uint32_t id) noexcept {
     try {
-        std::lock_guard lock(queueMutex);
+        flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
         const auto found = colorTextures.find(id);
         return found == colorTextures.end() ? nullptr : found->second.image;
     } catch (...) { return {}; }
@@ -1030,7 +1136,7 @@ static bool submitTriangles(uint8_t* base, uint32_t indices, uint32_t triangles)
     std::shared_ptr<const VideoFrame> video;
     std::shared_ptr<const ColorImage> colorTexture;
     {
-        std::lock_guard lock(queueMutex);
+        flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
         if (videoMaterial) {
             auto it = videos.find(u32(attributes + 8));
             if (it != videos.end()) video = it->second.image;
@@ -1068,7 +1174,7 @@ static bool submitTriangles(uint8_t* base, uint32_t indices, uint32_t triangles)
     mesh.textureId = u16(attributes + 8);
     mesh.opaque = opaqueMaterial;
     mesh.subtitle = currentSubtitleRenderContext();
-    std::unique_lock lock(queueMutex);
+    flushCapturedWorldBatch();std::unique_lock lock(queueMutex);
     const size_t videoBytes = video ? video->luma.size() + video->chroma.size() : 0;
     auto newColorBytes = colorTexture && std::none_of(pending.begin(), pending.end(),
         [&](const auto& queued) { return queued.colorTexture == colorTexture; }) ? colorTexture->bytes() : 0;
@@ -1092,15 +1198,65 @@ static bool submitTriangles(uint8_t* base, uint32_t indices, uint32_t triangles)
 void previewObserveTriangles(uint8_t* base, uint32_t indices, uint32_t triangles) {
     submitTriangles(base, indices, triangles);
 }
+static void queueCapturedWorldInto(uint8_t* base,std::shared_ptr<WorldDraw> draw);
+static void queueCapturedWorldLocked(uint8_t* base,std::shared_ptr<WorldDraw> draw,std::unique_lock<std::mutex>& lock);
+// NATIVE_LAYER v3: native-layer draws captured on the frame-producing thread wait in a short
+// per-thread batch and are queued in order under one queueMutex acquisition. Every other
+// queueMutex acquisition first flushes the calling thread's batch.
+namespace {
+struct CapturedWorldBatch {
+    std::array<std::shared_ptr<WorldDraw>, 32> draws;
+    uint8_t* base = nullptr;
+    size_t count = 0;
+};
+thread_local CapturedWorldBatch capturedWorldBatch;
+std::atomic<DWORD> frameProducerThread{0};
+}
+static void flushCapturedWorldBatch() {
+    auto& batch = capturedWorldBatch;
+    if (!batch.count) return;
+    std::unique_lock<std::mutex> lock(queueMutex);
+    for (size_t i = 0; i < batch.count; ++i) {
+        try { queueCapturedWorldLocked(batch.base, std::move(batch.draws[i]), lock); } catch (...) {}
+        batch.draws[i].reset();
+    }
+    batch.count = 0;
+}
 template<class Geometry>
 static void previewObserveWorldInto(uint8_t* base,Geometry&& geometry) {
     EngineCpuScope profile(EnginePhase::snapshot);
     if (!active) return;
-    worldActive=true;
+    if(!worldActive.load(std::memory_order_relaxed))worldActive.store(true,std::memory_order_relaxed);
     try {
         auto draw=captureWorldDraw(base,std::forward<Geometry>(geometry));
         if(!draw)return;
-        std::unique_lock lock(queueMutex);
+        queueCapturedWorldInto(base,std::move(draw));
+    } catch (...) {}
+}
+void previewQueueCapturedWorld(uint8_t* base,std::shared_ptr<WorldDraw> draw) {
+    EngineCpuScope profile(EnginePhase::snapshot);
+    if (!active) return;
+    if(!worldActive.load(std::memory_order_relaxed))worldActive.store(true,std::memory_order_relaxed);
+    try {
+        // Batch only on the thread that publishes frames; any other thread queues at once.
+        if (GetCurrentThreadId() != frameProducerThread.load(std::memory_order_relaxed)) {
+            queueCapturedWorldInto(base,std::move(draw));
+            return;
+        }
+        auto& batch = capturedWorldBatch;
+        if (batch.count && batch.base != base) flushCapturedWorldBatch();
+        batch.base = base;
+        batch.draws[batch.count++] = std::move(draw);
+        if (batch.count == batch.draws.size()) flushCapturedWorldBatch();
+    } catch (...) {}
+}
+__attribute__((hot)) static void queueCapturedWorldInto(uint8_t* base,std::shared_ptr<WorldDraw> draw) {
+    flushCapturedWorldBatch();
+    std::unique_lock<std::mutex> lock(queueMutex);
+    queueCapturedWorldLocked(base,std::move(draw),lock);
+}
+__attribute__((hot)) static void queueCapturedWorldLocked(uint8_t* base,std::shared_ptr<WorldDraw> draw,std::unique_lock<std::mutex>& lock) {
+    {
         ++pendingCounts.worldDraws;
         // Draws retain shared immutable buffers. Count each retained resource
         // once, not once per depth/light/fog/material pass. UI vertices are
@@ -1110,6 +1266,9 @@ static void previewObserveWorldInto(uint8_t* base,Geometry&& geometry) {
         // publication. Accounting needs identities, not extra shared_ptr copies
         // that contend with resource releases on the render thread.
         const std::array resources{draw->geometry.vertices.get(),draw->geometry.indices.get()};
+        const bool sameGeom = resources[1] == resources[0];
+        const size_t maxAddVertices = resources[0]->vertexCount + (sameGeom ? 0 : resources[1]->vertexCount);
+        const size_t maxAddBytes = resources[0]->bytes() + (sameGeom ? 0 : resources[1]->bytes());
         auto measureGeometry=[&] {
             additionalVertices=additionalBytes=0;
             for(size_t i=0;i<resources.size();++i) {
@@ -1120,46 +1279,78 @@ static void previewObserveWorldInto(uint8_t* base,Geometry&& geometry) {
                 }
             }
         };
-        measureGeometry();
-        if(liveStreaming() && !pending.empty() && (pending.size()>=livePartCommands ||
-           pendingWorldVertices+additionalVertices>4*1024*1024 ||
-           pendingGeometryBytes+additionalBytes>worldGeometryByteLimit)) {
-            publishPreviewPart(lock,false);measureGeometry();
+        const bool streaming = liveStreaming();
+        bool geometryMeasured = false;
+        if(streaming || pendingWorldVertices+maxAddVertices>4*1024*1024 ||
+           pendingGeometryBytes+maxAddBytes>worldGeometryByteLimit) {
+            measureGeometry();
+            geometryMeasured = true;
+            if(streaming && !pending.empty() && (pending.size()>=livePartCommands ||
+               pendingWorldVertices+additionalVertices>4*1024*1024 ||
+               pendingGeometryBytes+additionalBytes>worldGeometryByteLimit)) {
+                publishPreviewPart(lock,false);measureGeometry();
+            }
         }
-        if (!reservePreviewCommand(lock) || pendingWorldVertices+additionalVertices>4*1024*1024 ||
-            pendingGeometryBytes+additionalBytes>worldGeometryByteLimit) {
+        if (!reservePreviewCommand(lock) ||
+            (geometryMeasured && (pendingWorldVertices+additionalVertices>4*1024*1024 ||
+                                  pendingGeometryBytes+additionalBytes>worldGeometryByteLimit))) {
             if(pending.size()>=4096)++pendingCounts.commandDrops;else ++pendingCounts.vertexDrops;
             const auto dropped=pending.size()>=4096?++worldCommandBudgetDrops:++worldVertexBudgetDrops;
             if(dropped<=8)std::fprintf(stderr,"[EngineWorldQueueDrop] frame=%llu program=%s commands=%zu uniqueVertices=%zu uniqueGeometry=%zu uniqueBytes=%zu additionalVertices=%zu\n",
                 frames.load()+1,draw->fragmentName.c_str(),pending.size(),pendingWorldVertices,pendingGeometry.size(),pendingGeometryBytes,additionalVertices);
             return;
         }
+        std::array<const ColorImage*,16> images{};
+        size_t imageCount=0;
+        size_t maxAddImageBytes=0;
+        auto recordImage=[&](const ColorImage* image) noexcept {
+            for(size_t i=0;i<imageCount;++i)if(images[i]==image)return;
+            images[imageCount++]=image;
+            // The exact streaming budget counts each new image once below;
+            // do not rescan its mip chain for an unused maximum on every pass.
+            if(!streaming)maxAddImageBytes+=image->bytes();
+        };
+        uint32_t unresolvedSlots=0;
         for (uint32_t slots=draw->textureMask;slots;slots&=slots-1) {
             const unsigned s=std::countr_zero(slots);
-            if(!draw->textureObjects[s].object || !draw->textureIds[s])continue;
-            const auto it=colorTextures.find(draw->textureIds[s]);
-            if(it==colorTextures.end())continue;
-            const auto& texture=draw->textureObjects[s];const auto& sampler=draw->samplers[s];
-            if(it->second.resource && (it->second.resource!=texture.object ||
-               it->second.image->width!=texture.width || it->second.image->height!=texture.height ||
-               it->second.image->faces!=texture.faces))continue;
-            const auto required=(std::max)(texture.firstMip,sampler.lodValid?unsigned(sampler.minLevel):0u);
-            if(it->second.image->firstMip>required)continue;
-            draw->textures[s]=it->second.image;it->second.used=++colorUse;
-        }
-        for (uint32_t slots=draw->textureMask;slots;slots&=slots-1) {
-            const unsigned s=std::countr_zero(slots);
-            if(draw->textures[s])continue;
             if(!draw->textureObjects[s].object)continue;
+            const auto id=draw->textureIds[s];
+            if(!id) {unresolvedSlots|=(1u<<s);continue;}
+            // NATIVE_LAYER: memoized map lookup and immutable image fields.
+            auto& memo=colorLookupMemo[id&(colorLookupMemo.size()-1)];
+            const auto generation=colorIdGenerations[id];
+            if(memo.id!=id || memo.generation!=generation) {
+                const auto it=colorTextures.find(id);
+                memo.id=id;memo.generation=generation;
+                memo.entry=it==colorTextures.end()?nullptr:&it->second;
+                if(memo.entry) {
+                    const auto& image=*memo.entry->image;
+                    memo.resource=memo.entry->resource;memo.width=image.width;memo.height=image.height;
+                    memo.faces=image.faces;memo.firstMip=image.firstMip;
+                }
+            }
+            if(!memo.entry) {unresolvedSlots|=(1u<<s);continue;}
+            const auto& texture=draw->textureObjects[s];const auto& sampler=draw->samplers[s];
+            if(memo.resource && (memo.resource!=texture.object ||
+               memo.width!=texture.width || memo.height!=texture.height ||
+               memo.faces!=texture.faces)) {unresolvedSlots|=(1u<<s);continue;}
+            const auto required=(std::max)(texture.firstMip,sampler.lodValid?unsigned(sampler.minLevel):0u);
+            if(memo.firstMip>required) {unresolvedSlots|=(1u<<s);continue;}
+            draw->textures[s]=memo.entry->image;memo.entry->used=++colorUse;
+            recordImage(memo.entry->image.get());
+        }
+        for (uint32_t slots=unresolvedSlots;slots;slots&=slots-1) {
+            const unsigned s=std::countr_zero(slots);
             if(auto it=textures.find(draw->textureIds[s]);draw->textureIds[s] && it!=textures.end()) {
                 auto& cached=alphaColors[draw->textureIds[s]];
-                if(cached) {draw->textures[s]=cached;continue;}
+                if(cached) {draw->textures[s]=cached;recordImage(cached.get());continue;}
                 auto color=std::make_shared<ColorImage>();color->width=it->second->width;color->height=it->second->height;
                 color->sourceCodec=2;color->pixels.resize(it->second->pixels.size()*4);
                 for(size_t i=0;i<it->second->pixels.size();++i) {
                     color->pixels[i*4]=color->pixels[i*4+1]=color->pixels[i*4+2]=255;color->pixels[i*4+3]=it->second->pixels[i];
                 }
                 cached=color;draw->textures[s]=std::move(color);
+                recordImage(draw->textures[s].get());
             }
             if(!draw->textures[s] && draw->textureObjects[s].object) {
                 traceMissingWorldTexture(base,draw->textureIds[s],draw->textureObjects[s].object,draw->textureObjects[s].storage);
@@ -1199,27 +1390,18 @@ static void previewObserveWorldInto(uint8_t* base,Geometry&& geometry) {
                         // temporary pair swap. Fetch10 endian/selector decoding
                         // already exposes the shader's logical U,U,U,V view.
                         if(auto old=colorTextures.find(draw->textureIds[s]);old!=colorTextures.end()) {
-                            colorBytes-=old->second.image->bytes();colorTextures.erase(old);
+                            colorBytes-=old->second.image->bytes();bumpColorId(old->first);colorTextures.erase(old);
                         }
                         if (makeColorCacheRoom(decoded->bytes())) {
-                            colorBytes+=decoded->bytes();colorTextures[draw->textureIds[s]]={decoded,++colorUse,draw->textureObjects[s].object};
+                            colorBytes+=decoded->bytes();colorTextures[draw->textureIds[s]]={decoded,++colorUse,draw->textureObjects[s].object};bumpColorId(draw->textureIds[s]);
                         }
                         draw->textures[s]=decoded;++colorImages;
+                        recordImage(decoded.get());
                         if (TextureUploadTraceEnabled())
                             std::fprintf(stderr,"[EngineStreamedTexture] owned id=%u size=%ux%u format=%u\n",draw->textureIds[s],decoded->width,decoded->height,draw->textureObjects[s].format);
                     }
                 }
             }
-        }
-        // Capture only distinct images used by this draw. Reuse this short
-        // list if a budget boundary publishes the pending batch; all image
-        // ownership stays in draw while the non-owning list is in use.
-        std::array<const ColorImage*,16> images{};
-        size_t imageCount=0;
-        for(uint32_t slots=draw->textureMask;slots;slots&=slots-1) {
-            const auto* image=draw->textures[std::countr_zero(slots)].get();
-            if(image && std::find(images.begin(),images.begin()+imageCount,image)==images.begin()+imageCount)
-                images[imageCount++]=image;
         }
         size_t additionalImageBytes=0;
         auto measureImages=[&] {
@@ -1227,25 +1409,35 @@ static void previewObserveWorldInto(uint8_t* base,Geometry&& geometry) {
             for(size_t i=0;i<imageCount;++i)
                 if(!pendingWorldImages.contains(images[i]))additionalImageBytes+=images[i]->bytes();
         };
-        measureImages();
-        if(liveStreaming() && !pending.empty() && pendingWorldImageBytes+additionalImageBytes>worldImageByteLimit) {
-            publishPreviewPart(lock,false);measureGeometry();measureImages();
+        if(streaming || pendingWorldImageBytes+maxAddImageBytes>worldImageByteLimit) {
+            measureImages();
+            if(streaming && !pending.empty() && pendingWorldImageBytes+additionalImageBytes>worldImageByteLimit) {
+                publishPreviewPart(lock,false);measureGeometry();geometryMeasured=true;measureImages();
+            }
+            if(geometryMeasured && (pendingWorldVertices+additionalVertices>4*1024*1024 ||
+               pendingGeometryBytes+additionalBytes>worldGeometryByteLimit)) {
+                ++pendingCounts.vertexDrops;++worldVertexBudgetDrops;return;
+            }
+            if(pendingWorldImageBytes+additionalImageBytes>worldImageByteLimit) {
+                ++pendingCounts.imageDrops;++worldImageBudgetDrops;return;
+            }
         }
-        if(pendingWorldVertices+additionalVertices>4*1024*1024 ||
-           pendingGeometryBytes+additionalBytes>worldGeometryByteLimit) {
-            ++pendingCounts.vertexDrops;++worldVertexBudgetDrops;return;
+        if(pendingGeometry.insert(resources[0])) {
+            pendingGeometryBytes+=resources[0]->bytes();
+            pendingWorldVertices+=resources[0]->vertexCount;
         }
-        if(pendingWorldImageBytes+additionalImageBytes>worldImageByteLimit) {
-            ++pendingCounts.imageDrops;++worldImageBudgetDrops;return;
+        if(!sameGeom && pendingGeometry.insert(resources[1])) {
+            pendingGeometryBytes+=resources[1]->bytes();
+            pendingWorldVertices+=resources[1]->vertexCount;
         }
-        for(const auto* resource:resources)if(pendingGeometry.insert(resource))pendingGeometryBytes+=resource->bytes();
-        pendingWorldVertices+=additionalVertices;
-        for(size_t i=0;i<imageCount;++i)pendingWorldImages.insert(images[i]);
-        pendingWorldImageBytes+=additionalImageBytes;
-        SimpleMesh command;command.promptContext=draw->promptContext;
-        command.world=std::move(draw);pending.push_back(std::move(command));
+        for(size_t i=0;i<imageCount;++i) {
+            if(pendingWorldImages.insert(images[i]))
+                pendingWorldImageBytes+=images[i]->bytes();
+        }
+        auto& command=pending.emplace_back();command.promptContext=draw->promptContext; // NATIVE_LAYER: in place
+        command.world=std::move(draw);
         ++worldQueued;
-    } catch (...) {}
+    }
 }
 void previewObserveWorld(uint8_t* base,const StoredDraw& geometry) {
     previewObserveWorldInto(base,geometry);
@@ -1253,6 +1445,190 @@ void previewObserveWorld(uint8_t* base,const StoredDraw& geometry) {
 void previewObserveWorld(uint8_t* base,StoredDraw&& geometry) {
     previewObserveWorldInto(base,std::move(geometry));
 }
+// NATIVE_LAYER_BEGIN: stored-draw observation through the native layer, with exact fallback to
+// the original sequence (resolve, captureEngineVertexBindings, previewObserveWorld) whenever the
+// fast path cannot decide. Check mode runs both and queues the original result.
+namespace {
+struct NativeLayerCounters {
+    ThreadCounters<3> hot; // 0=fast, 1=empty, 2=immediateFast
+    void addFast() noexcept { thread_local const auto w = hot.acquireWriter(); w.increment(0); }
+    void addEmpty() noexcept { thread_local const auto w = hot.acquireWriter(); w.increment(1); }
+    void addImmediateFast() noexcept { thread_local const auto w = hot.acquireWriter(); w.increment(2); }
+    std::atomic<uint64_t> resolveFallback{}, bindingFallback{}, snapshotFallback{};
+    std::atomic<uint64_t> checked{}, mismatches{}, resolveMismatches{}, bindingMismatches{}, presenceMismatches{};
+    std::atomic<uint64_t> immediateFallback{}, immediateChecked{}, immediateMismatches{};
+    std::atomic<uint64_t> retainChecked{}, retainMismatches{};
+    std::atomic<uint64_t> frames{};
+};
+NativeLayerCounters nativeLayerCounts;
+}
+NativeLayerMode nativeLayerMode() noexcept {
+    static const NativeLayerMode mode = [] {
+        const char* value = std::getenv("DARK_NATIVE_LAYER");
+        unsigned selected = value && *value ? unsigned(std::strtoul(value, nullptr, 10)) : 1u;
+        if (selected > 2) selected = 1;
+        std::fprintf(stderr, "[NativeLayer] mode=%u (0=original capture, 1=native layer, 2=check: run both, queue original)\n", selected);
+        return NativeLayerMode(selected);
+    }();
+    return mode;
+}
+void printNativeLayerCounters() {
+    auto& c = nativeLayerCounts;
+    const auto hot = c.hot.snapshot();
+    std::fprintf(stderr, "[NativeLayer] frames=%llu fast=%llu empty=%llu resolveFallback=%llu bindingFallback=%llu snapshotFallback=%llu checked=%llu mismatches=%llu resolveMismatches=%llu bindingMismatches=%llu presenceMismatches=%llu immediateFast=%llu immediateFallback=%llu immediateChecked=%llu immediateMismatches=%llu retainChecked=%llu retainMismatches=%llu\n",
+        c.frames.load(), hot[0], hot[1], c.resolveFallback.load(), c.bindingFallback.load(), c.snapshotFallback.load(),
+        c.checked.load(), c.mismatches.load(), c.resolveMismatches.load(), c.bindingMismatches.load(), c.presenceMismatches.load(),
+        hot[2], c.immediateFallback.load(), c.immediateChecked.load(), c.immediateMismatches.load(),
+        c.retainChecked.load(), c.retainMismatches.load());
+}
+namespace {
+void nativeLayerFrame() noexcept {
+    if (nativeLayerMode() == NativeLayerMode::off) return;
+    if (nativeLayerCounts.frames.fetch_add(1, std::memory_order_relaxed) % 1000 == 999) printNativeLayerCounters();
+}
+void reportNativeLayerMismatch(const char* kind, const char* field, const StoredDraw* geometry, const WorldDraw* draw) {
+    static std::atomic<unsigned> reports{};
+    if (reports.fetch_add(1, std::memory_order_relaxed) >= 48) return;
+    std::fprintf(stderr, "[NativeLayerMismatch] kind=%s field=%s frame=%llu geometry=%08X program=%s material=%u\n",
+        kind, field ? field : "-", nativeLayerCounts.frames.load(),
+        geometry && geometry->vertices ? geometry->vertices->address : 0u,
+        draw ? draw->fragmentName.c_str() : "-", draw ? unsigned(draw->material) : 0u);
+}
+// The exact original sequence after a resolve.
+void originalAfterResolve(uint8_t* base, StoredDraw&& owned) {
+    if (owned) captureEngineVertexBindings(base, owned.vertexBindings);
+    if (owned) previewObserveWorld(base, std::move(owned));
+}
+}
+void nativeLayerReportCheck(const char* kind, bool same) noexcept {
+    auto& counts = nativeLayerCounts;
+    counts.retainChecked.fetch_add(1, std::memory_order_relaxed);
+    if (same) return;
+    counts.retainMismatches.fetch_add(1, std::memory_order_relaxed);
+    counts.mismatches.fetch_add(1, std::memory_order_relaxed);
+    reportNativeLayerMismatch(kind, nullptr, nullptr, nullptr);
+}
+__attribute__((hot)) void nativeLayerObserveStoredDraw(uint8_t* base, const StoredDrawRequest& request, uint32_t returnAddress,
+                                  uint32_t primitive, uint32_t baseVertex, uint32_t first, uint32_t count,
+                                  uint32_t boundVertexId, uint32_t boundIndexBuffer) noexcept {
+    auto& counts = nativeLayerCounts;
+    const bool check = nativeLayerMode() == NativeLayerMode::check;
+    StoredDraw owned;
+    auto resolved = resolveStoredDrawFast(request, storedGeometryCache(), base, returnAddress, primitive, baseVertex,
+                                          first, count, boundVertexId, boundIndexBuffer, owned);
+    if (resolved == NativeLayerResult::fallback) {
+        counts.resolveFallback.fetch_add(1, std::memory_order_relaxed);
+        owned = {};
+        try { owned = request.resolve(storedGeometryCache(), base, returnAddress, primitive, baseVertex, first, count,
+                                      boundVertexId, boundIndexBuffer); } catch (...) {}
+        try { originalAfterResolve(base, std::move(owned)); } catch (...) {}
+        return;
+    }
+    if (check) {
+        // Original resolve for comparison (diagnostic: cache statistics count it twice).
+        StoredDraw slow;
+        try { slow = request.resolve(storedGeometryCache(), base, returnAddress, primitive, baseVertex, first, count,
+                                     boundVertexId, boundIndexBuffer); } catch (...) {}
+        counts.checked.fetch_add(1, std::memory_order_relaxed);
+        if (bool(slow) != bool(owned) || slow.vertices.get() != owned.vertices.get() || slow.indices.get() != owned.indices.get() ||
+            slow.firstIndex != owned.firstIndex || slow.indexCount != owned.indexCount) {
+            counts.mismatches.fetch_add(1, std::memory_order_relaxed);
+            counts.resolveMismatches.fetch_add(1, std::memory_order_relaxed);
+            reportNativeLayerMismatch("resolve", nullptr, &slow, nullptr);
+        }
+        if (!slow) return;
+        EngineVertexBindingState binding;
+        const auto fastBinding = owned ? currentEngineVertexBindingFast(base, binding) : NativeLayerResult::empty;
+        try { captureEngineVertexBindings(base, slow.vertexBindings); } catch (...) {}
+        const bool slowBinding = slow.vertexBindings.has_value();
+        if ((fastBinding == NativeLayerResult::ok) != slowBinding ||
+            (slowBinding && !(static_cast<const EngineVertexBindingState&>(*slow.vertexBindings) == binding))) {
+            if (fastBinding != NativeLayerResult::fallback) {
+                counts.mismatches.fetch_add(1, std::memory_order_relaxed);
+                counts.bindingMismatches.fetch_add(1, std::memory_order_relaxed);
+                reportNativeLayerMismatch("binding", nullptr, &slow, nullptr);
+            }
+        }
+        std::shared_ptr<WorldDraw> fastDraw;
+        if (fastBinding == NativeLayerResult::ok && owned) fastDraw = captureWorldDrawFast(base, binding, owned);
+        std::shared_ptr<WorldDraw> slowDraw;
+        try { slowDraw = captureWorldDraw(base, std::move(slow)); } catch (...) {}
+        if (fastDraw && !slowDraw) {
+            counts.mismatches.fetch_add(1, std::memory_order_relaxed);
+            counts.presenceMismatches.fetch_add(1, std::memory_order_relaxed);
+            reportNativeLayerMismatch("fast-only", nullptr, nullptr, fastDraw.get());
+        } else if (fastDraw && slowDraw) {
+            const char* field = nullptr;
+            if (!sameCapturedWorldDraw(*fastDraw, *slowDraw, field)) {
+                counts.mismatches.fetch_add(1, std::memory_order_relaxed);
+                reportNativeLayerMismatch("draw", field, nullptr, slowDraw.get());
+            } else counts.addFast();
+        } else if (slowDraw) counts.snapshotFallback.fetch_add(1, std::memory_order_relaxed);
+        fastDraw.reset();
+        if (slowDraw) previewQueueCapturedWorld(base, std::move(slowDraw));
+        return;
+    }
+    if (resolved == NativeLayerResult::empty) { counts.addEmpty(); return; }
+    EngineVertexBindingState binding;
+    if (currentEngineVertexBindingFast(base, binding) != NativeLayerResult::ok) {
+        counts.bindingFallback.fetch_add(1, std::memory_order_relaxed);
+        try { originalAfterResolve(base, std::move(owned)); } catch (...) {}
+        return;
+    }
+    auto draw = captureWorldDrawFast(base, binding, owned);
+    if (!draw) {
+        counts.snapshotFallback.fetch_add(1, std::memory_order_relaxed);
+        try { originalAfterResolve(base, std::move(owned)); } catch (...) {}
+        return;
+    }
+    counts.addFast();
+    previewQueueCapturedWorld(base, std::move(draw));
+}
+// Immediate world draws after their original geometry snapshot (non-diagnostic runs only).
+// true: the draw was fully handled; false: the caller continues with the original sequence.
+bool nativeLayerObserveImmediate(uint8_t* base, uint32_t device, StoredDraw& geometry) noexcept {
+    const auto mode = nativeLayerMode();
+    if (mode == NativeLayerMode::off) return false;
+    auto& counts = nativeLayerCounts;
+    try {
+        if (mode == NativeLayerMode::check) {
+            EngineVertexBindingState binding;
+            const auto fastBinding = currentEngineVertexBindingFast(base, binding);
+            StoredDraw references = geometry;
+            std::shared_ptr<WorldDraw> fastDraw;
+            if (fastBinding == NativeLayerResult::ok && binding.deviceAddress == device)
+                fastDraw = captureWorldDrawFast(base, binding, references);
+            // The original non-diagnostic sequence: bindings, device check, capture, queue.
+            std::shared_ptr<WorldDraw> slowDraw;
+            if (captureEngineVertexBindings(base, geometry.vertexBindings) && geometry.vertexBindings->deviceAddress == device)
+                slowDraw = captureWorldDraw(base, std::move(geometry));
+            counts.immediateChecked.fetch_add(1, std::memory_order_relaxed);
+            const char* field = nullptr;
+            const bool same = fastBinding == NativeLayerResult::fallback ||
+                (fastDraw ? slowDraw && sameCapturedWorldDraw(*fastDraw, *slowDraw, field) : true);
+            if (!same) {
+                counts.immediateMismatches.fetch_add(1, std::memory_order_relaxed);
+                counts.mismatches.fetch_add(1, std::memory_order_relaxed);
+                reportNativeLayerMismatch("immediate", field, nullptr, slowDraw ? slowDraw.get() : fastDraw.get());
+            }
+            fastDraw.reset();
+            if (slowDraw) previewQueueCapturedWorld(base, std::move(slowDraw));
+            return true;
+        }
+        EngineVertexBindingState binding;
+        if (currentEngineVertexBindingFast(base, binding) != NativeLayerResult::ok || binding.deviceAddress != device) {
+            counts.immediateFallback.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+        auto draw = captureWorldDrawFast(base, binding, geometry);
+        if (!draw) { counts.immediateFallback.fetch_add(1, std::memory_order_relaxed); return false; }
+        counts.addImmediateFast();
+        previewQueueCapturedWorld(base, std::move(draw));
+        return true;
+    } catch (...) {}
+    return false;
+}
+// NATIVE_LAYER_END
 void previewObserveImmediateWorld(uint8_t* base,uint32_t device,uint32_t indices,uint32_t count) {
     if (!active || !worldActive || !device || uint64_t(device)+12456>0x100000000ull) return;
     // Task-59 bounded pre-capture failure diagnostics. diagnose is read once;
@@ -1291,6 +1667,7 @@ void previewObserveImmediateWorld(uint8_t* base,uint32_t device,uint32_t indices
         ImmediateCaptureReason reason;
         if (!snapshotImmediateWorldGeometry(base,descriptor,indices,count,std::move(stored),geometry,
             diagnose?&reason:nullptr)) {fail(3,diagnose?&reason:nullptr);return;}
+        if(!diagnose && nativeLayerObserveImmediate(base,device,geometry))return; // NATIVE_LAYER
         if(!captureEngineVertexBindings(base,geometry.vertexBindings)) {fail(4);return;}
         if(geometry.vertexBindings->deviceAddress!=device) {fail(5);return;}
         if(diagnose && smoke && immediateSmokeSuccessLogged.fetch_add(1,std::memory_order_relaxed)<2)
@@ -1309,7 +1686,7 @@ void previewObserveClear(uint8_t* base,uint32_t device,uint32_t flags,uint32_t c
         if (!snapshotWorldClear(base,device,flags,color,depth,stencil,*clear)) return;
         if(rectangle[2]<rectangle[0] || rectangle[3]<rectangle[1])return;
         clear->rectangle=rectangle;
-        std::unique_lock lock(queueMutex);
+        flushCapturedWorldBatch();std::unique_lock lock(queueMutex);
         if (!reservePreviewCommand(lock)) {++pendingCounts.clearDrops;return;}
         SimpleMesh command;command.worldClear=std::move(clear);pending.push_back(std::move(command));
     } catch (...) {}
@@ -1331,7 +1708,7 @@ void previewObserveResolve(uint8_t* base,uint32_t device,uint32_t flags,uint32_t
     try {
         auto resolve=std::make_shared<WorldResolve>();
         if(!snapshotWorldResolve(base,device,flags,rectangle,destination,offset,color,depth,stencil,face,mip,*resolve)) return;
-        std::unique_lock lock(queueMutex);if(!reservePreviewCommand(lock)) {++pendingCounts.resolveDrops;return;}
+        flushCapturedWorldBatch();std::unique_lock lock(queueMutex);if(!reservePreviewCommand(lock)) {++pendingCounts.resolveDrops;return;}
         SimpleMesh command;command.worldResolve=std::move(resolve);pending.push_back(std::move(command));
     }catch(...){}
 }
@@ -1340,7 +1717,7 @@ void previewObservePresent(uint8_t* base,uint32_t frontbuffer) {
     try {
         auto texture=std::make_shared<WorldTexture>();
         if(!snapshotWorldTexture(base,frontbuffer,*texture)) return;
-        std::unique_lock lock(queueMutex);
+        flushCapturedWorldBatch();std::unique_lock lock(queueMutex);
         if(liveStreaming())reservePreviewCommand(lock);
         SimpleMesh command;command.worldPresent=std::move(texture);pending.push_back(std::move(command));
     }catch(...){}
@@ -1358,7 +1735,7 @@ void previewObserveDisplayGamma(uint8_t* base,uint32_t ramp,bool piecewise) {
                 if(!piecewise)gamma.entries[entry*3+channel][0]&=0xFFC0;
             }
         }
-        std::unique_lock lock(queueMutex);
+        flushCapturedWorldBatch();std::unique_lock lock(queueMutex);
         static std::shared_ptr<const DisplayGamma> previous;
         if(previous && *previous==gamma)return;
         if(liveStreaming())reservePreviewCommand(lock);
@@ -1368,12 +1745,17 @@ void previewObserveDisplayGamma(uint8_t* base,uint32_t ramp,bool piecewise) {
     }catch(...){}
 }
 void setPreviewFrameBackpressure(bool enabled,bool streaming) {
-    {std::lock_guard lock(queueMutex);frameBackpressure=enabled;streamLargeFrames=enabled && streaming;}
+    {flushCapturedWorldBatch();std::lock_guard lock(queueMutex);frameBackpressure=enabled;streamLargeFrames=enabled && streaming;}
     if(!enabled)frameConsumed.notify_all();
+}
+void setPreviewFrameTimelineEnabled(bool enabled) {
+    flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
+    if(!pending.empty() || frameReady)throw std::logic_error("Configure frame timeline before guest entry");
+    frameTimelineEnabled=enabled;pendingTimeline={};producerTimelineClock={};timelinePartThread=0;
 }
 void previewBeginHistogram(unsigned bin) {
     if(!active || !worldActive || bin>=histogramResults.size() || activeHistogram || activeFlare)return;
-    std::unique_lock lock(queueMutex);
+    flushCapturedWorldBatch();std::unique_lock lock(queueMutex);
     if(liveStreaming())reservePreviewCommand(lock);
     auto& result=histogramResults[bin];if(!result)result=std::make_shared<WorldQueryResult>();
     activeHistogram=std::make_shared<WorldQuery>();activeHistogram->result=result;
@@ -1382,12 +1764,12 @@ void previewBeginHistogram(unsigned bin) {
 }
 void previewEndHistogram() {
     if(!activeHistogram)return;
-    std::unique_lock lock(queueMutex);
+    flushCapturedWorldBatch();std::unique_lock lock(queueMutex);
     if(liveStreaming())reservePreviewCommand(lock);
     SimpleMesh command;command.worldQuery=std::move(activeHistogram);pending.push_back(std::move(command));
 }
 bool previewReadHistogram(unsigned bin,uint64_t& samples) {
-    std::lock_guard lock(queueMutex);
+    flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
     if(bin>=histogramResults.size() || !histogramResults[bin])return false;
     const auto value=histogramResults[bin]->samples.load(std::memory_order_acquire);
     if(value==UINT64_MAX)return false;
@@ -1395,7 +1777,7 @@ bool previewReadHistogram(unsigned bin,uint64_t& samples) {
 }
 void previewBeginFlare(unsigned id) {
     if(!active || !worldActive || id>flareQueryMaximumId || activeHistogram || activeFlare)return;
-    std::unique_lock lock(queueMutex);
+    flushCapturedWorldBatch();std::unique_lock lock(queueMutex);
     if(liveStreaming())reservePreviewCommand(lock);
     // The u16 key bounds this lazy map to at most 65536 result owners. Keep
     // the previous completion while a newer GPU query is still pending.
@@ -1406,12 +1788,12 @@ void previewBeginFlare(unsigned id) {
 }
 void previewEndFlare() {
     if(!activeFlare)return;
-    std::unique_lock lock(queueMutex);
+    flushCapturedWorldBatch();std::unique_lock lock(queueMutex);
     if(liveStreaming())reservePreviewCommand(lock);
     SimpleMesh command;command.worldQuery=std::move(activeFlare);pending.push_back(std::move(command));
 }
 bool previewReadFlare(unsigned id,uint64_t& samples) {
-    std::lock_guard lock(queueMutex);
+    flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
     const auto found=flareResults.find(id);
     if(found==flareResults.end())return false;
     const auto value=found->second->samples.load(std::memory_order_acquire);
@@ -1420,6 +1802,7 @@ bool previewReadFlare(unsigned id,uint64_t& samples) {
 }
 namespace {
 void publishPreviewPart(std::unique_lock<std::mutex>& lock,bool last) {
+    const auto publishStart=frameTimelineEnabled?previewTimelineNowNs():0;
     {
         const auto* ctx=currentContext;
         StallProfiler::Scope stallWait(StallProfiler::Section::Wait, "preview frame producer backpressure",
@@ -1427,9 +1810,38 @@ void publishPreviewPart(std::unique_lock<std::mutex>& lock,bool last) {
             reinterpret_cast<uint64_t>(&frameConsumed), "frameConsumed condition variable");
         frameConsumed.wait(lock,[]{return !frameBackpressure || !frameReady;});
     }
+    if(frameTimelineEnabled) {
+        const auto afterWait=previewTimelineNowNs();
+        pendingTimeline.publishWaitNs+=uint64_t((std::max)(int64_t(0),afterWait-publishStart));
+        const auto tid=GetCurrentThreadId();
+        if(!timelinePartThread)timelinePartThread=tid;
+        else if(timelinePartThread!=tid)pendingTimeline.mixedProducerThreads=true;
+        uint64_t run=0;
+        for(const auto& command:pending) {
+            using K=PreviewCommandKind;K kind=K::Gui;
+            // Match the consumer's command precedence exactly, including the
+            // false query-end marker. Ordinary queued kinds are exclusive.
+            if(command.displayGamma)kind=K::Gamma;
+            else if(command.worldQuery)kind=command.worldQueryBegin?K::QueryBegin:K::QueryEnd;
+            else if(command.worldClear)kind=K::Clear;
+            else if(command.worldResolve)kind=K::Resolve;
+            else if(command.worldPresent)kind=K::Present;
+            else if(command.world)kind=K::World;
+            ++pendingTimeline.kinds[unsigned(kind)];
+            if(kind==K::World) {
+                if(!run)++pendingTimeline.worldRuns;
+                pendingTimeline.maxWorldRun=(std::max)(pendingTimeline.maxWorldRun,++run);
+            } else run=0;
+        }
+    }
     pendingCounts.commands+=pending.size();++pendingCounts.parts;
     for(const auto& command:pending)if(command.world)++pendingCounts.passes[size_t(command.world->material)];
     if(!last)++streamedParts;
+    if(frameTimelineEnabled && last) {
+        pendingTimeline.logicalFrame=frames.load()+1;
+        pendingTimeline.commands=pendingCounts.commands;pendingTimeline.worldAttempts=pendingCounts.worldDraws;
+        pendingTimeline.parts=pendingCounts.parts;
+    }
     if(last) {
     queueHighWater.store((std::max)(queueHighWater.load(std::memory_order_relaxed),pendingCounts.commands),std::memory_order_relaxed);
     if(pendingCounts.commands>4096 || pendingCounts.commandDrops || pendingCounts.vertexDrops ||
@@ -1446,7 +1858,7 @@ void publishPreviewPart(std::unique_lock<std::mutex>& lock,bool last) {
     }
     pendingCounts={};pendingGuiDraws=0;++frames;
     }
-    readyPart={pendingFirst,last};pendingFirst=last;
+    readyPart={pendingFirst,last,previewMotionBlurEnabled()};pendingFirst=last;
     ready = std::move(pending); pending.clear();
     // The consumer returns only empty storage. Reuse capacity without moving
     // thousands of commands through the vector's growth stages every frame.
@@ -1455,6 +1867,17 @@ void publishPreviewPart(std::unique_lock<std::mutex>& lock,bool last) {
     pendingVertices = pendingVideoBytes = pendingColorBytes = 0;
     pendingGeometry.clear();pendingGeometryBytes=pendingWorldVertices=0;
     pendingWorldImages.clear();pendingWorldImageBytes=0;frameReady = true;
+    if(frameTimelineEnabled) {
+        if(last) {
+            // Last DELIVERED replay time belongs to this producer publication,
+            // not a later frame being built while the display presents it.
+            pendingTimeline.producerReplayUs=-1; // No replay clock is configured here.
+            const auto boundary=previewTimelineBoundary();
+            pendingTimeline.publishWallNs+=uint64_t((std::max)(int64_t(0),boundary.wallNs-publishStart));
+            producerTimelineClock.finish(pendingTimeline,boundary);
+            readyPart.diagnostics=pendingTimeline;pendingTimeline={};timelinePartThread=0;
+        } else pendingTimeline.publishWallNs+=uint64_t((std::max)(int64_t(0),previewTimelineNowNs()-publishStart));
+    }
     lock.unlock();frameAvailable.notify_one();
     lock.lock();
 }
@@ -1463,18 +1886,21 @@ void previewEndFrame() {
     StallProfiler::Scope stallRender(StallProfiler::Section::Rendering, "previewEndFrame");
     EngineCpuScope profile(EnginePhase::handoff);
     recordEngineFrameProcessor();
+    nativeLayerFrame(); // NATIVE_LAYER: periodic counter report
+    frameProducerThread.store(GetCurrentThreadId(), std::memory_order_relaxed); // NATIVE_LAYER v3
     if (!active) return;
-    std::unique_lock lock(queueMutex,std::defer_lock);
+    flushCapturedWorldBatch();std::unique_lock lock(queueMutex,std::defer_lock);
     {
         StallProfiler::Scope stallWait(StallProfiler::Section::Wait, "previewEndFrame queue mutex",
             0,0,reinterpret_cast<uint64_t>(&queueMutex),"preview queue mutex");
         lock.lock();
     }
     publishPreviewPart(lock,true);
+    frameMotionBlur.store(-1,std::memory_order_release);
 }
 bool takePreviewFrame(std::vector<SimpleMesh>& frame,unsigned waitMilliseconds,PreviewFramePart* part) {
     StallProfiler::Scope stallRender(StallProfiler::Section::Rendering, "takePreviewFrame");
-    std::unique_lock lock(queueMutex,std::defer_lock);
+    flushCapturedWorldBatch();std::unique_lock lock(queueMutex,std::defer_lock);
     {
         StallProfiler::Scope stallWait(StallProfiler::Section::Wait, "takePreviewFrame queue mutex",
             0,0,reinterpret_cast<uint64_t>(&queueMutex),"preview queue mutex");
@@ -1495,18 +1921,20 @@ bool takePreviewFrame(std::vector<SimpleMesh>& frame,unsigned waitMilliseconds,P
     completed.clear();
     // Never destroy retained resources under queueMutex. Publish only the
     // cleared allocation, retaining at most one spare command buffer.
-    {std::lock_guard recycleLock(queueMutex);
+    {flushCapturedWorldBatch();std::lock_guard recycleLock(queueMutex);
         if(completed.capacity()>recycledFrame.capacity())completed.swap(recycledFrame);
     }
     return true;
 }
 void printPreviewCounters() {
     if (!active) return;
+    uint64_t queued=0;
+    {flushCapturedWorldBatch();std::lock_guard lock(queueMutex);queued=worldQueued;}
     printPromptOriginCounters();
     printStoredGeometryCounters();
     printWorldCounters();
     std::fprintf(stderr,"[EngineWorldQueue] queued=%llu vertexBudgetDrops=%llu commandBudgetDrops=%llu\n",
-        worldQueued.load(),worldVertexBudgetDrops.load(),worldCommandBudgetDrops.load());
+        queued,worldVertexBudgetDrops.load(),worldCommandBudgetDrops.load());
     std::fprintf(stderr,"[EngineQueueFrames] highWater=%zu oversizedFrames=%zu\n",
         queueHighWater.load(std::memory_order_relaxed),oversizedFrames.load(std::memory_order_relaxed));
     std::fprintf(stderr,"[EngineQueueStreaming] intermediateParts=%llu imageBudgetDrops=%llu partCommandLimit=%zu geometryMiB=%zu imageMiB=%zu\n",

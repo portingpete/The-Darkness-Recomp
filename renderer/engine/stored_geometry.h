@@ -7,6 +7,7 @@
 #include <mutex>
 #include <optional>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace DarkRecomp::Native {
@@ -32,7 +33,43 @@ struct StoredDraw {
     uint32_t firstIndex = 0, indexCount = 0;
     std::optional<EngineTransformSnapshot> transforms;
     std::optional<EngineVertexBindingSnapshot> vertexBindings;
+    StoredDraw() = default;
+    StoredDraw(std::shared_ptr<const StoredGeometry> v,std::shared_ptr<const StoredGeometry> i,
+               uint32_t first,uint32_t count) noexcept
+        :vertices(std::move(v)),indices(std::move(i)),firstIndex(first),indexCount(count) {}
+    // std::optional's trivial moves may copy its entire inactive storage.
+    // A resolved draw has no binding bank yet; do not move 4 KiB of unused
+    // bytes through each return/assignment before capture fills that bank.
+    // Engaged snapshots retain their complete owned values, including after
+    // moving the geometry references. No guest data or validation is cached.
+    StoredDraw(const StoredDraw& other) noexcept
+        :vertices(other.vertices),indices(other.indices),firstIndex(other.firstIndex),indexCount(other.indexCount) {
+        copySnapshots(other);
+    }
+    StoredDraw(StoredDraw&& other) noexcept
+        :vertices(std::move(other.vertices)),indices(std::move(other.indices)),firstIndex(other.firstIndex),indexCount(other.indexCount) {
+        copySnapshots(other);
+    }
+    StoredDraw& operator=(const StoredDraw& other) noexcept {
+        if(this!=&other) {
+            vertices=other.vertices;indices=other.indices;firstIndex=other.firstIndex;indexCount=other.indexCount;
+            copySnapshots(other);
+        }
+        return *this;
+    }
+    StoredDraw& operator=(StoredDraw&& other) noexcept {
+        if(this!=&other) {
+            vertices=std::move(other.vertices);indices=std::move(other.indices);firstIndex=other.firstIndex;indexCount=other.indexCount;
+            copySnapshots(other);
+        }
+        return *this;
+    }
     explicit operator bool() const { return vertices && indices; }
+private:
+    void copySnapshots(const StoredDraw& other) noexcept {
+        if(other.transforms)transforms.emplace(*other.transforms);else transforms.reset();
+        if(other.vertexBindings)vertexBindings.emplace(*other.vertexBindings);else vertexBindings.reset();
+    }
 };
 struct StoredGeometryStats {
     uint64_t started = 0, published = 0, rejectedUploads = 0, evicted = 0;
@@ -62,6 +99,10 @@ public:
     bool finish(StoredUpload&& upload, uint8_t* base) noexcept;
     StoredDraw draw(uint8_t* base, uint32_t vertexId, uint32_t indexId,
                     uint32_t firstIndex, uint32_t indexCount, uint32_t boundIndexBuffer) noexcept;
+    // Native layer v1: same lookup/validation/statistics as draw(), one lock, direct guarded
+    // loads. Returns 0 ok (output filled), 1 empty (draw() would return empty), 2 fallback.
+    int drawFast(uint8_t* base, uint32_t vertexId, uint32_t indexId, uint32_t firstIndex,
+                 uint32_t indexCount, uint32_t boundIndexBuffer, StoredDraw& output) noexcept;
     std::shared_ptr<const StoredGeometry> vertexStream(uint8_t* base,uint32_t vertexId,uint32_t boundVertexBuffer) noexcept;
     StoredGeometryStats stats() const;
 private:
