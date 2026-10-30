@@ -1,0 +1,106 @@
+{
+  "issue": "https://github.com/portingpete/The-Darkness-Recomp/issues/141",
+  "sourceCommit": "400431d431f62c2e735123adf8ef2d921b946b16",
+  "baselineSourceCommit": "d0b6e6af491b3c0009b32b31029932a1a3aab78d",
+  "baselineExecutableSHA256": "909318cba23ef5f642563baad974069cf5b4abf64d5cec9a60ad439bba482e1a",
+  "candidateExecutableSHA256": "82c73f7911e3af33838d7ba4b55e95111712a1fee338fb56dcc9d5a7dca7c906",
+  "gameplay": {
+    "scene": "Canal Street exit-door approach",
+    "language": "en",
+    "output": [
+      1680,
+      1050
+    ],
+    "renderAndGuest": [
+      1152,
+      720
+    ],
+    "renderHeight": 720,
+    "fpsCap": 60,
+    "vsync": false,
+    "method": "Separate copies of the same seed save, ordinary Continue, matching held-input approach. Original Windows Graphics Capture PNGs; both viewed directly.",
+    "approachCommands": [
+      "74 350",
+      "74 600",
+      "76 350",
+      "68 300",
+      "87 550",
+      "74 400",
+      "87 850"
+    ],
+    "result": "Baseline clips CANAL ST. at the right edge; candidate shows the complete label with a right margin."
+  },
+  "control": {
+    "output": [1920, 1080],
+    "renderAndGuest": [1280, 720],
+    "result": "Candidate shows the complete CANAL ST. label with a right margin. No baseline 1920x1080 capture was taken."
+  },
+  "screenshots": {
+    "control-1920x1080.png": {
+      "sha256": "f0ba184b31096eddec24c4352a665389253c2fe94259ccbe155c51e652125707",
+      "size": [1920, 1080]
+    },
+    "before-1680x1050.png": {
+      "sha256": "3c63a5cd45aa1b9b7fe077edc142f9678e7efd68665af197a8bca61bb9eb8132",
+      "size": [
+        1680,
+        1050
+      ]
+    },
+    "after-1680x1050.png": {
+      "sha256": "3f859028bbe3b66c4d6bf229d79f7330981d5bd4dac855e8a85fd6b9063ad7e0",
+      "size": [
+        1680,
+        1050
+      ]
+    }
+  },
+  "contractTests": {
+    "passed": [
+      "NativeGameplayTitleContract",
+      "NativeTitleTextLayoutContract",
+      "NativeTitleTextShadowContract",
+      "NativeTitleTextHeadingContract",
+      "NativeSubtitleScaleContract"
+    ],
+    "newCases": 48,
+    "redGreen": "The gameplay title contract failed for each omitted call path before its correction, and passed after both corrections.",
+    "modes": [
+      [
+        1152,
+        720
+      ],
+      [
+        1680,
+        1050
+      ],
+      [
+        960,
+        720
+      ],
+      [
+        1280,
+        720
+      ],
+      [
+        1920,
+        1080
+      ],
+      [
+        1720,
+        720
+      ]
+    ],
+    "coverage": "Both exact HUD callers; ASCII and UTF-16; two fade values; right-edge and vertical bounds; proportional glyph bases; restored matrix/scales; unaffected subsequent draw."
+  },
+  "review": {
+    "kind": "Independent correctness/regression review; Bugbot unavailable",
+    "codeCommit": "400431d431f62c2e735123adf8ef2d921b946b16",
+    "actionableFindings": 0
+  },
+  "limitations": [
+    "Gameplay evidence is an English location label, not the reported Russian Enzo scene. The focused-character variant was not separately captured.",
+    "Camera position and capture phase differ slightly; these images are not a pixel-identical scene comparison.",
+    "4:3 and ultrawide coverage is from the original guest-painter contract fixture."
+  ]
+}
