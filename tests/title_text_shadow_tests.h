@@ -138,7 +138,7 @@ inline void sameDraw(const Draw& a, const Draw& b) {
 
 inline std::vector<Draw> paint(const PPCContext& initial, Fixture& fixture, uint32_t caller,
                               uint32_t color, float fontScale, bool cString, bool wide,
-                              bool original, uint32_t flags = 0) {
+                              bool original, uint32_t flags = 0, float x = 250.25f, float y = 100.5f) {
     PPCContext guest;
     std::memcpy(&guest, &initial, sizeof guest);
     guest.r3.u64 = fixture.block;
@@ -147,8 +147,8 @@ inline std::vector<Draw> paint(const PPCContext& initial, Fixture& fixture, uint
     guest.r6.u64 = fixture.block + (cString ? 1792 : 1408);
     guest.r9.u64 = flags;
     guest.r10.u64 = color;
-    guest.f1.f64 = 250.25;
-    guest.f2.f64 = 100.5;
+    guest.f1.f64 = x;
+    guest.f2.f64 = y;
     guest.f3.f64 = fontScale;
     guest.lr = caller;
     memory->write32(fixture.block + 1408 + 12, wide ? 0 : 1);

@@ -2578,8 +2578,10 @@ PPC_FUNC(sub_8234C7E0) {
     if (subtitle) ensureSubtitleFontRegistered(base, subtitleFont);
     const auto mode = nativeVideoMode();
     const uint32_t caller = uint32_t(ctx.lr), drawContext = ctx.r3.u32;
-    // The #x,y gameplay-message branch bypasses the credits scroller.
-    TitleTextScope scope(caller == 0x822A196C ? drawContext : titleTextContext);
+    // Coordinate-tagged headings and the right-aligned character/location
+    // names bypass the credits scroller. Both use its 853x480 title canvas.
+    TitleTextScope scope((caller == 0x822A196C || caller == 0x8216C954 || caller == 0x8216CB44)
+                            ? drawContext : titleTextContext);
     // 8236D930 draws a binding icon with the supplied 640x480 scale, then
     // restores the font's independent scale at 8236DDE4. Fit the label's
     // anchor to the same canvas, retaining glyph size and right alignment.
