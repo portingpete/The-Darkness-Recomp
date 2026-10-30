@@ -220,7 +220,7 @@ void resetPartialWorldDraw(WorldDraw* raw) noexcept {
     // follow the same reset path on their producer.
     std::memset(raw->constants.vectors.data(), 0, sizeof(raw->constants.vectors));
     std::memset(raw->fragmentConstants.data(), 0, sizeof(raw->fragmentConstants));
-    std::memset(raw->textureObjects.data(), 0, sizeof(raw->textureObjects));
+    raw->textureObjects.fill(WorldTexture{});
     raw->textureIds.fill(0);
     raw->samplers.fill(WorldSampler{});
     raw->material = WorldMaterial::depth;

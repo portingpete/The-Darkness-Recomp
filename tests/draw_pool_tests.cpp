@@ -167,6 +167,17 @@ int main() {
         drawTransportContract(binding);
         guardedFaultPoolContract(base,binding);
         {
+            auto geometry=std::make_shared<StoredGeometry>();
+            StoredDraw input{geometry,geometry,0,3};input.vertexBindings=binding;
+            for(unsigned pass=0;pass<3;++pass) {
+                auto draw=captureWorldDraw(base,input);
+                require(bool(draw),"Cannot capture unused-texture pool fixture");
+                for(const auto& texture:draw->textureObjects)
+                    require(texture.faces==WorldTexture{}.faces && texture.mipLevels==WorldTexture{}.mipLevels,
+                            "Recycled draw changed unused texture defaults");
+            }
+        }
+        {
             auto vertices=std::make_shared<StoredGeometry>();
             auto indices=std::make_shared<StoredGeometry>();
             vertices->id=41;indices->id=42;

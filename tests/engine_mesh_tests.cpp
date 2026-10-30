@@ -4,6 +4,7 @@
 #include "renderer/engine/render_trace.h"
 #include "renderer/engine/decoded_geometry.h"
 #include "renderer/engine/world_mesh.h"
+#include "renderer/engine/native_layer.h"
 #include "renderer/d3d11/engine_preview.h"
 #include "renderer/d3d11/display_context_d3d11.h"
 #include "runtime/native/runtime.h"
@@ -1290,6 +1291,31 @@ static void testPreviewBridge(Memory& memory, PPCContext& threadContext, EngineP
         require(snapshotWorldDraw(base,world,validated) && validated.material==WorldMaterial::ndsp &&
                 validated.textureObjects[0].object==primary && validated.textureObjects[1].object==primary,
                 "Image-budget fixture did not capture its shader and shared texture bindings");
+        // A producer must retain the texture generation before observation
+        // returns, even if another thread replaces the same cache entry.
+        auto beforeReplacement=std::make_shared<ColorImage>();
+        beforeReplacement->width=beforeReplacement->height=2048;
+        beforeReplacement->pixels.resize(2048*2048*4,0x31);
+        auto afterReplacement=std::make_shared<ColorImage>(*beforeReplacement);
+        afterReplacement->pixels.front()=0x72;
+        withLivePreviewProducer([&] {
+            previewEndFrame(); // Establish this thread as the frame producer.
+            previewPublishTexture(1,primary,beforeReplacement);
+            previewQueueCapturedWorld(base,captureWorldDraw(base,world));
+            std::async(std::launch::async,[&] {
+                previewPublishTexture(1,primary,afterReplacement);
+            }).get();
+            previewQueueCapturedWorld(base,captureWorldDraw(base,world));
+            previewEndFrame();
+        },[&](auto&) {
+            std::vector<SimpleMesh> commands;
+            takeLivePreviewPart(commands,0,true,true);
+            takeLivePreviewPart(commands,2,true,true);
+            require(commands[0].world && commands[1].world &&
+                    commands[0].world->textures[0]==beforeReplacement &&
+                    commands[1].world->textures[0]==afterReplacement,
+                    "Concurrent texture replacement changed an already-observed draw");
+        });
         std::weak_ptr<const ColorImage> retiredImage;
         withLivePreviewProducer([&] {
             for(unsigned i=0;i<17;++i) {

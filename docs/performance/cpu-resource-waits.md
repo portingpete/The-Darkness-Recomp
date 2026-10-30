@@ -7,8 +7,8 @@ main. It does not resolve the dense outdoor scene that remained near 120 FPS.
 
 - Retain the lean capture implementation required by the pooled-draw fix:
   guarded binding/geometry validation, cached vertex preparation, bounded pooled
-  control blocks, constant dirty ranges, per-thread counters, and ordered draw
-  batching. Unsupported or faulted capture returns to the original path.
+  control blocks, constant dirty ranges and per-thread counters. Captured draws
+  immediately retain their textures and enter the ordered queue. Unsupported or faulted capture returns to the original path.
 - On a fault during fast snapshot preparation, mark the pooled draw for a full
   reset. A fault can occur after constants have been copied but before their
   dirty ranges have been recorded; clearing only those ranges leaves stale
@@ -88,3 +88,16 @@ The default is `1`. Check mode is diagnostic and is not a timing baseline.
 The broad Rust gameplay/frame-accounting rewrites, texture-ownership experiments,
 dense outlining and CPU-affinity experiments are not enabled by this PR. Raw
 captures, saves, game assets and generated guest translation are not distributed.
+
+## Review corrections
+
+The review found that deferring capture admission in a thread-local batch could
+let another worker replace a texture before an earlier draw retained it. The
+batch is removed: capture now retains images and enters the queue before
+returning, as the original path did. This correctness change is not included in
+the historical FPS measurements above. A concurrent replacement regression
+fails before the correction and passes afterward.
+
+All pooled texture descriptors also retain the same default values on fresh
+allocation, fast reuse and full reset. This prevents false comparison failures
+for unused texture slots; a repeated-reuse regression covers it.

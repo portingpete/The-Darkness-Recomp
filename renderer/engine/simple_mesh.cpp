@@ -36,7 +36,6 @@
 #include <utility>
 
 namespace DarkRecomp::Native {
-static void flushCapturedWorldBatch(); // NATIVE_LAYER v3
 namespace {
 thread_local PromptRenderContext promptRenderContext = PromptRenderContext::Menu;
 thread_local bool subtitleRenderContext = false;
@@ -464,7 +463,7 @@ bool equalRenderMemory(uint8_t* base,uint64_t address,const void* expected,size_
 #endif
 }
 void setPreviewTextureBudget(size_t bytes) {
-    flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
+    std::lock_guard lock(queueMutex);
     const auto next=std::clamp(bytes,size_t(256*1024*1024),size_t(2ull*1024*1024*1024));
     if(colorBudgetReported && next==colorBudget)return;
     const bool shrink=next<colorBudget;
@@ -821,7 +820,7 @@ void previewObserveVideo(uint8_t* base, uint32_t container, uint32_t localId) {
     if (!frame || !u16(video + 126) || !u16(video + 128) ||
         !copyRenderMemory(base, frame, timestamp.data(), timestamp.size())) return;
     {
-        flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
+        std::lock_guard lock(queueMutex);
         if (auto it = videos.find(key); it != videos.end() && it->second.owner == owner &&
             it->second.frame == frame && it->second.ownerType == ownerType && it->second.timestamp == timestamp) return;
     }
@@ -829,7 +828,7 @@ void previewObserveVideo(uint8_t* base, uint32_t container, uint32_t localId) {
     if (decodeVideoFrame(base, frame, *image)) return;
     // The original container retains this selected frame until its next
     // update on the engine thread. Only owned plane copies cross threads.
-    flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
+    std::lock_guard lock(queueMutex);
     if (!videos.contains(key) && videos.size() >= 4) videos.erase(videos.begin());
     videos[key] = {owner, frame, ownerType, timestamp, image};
     if (++videoImages == 1) std::printf("[EnginePreview] Copied original YUV video frame %ux%u, texture pair=%08X\n",
@@ -848,7 +847,7 @@ bool previewMotionBlurEnabled() {
 }
 void previewPrepareTexture(uint32_t id) {
     if (!active || !id) return;
-    flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
+    std::lock_guard lock(queueMutex);
     alphaColors.erase(id);
     if (auto it = textures.find(id); it != textures.end()) {
         textureBytes -= it->second->pixels.size(); textures.erase(it);
@@ -858,13 +857,13 @@ void previewPrepareTexture(uint32_t id) {
     }
 }
 std::shared_ptr<const ColorImage> previewCapturedTexture(uint32_t id,uint32_t resource) {
-    flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
+    std::lock_guard lock(queueMutex);
     const auto it=colorTextures.find(id);
     return it!=colorTextures.end() && it->second.resource==resource?it->second.image:nullptr;
 }
 void previewPublishTexture(uint32_t id,uint32_t resource,std::shared_ptr<const ColorImage> image) {
     if(!active || !id || !resource || !image || !image->valid())return;
-    flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
+    std::lock_guard lock(queueMutex);
     if(image->bytes()>colorBudget)return;
     if(auto it=colorTextures.find(id);it!=colorTextures.end()) {colorBytes-=it->second.image->bytes();bumpColorId(it->first);colorTextures.erase(it);}
     if (!makeColorCacheRoom(image->bytes())) return;
@@ -883,14 +882,14 @@ bool takePreviewTexturePreload(std::shared_ptr<const ColorImage>& image) {
     // A caller's previous selection may own large pixel vectors. Release it
     // before taking the handoff lock, like the frame consumer's retire path.
     image.reset();
-    flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
+    std::lock_guard lock(queueMutex);
     if(texturePreloads.empty())return false;
     image=texturePreloads.front().lock();texturePreloads.pop_front();
     if(image)++texturePreloadCounts.taken;else ++texturePreloadCounts.expired;
     return true;
 }
 PreviewTexturePreloadCounters previewTexturePreloadCounters() {
-    flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
+    std::lock_guard lock(queueMutex);
     auto counters=texturePreloadCounts;counters.pending=texturePreloads.size();return counters;
 }
 std::shared_ptr<const ColorImage> promptReplacementFor(uint32_t textureId,
@@ -978,7 +977,7 @@ void previewObserveImage(uint8_t* base, uint32_t address, uint32_t id, uint32_t 
         auto color = std::make_shared<ColorImage>();
         if (decodeColorImage(base, address, *color)) { ++rejectedImages; return; }
         color->promptOrigin = scopedOrigin;
-        flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
+        std::lock_guard lock(queueMutex);
         if (auto it = colorTextures.find(id); it != colorTextures.end()) {
             colorBytes -= it->second.image->bytes(); bumpColorId(it->first);colorTextures.erase(it);
         }
@@ -989,7 +988,7 @@ void previewObserveImage(uint8_t* base, uint32_t address, uint32_t id, uint32_t 
                         id, color->width, color->height, color->sourceCodec);
         return;
     }
-    flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
+    std::lock_guard lock(queueMutex);
     if (textureBytes + image->pixels.size() > 32 * 1024 * 1024) { ++rejectedImages; return; }
     if (auto it = textures.find(id); it != textures.end()) textureBytes -= it->second->pixels.size();
     textureBytes += image->pixels.size(); textures[id] = image; alphaColors.erase(id); ++images;
@@ -998,14 +997,14 @@ void previewObserveImage(uint8_t* base, uint32_t address, uint32_t id, uint32_t 
 }
 std::shared_ptr<const AlphaImage> previewAlphaImageForSubtitleFont(uint32_t id) noexcept {
     try {
-        flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
+        std::lock_guard lock(queueMutex);
         const auto found = textures.find(id);
         return found == textures.end() ? nullptr : found->second;
     } catch (...) { return {}; }
 }
 std::shared_ptr<const ColorImage> previewColorImageForSubtitleFont(uint32_t id) noexcept {
     try {
-        flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
+        std::lock_guard lock(queueMutex);
         const auto found = colorTextures.find(id);
         return found == colorTextures.end() ? nullptr : found->second.image;
     } catch (...) { return {}; }
@@ -1136,7 +1135,7 @@ static bool submitTriangles(uint8_t* base, uint32_t indices, uint32_t triangles)
     std::shared_ptr<const VideoFrame> video;
     std::shared_ptr<const ColorImage> colorTexture;
     {
-        flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
+        std::lock_guard lock(queueMutex);
         if (videoMaterial) {
             auto it = videos.find(u32(attributes + 8));
             if (it != videos.end()) video = it->second.image;
@@ -1174,7 +1173,7 @@ static bool submitTriangles(uint8_t* base, uint32_t indices, uint32_t triangles)
     mesh.textureId = u16(attributes + 8);
     mesh.opaque = opaqueMaterial;
     mesh.subtitle = currentSubtitleRenderContext();
-    flushCapturedWorldBatch();std::unique_lock lock(queueMutex);
+    std::unique_lock lock(queueMutex);
     const size_t videoBytes = video ? video->luma.size() + video->chroma.size() : 0;
     auto newColorBytes = colorTexture && std::none_of(pending.begin(), pending.end(),
         [&](const auto& queued) { return queued.colorTexture == colorTexture; }) ? colorTexture->bytes() : 0;
@@ -1200,28 +1199,6 @@ void previewObserveTriangles(uint8_t* base, uint32_t indices, uint32_t triangles
 }
 static void queueCapturedWorldInto(uint8_t* base,std::shared_ptr<WorldDraw> draw);
 static void queueCapturedWorldLocked(uint8_t* base,std::shared_ptr<WorldDraw> draw,std::unique_lock<std::mutex>& lock);
-// NATIVE_LAYER v3: native-layer draws captured on the frame-producing thread wait in a short
-// per-thread batch and are queued in order under one queueMutex acquisition. Every other
-// queueMutex acquisition first flushes the calling thread's batch.
-namespace {
-struct CapturedWorldBatch {
-    std::array<std::shared_ptr<WorldDraw>, 32> draws;
-    uint8_t* base = nullptr;
-    size_t count = 0;
-};
-thread_local CapturedWorldBatch capturedWorldBatch;
-std::atomic<DWORD> frameProducerThread{0};
-}
-static void flushCapturedWorldBatch() {
-    auto& batch = capturedWorldBatch;
-    if (!batch.count) return;
-    std::unique_lock<std::mutex> lock(queueMutex);
-    for (size_t i = 0; i < batch.count; ++i) {
-        try { queueCapturedWorldLocked(batch.base, std::move(batch.draws[i]), lock); } catch (...) {}
-        batch.draws[i].reset();
-    }
-    batch.count = 0;
-}
 template<class Geometry>
 static void previewObserveWorldInto(uint8_t* base,Geometry&& geometry) {
     EngineCpuScope profile(EnginePhase::snapshot);
@@ -1238,20 +1215,13 @@ void previewQueueCapturedWorld(uint8_t* base,std::shared_ptr<WorldDraw> draw) {
     if (!active) return;
     if(!worldActive.load(std::memory_order_relaxed))worldActive.store(true,std::memory_order_relaxed);
     try {
-        // Batch only on the thread that publishes frames; any other thread queues at once.
-        if (GetCurrentThreadId() != frameProducerThread.load(std::memory_order_relaxed)) {
-            queueCapturedWorldInto(base,std::move(draw));
-            return;
-        }
-        auto& batch = capturedWorldBatch;
-        if (batch.count && batch.base != base) flushCapturedWorldBatch();
-        batch.base = base;
-        batch.draws[batch.count++] = std::move(draw);
-        if (batch.count == batch.draws.size()) flushCapturedWorldBatch();
+        // Retain images and preserve queue order before observation returns.
+        // Another resource worker may replace a texture immediately afterward.
+        queueCapturedWorldInto(base,std::move(draw));
     } catch (...) {}
 }
 __attribute__((hot)) static void queueCapturedWorldInto(uint8_t* base,std::shared_ptr<WorldDraw> draw) {
-    flushCapturedWorldBatch();
+
     std::unique_lock<std::mutex> lock(queueMutex);
     queueCapturedWorldLocked(base,std::move(draw),lock);
 }
@@ -1686,7 +1656,7 @@ void previewObserveClear(uint8_t* base,uint32_t device,uint32_t flags,uint32_t c
         if (!snapshotWorldClear(base,device,flags,color,depth,stencil,*clear)) return;
         if(rectangle[2]<rectangle[0] || rectangle[3]<rectangle[1])return;
         clear->rectangle=rectangle;
-        flushCapturedWorldBatch();std::unique_lock lock(queueMutex);
+        std::unique_lock lock(queueMutex);
         if (!reservePreviewCommand(lock)) {++pendingCounts.clearDrops;return;}
         SimpleMesh command;command.worldClear=std::move(clear);pending.push_back(std::move(command));
     } catch (...) {}
@@ -1708,7 +1678,7 @@ void previewObserveResolve(uint8_t* base,uint32_t device,uint32_t flags,uint32_t
     try {
         auto resolve=std::make_shared<WorldResolve>();
         if(!snapshotWorldResolve(base,device,flags,rectangle,destination,offset,color,depth,stencil,face,mip,*resolve)) return;
-        flushCapturedWorldBatch();std::unique_lock lock(queueMutex);if(!reservePreviewCommand(lock)) {++pendingCounts.resolveDrops;return;}
+        std::unique_lock lock(queueMutex);if(!reservePreviewCommand(lock)) {++pendingCounts.resolveDrops;return;}
         SimpleMesh command;command.worldResolve=std::move(resolve);pending.push_back(std::move(command));
     }catch(...){}
 }
@@ -1717,7 +1687,7 @@ void previewObservePresent(uint8_t* base,uint32_t frontbuffer) {
     try {
         auto texture=std::make_shared<WorldTexture>();
         if(!snapshotWorldTexture(base,frontbuffer,*texture)) return;
-        flushCapturedWorldBatch();std::unique_lock lock(queueMutex);
+        std::unique_lock lock(queueMutex);
         if(liveStreaming())reservePreviewCommand(lock);
         SimpleMesh command;command.worldPresent=std::move(texture);pending.push_back(std::move(command));
     }catch(...){}
@@ -1735,7 +1705,7 @@ void previewObserveDisplayGamma(uint8_t* base,uint32_t ramp,bool piecewise) {
                 if(!piecewise)gamma.entries[entry*3+channel][0]&=0xFFC0;
             }
         }
-        flushCapturedWorldBatch();std::unique_lock lock(queueMutex);
+        std::unique_lock lock(queueMutex);
         static std::shared_ptr<const DisplayGamma> previous;
         if(previous && *previous==gamma)return;
         if(liveStreaming())reservePreviewCommand(lock);
@@ -1745,17 +1715,17 @@ void previewObserveDisplayGamma(uint8_t* base,uint32_t ramp,bool piecewise) {
     }catch(...){}
 }
 void setPreviewFrameBackpressure(bool enabled,bool streaming) {
-    {flushCapturedWorldBatch();std::lock_guard lock(queueMutex);frameBackpressure=enabled;streamLargeFrames=enabled && streaming;}
+    {std::lock_guard lock(queueMutex);frameBackpressure=enabled;streamLargeFrames=enabled && streaming;}
     if(!enabled)frameConsumed.notify_all();
 }
 void setPreviewFrameTimelineEnabled(bool enabled) {
-    flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
+    std::lock_guard lock(queueMutex);
     if(!pending.empty() || frameReady)throw std::logic_error("Configure frame timeline before guest entry");
     frameTimelineEnabled=enabled;pendingTimeline={};producerTimelineClock={};timelinePartThread=0;
 }
 void previewBeginHistogram(unsigned bin) {
     if(!active || !worldActive || bin>=histogramResults.size() || activeHistogram || activeFlare)return;
-    flushCapturedWorldBatch();std::unique_lock lock(queueMutex);
+    std::unique_lock lock(queueMutex);
     if(liveStreaming())reservePreviewCommand(lock);
     auto& result=histogramResults[bin];if(!result)result=std::make_shared<WorldQueryResult>();
     activeHistogram=std::make_shared<WorldQuery>();activeHistogram->result=result;
@@ -1764,12 +1734,12 @@ void previewBeginHistogram(unsigned bin) {
 }
 void previewEndHistogram() {
     if(!activeHistogram)return;
-    flushCapturedWorldBatch();std::unique_lock lock(queueMutex);
+    std::unique_lock lock(queueMutex);
     if(liveStreaming())reservePreviewCommand(lock);
     SimpleMesh command;command.worldQuery=std::move(activeHistogram);pending.push_back(std::move(command));
 }
 bool previewReadHistogram(unsigned bin,uint64_t& samples) {
-    flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
+    std::lock_guard lock(queueMutex);
     if(bin>=histogramResults.size() || !histogramResults[bin])return false;
     const auto value=histogramResults[bin]->samples.load(std::memory_order_acquire);
     if(value==UINT64_MAX)return false;
@@ -1777,7 +1747,7 @@ bool previewReadHistogram(unsigned bin,uint64_t& samples) {
 }
 void previewBeginFlare(unsigned id) {
     if(!active || !worldActive || id>flareQueryMaximumId || activeHistogram || activeFlare)return;
-    flushCapturedWorldBatch();std::unique_lock lock(queueMutex);
+    std::unique_lock lock(queueMutex);
     if(liveStreaming())reservePreviewCommand(lock);
     // The u16 key bounds this lazy map to at most 65536 result owners. Keep
     // the previous completion while a newer GPU query is still pending.
@@ -1788,12 +1758,12 @@ void previewBeginFlare(unsigned id) {
 }
 void previewEndFlare() {
     if(!activeFlare)return;
-    flushCapturedWorldBatch();std::unique_lock lock(queueMutex);
+    std::unique_lock lock(queueMutex);
     if(liveStreaming())reservePreviewCommand(lock);
     SimpleMesh command;command.worldQuery=std::move(activeFlare);pending.push_back(std::move(command));
 }
 bool previewReadFlare(unsigned id,uint64_t& samples) {
-    flushCapturedWorldBatch();std::lock_guard lock(queueMutex);
+    std::lock_guard lock(queueMutex);
     const auto found=flareResults.find(id);
     if(found==flareResults.end())return false;
     const auto value=found->second->samples.load(std::memory_order_acquire);
@@ -1887,9 +1857,8 @@ void previewEndFrame() {
     EngineCpuScope profile(EnginePhase::handoff);
     recordEngineFrameProcessor();
     nativeLayerFrame(); // NATIVE_LAYER: periodic counter report
-    frameProducerThread.store(GetCurrentThreadId(), std::memory_order_relaxed); // NATIVE_LAYER v3
     if (!active) return;
-    flushCapturedWorldBatch();std::unique_lock lock(queueMutex,std::defer_lock);
+    std::unique_lock lock(queueMutex,std::defer_lock);
     {
         StallProfiler::Scope stallWait(StallProfiler::Section::Wait, "previewEndFrame queue mutex",
             0,0,reinterpret_cast<uint64_t>(&queueMutex),"preview queue mutex");
@@ -1900,7 +1869,7 @@ void previewEndFrame() {
 }
 bool takePreviewFrame(std::vector<SimpleMesh>& frame,unsigned waitMilliseconds,PreviewFramePart* part) {
     StallProfiler::Scope stallRender(StallProfiler::Section::Rendering, "takePreviewFrame");
-    flushCapturedWorldBatch();std::unique_lock lock(queueMutex,std::defer_lock);
+    std::unique_lock lock(queueMutex,std::defer_lock);
     {
         StallProfiler::Scope stallWait(StallProfiler::Section::Wait, "takePreviewFrame queue mutex",
             0,0,reinterpret_cast<uint64_t>(&queueMutex),"preview queue mutex");
@@ -1921,7 +1890,7 @@ bool takePreviewFrame(std::vector<SimpleMesh>& frame,unsigned waitMilliseconds,P
     completed.clear();
     // Never destroy retained resources under queueMutex. Publish only the
     // cleared allocation, retaining at most one spare command buffer.
-    {flushCapturedWorldBatch();std::lock_guard recycleLock(queueMutex);
+    {std::lock_guard recycleLock(queueMutex);
         if(completed.capacity()>recycledFrame.capacity())completed.swap(recycledFrame);
     }
     return true;
@@ -1929,7 +1898,7 @@ bool takePreviewFrame(std::vector<SimpleMesh>& frame,unsigned waitMilliseconds,P
 void printPreviewCounters() {
     if (!active) return;
     uint64_t queued=0;
-    {flushCapturedWorldBatch();std::lock_guard lock(queueMutex);queued=worldQueued;}
+    {std::lock_guard lock(queueMutex);queued=worldQueued;}
     printPromptOriginCounters();
     printStoredGeometryCounters();
     printWorldCounters();
