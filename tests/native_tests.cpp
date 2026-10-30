@@ -67,6 +67,7 @@ static void check(bool success, const char* message) { if (!success) throw std::
 #include "title_text_layout_tests.h"
 #include "title_text_shadow_tests.h"
 #include "title_text_heading_tests.h"
+#include "gameplay_title_tests.h"
 #include "subtitle_scale_tests.h"
 static PPC_FUNC(threadProbe) {
     uint32_t argument = ctx.r3.u32;
@@ -1705,6 +1706,10 @@ int main(int argc, char** argv) {
         }
         if (argc == 3 && strcmp(argv[2], "--title-text-heading") == 0) {
             testTitleTextHeading(ctx);
+            return 0;
+        }
+        if (argc == 3 && strcmp(argv[2], "--gameplay-titles") == 0) {
+            testGameplayTitles(ctx);
             return 0;
         }
         if (argc == 3 && strcmp(argv[2], "--subtitle-scale") == 0) {
