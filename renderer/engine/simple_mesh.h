@@ -5,7 +5,10 @@
 #include <cstdint>
 #include <cstddef>
 #include <memory>
+#include <optional>
+#include <span>
 #include <vector>
+#include "preview_frame_diagnostics.h"
 
 namespace DarkRecomp {
 namespace Native {
@@ -126,6 +129,17 @@ struct SimpleMesh {
 
 namespace Native {
 bool copyRenderMemory(uint8_t* base, uint64_t address, void* output, size_t size);
+struct RenderMemoryRead {
+    uint64_t address;
+    void* output;
+    size_t size;
+};
+inline constexpr size_t maxRenderMemoryBatchReads = 8;
+// Execute a bounded sequence of exact copies under one fault guard. Preserve
+// order and stop at the first invalid/unreadable range; prior outputs may be
+// written and later outputs remain untouched. Callers publish only on success.
+// Batch only independent reads whose original path had no intervening checks.
+bool copyRenderMemoryBatch(uint8_t* base, std::span<const RenderMemoryRead> reads);
 // Compare an owned snapshot with the current readable bytes. A mismatch or
 // inaccessible range fails; no second temporary copy of the bank is needed.
 bool equalRenderMemory(uint8_t* base, uint64_t address, const void* expected, size_t size);
@@ -202,6 +216,9 @@ void previewObserveClear(uint8_t* base,uint32_t device,uint32_t flags,uint32_t c
 // Counts are indices, not packet words or triangles.
 void previewObserveDecodedTriangles(uint8_t* base, uint32_t indices, uint32_t capacity, uint32_t produced);
 void previewEndFrame();
+// The producer and all streamed parts share one motion setting until the
+// logical frame ends. This also guards the original velocity queue emitter.
+bool previewMotionBlurEnabled();
 // The live renderer must consume every frame: resolves can feed later frames.
 // Disable before stopping the consumer to release a waiting producer.
 // Streaming bounds the live handoff without dropping the tail of a large
@@ -224,7 +241,14 @@ void previewEndFlare();
 bool previewReadFlare(unsigned id,uint64_t& samples);
 // A bounded wait lets the window consume a late frame immediately instead of
 // adding another display-period delay. Zero retains nonblocking behavior.
-struct PreviewFramePart {bool first=true,last=true;};
+struct PreviewFramePart {
+    bool first=true,last=true;
+    std::optional<bool> motionBlur;
+    // Populated only on the final part when explicitly configured at startup.
+    std::optional<PreviewFrameDiagnostics> diagnostics;
+};
+// Configure before guest entry. No draw timers or guest input resampling.
+void setPreviewFrameTimelineEnabled(bool enabled);
 bool takePreviewFrame(std::vector<SimpleMesh>& frame,unsigned waitMilliseconds=0,PreviewFramePart* part=nullptr);
 void printPreviewCounters();
 void recordPreviewRender(size_t meshCount);

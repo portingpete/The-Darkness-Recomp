@@ -1,4 +1,8 @@
 #include "render_trace.h"
+#if DARK_RUST_RESOURCE_WAIT
+#include "resource_wait_backoff.h"
+#include "runtime/native/native_timed_wait.h"
+#endif
 #include "runtime/native/stall_profiler.h"
 #include "engine_performance.h"
 #include "prompt_origin.h"
@@ -10,6 +14,7 @@
 #include "engine_vertex_descriptor.h"
 #include "engine_vertex_program.h"
 #include "world_mesh.h"
+#include "native_layer.h"
 #include "runtime/native/runtime.h"
 #include "runtime/native/audio_refill_trace.h"
 #include "ppc_recomp_shared.h"
@@ -1151,6 +1156,30 @@ bool jobBytes(uint8_t* base, uint64_t address, void* output, size_t size) {
         return false;
     }
 }
+#if DARK_RUST_RESOURCE_WAIT
+bool resourceWaitEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("DARK_RESOURCE_WAIT");
+        return !value || std::strcmp(value, "original") != 0;
+    }();
+    return enabled;
+}
+struct ResourceWaitScope;
+thread_local ResourceWaitScope* currentResourceWait = nullptr;
+uint32_t resourceWaitSlot() {
+    static thread_local const uint32_t slot = dark_resource_wait_register();
+    return slot;
+}
+struct ResourceWaitScope {
+    uint8_t* base;
+    DarkResourceWaitToken token{};
+    uintptr_t event;
+    ResourceWaitScope* previous;
+    explicit ResourceWaitScope(uint8_t* memory) : base(memory),
+        event(dark_resource_wait_begin(&token, resourceWaitSlot())), previous(currentResourceWait) { currentResourceWait = this; }
+    ~ResourceWaitScope() { currentResourceWait = previous; }
+};
+#endif
 struct ResourceJobSnapshot {
     uint32_t type = 0, busyByte = 0;
     uint16_t id = 0, dependency = 0xffff;
@@ -1310,6 +1339,28 @@ PPC_FUNC(sub_828AC000) {
         job.haveBusyByte ? "guest dependency busy byte" : nullptr);
     // Original SDK Sleep wrapper; keep the wait and full original ABI intact.
     DarkRecomp::Native::EngineCpuScope profile(DarkRecomp::Native::EnginePhase::sleep,ctx.r13.u32==0x7FF00000);
+    // The token predates the original predicate check, so a notification
+    // between that check and arming cannot be lost. The guest still rechecks
+    // its own busy byte after every return, including spurious wakeups.
+#if DARK_RUST_RESOURCE_WAIT
+    if (resourceWaitEnabled() && currentResourceWait && currentResourceWait->base == base &&
+            currentResourceWait->event && resourceDependencyYieldEligible(uint32_t(ctx.lr),
+                ctx.r3.u32, ctx.r4.u32, ctx.r13.u32, ctx.r31.u32, ctx.r30.u32)) {
+        const int64_t timeout = -10000;
+        DWORD result = WAIT_OBJECT_0;
+        if (dark_resource_wait_arm(&currentResourceWait->token))
+            result = DarkRecomp::Native::nativeTimedWait(
+                reinterpret_cast<HANDLE>(currentResourceWait->event), FALSE, &timeout);
+        dark_resource_wait_finish(&currentResourceWait->token);
+        if (result != WAIT_FAILED) ctx.r3.u64 = 0; // Host wait performed; retain SDK ABI.
+        static thread_local bool announced = false;
+        if (!announced) {
+            announced = true;
+            std::fprintf(stderr, "[DependencyWait] Rust per-thread notifications active caller=8222CD30 fallbackMs=1 sdkDelayMs=%u slot=%u tid=%lu pcr=%08X\n",
+                ctx.r3.u32, currentResourceWait->token.slot, GetCurrentThreadId(), ctx.r13.u32);
+        }
+    }
+#endif
     __imp__sub_828AC000(ctx,base);
 }
 extern "C" PPC_FUNC(__imp__sub_8225DE78);
@@ -1420,6 +1471,18 @@ PPC_FUNC(sub_821F1548) {
     DarkRecomp::Native::StallProfiler::Scope stallJob(DarkRecomp::Native::StallProfiler::Section::Guest,
         "guest resource job wait/execute", 0x821F1548, uint32_t(ctx.lr), ctx.r3.u32, "guest resource job ID");
     __imp__sub_821F1548(ctx, base);
+}
+extern "C" PPC_FUNC(__imp__sub_822322A8);
+PPC_FUNC(sub_822322A8) {
+#if DARK_RUST_RESOURCE_WAIT
+    std::optional<ResourceWaitScope> resourceWait;
+    if (resourceWaitEnabled()) resourceWait.emplace(base);
+#endif
+    // One job per call: original busy-byte clear and lock release precede return.
+    __imp__sub_822322A8(ctx, base);
+#if DARK_RUST_RESOURCE_WAIT
+    if (resourceWaitEnabled()) dark_resource_wait_notify();
+#endif
 }
 extern "C" PPC_FUNC(__imp__sub_82232258);
 PPC_FUNC(sub_82232258) {
@@ -1561,6 +1624,14 @@ PPC_FUNC(sub_82868FE8) {
             word(base, renderContext + 15748) == device && uint64_t(device) + 12432 <= 0x100000000ull) {
             // 82868FE8 consumes the buffer bound at device+12428. Match
             // that object as well as the resource ID preserved at entry.
+            // NATIVE_LAYER: without renderer tracing, the native layer performs the complete
+            // stored observation (resolve, binding, snapshot, queue) with exact fallback.
+            if (!enabled && DarkRecomp::Native::nativeLayerMode() != DarkRecomp::Native::NativeLayerMode::off) {
+                const auto floatingPointMode=_mm_getcsr();
+                DarkRecomp::Native::nativeLayerObserveStoredDraw(base,*drawingGeometry,uint32_t(ctx.lr),
+                    ctx.r4.u32,ctx.r5.u32,ctx.r6.u32,ctx.r7.u32,word(base,renderContext+16532),word(base,device+12428));
+                _mm_setcsr(floatingPointMode);
+            } else
             try { owned = drawingGeometry->resolve(DarkRecomp::Native::storedGeometryCache(),base,uint32_t(ctx.lr),
                 ctx.r4.u32,ctx.r5.u32,ctx.r6.u32,ctx.r7.u32,word(base,renderContext+16532),word(base,device+12428)); } catch (...) {}
             if (owned) {

@@ -4,6 +4,7 @@
 #include "renderer/engine/render_trace.h"
 #include "renderer/engine/decoded_geometry.h"
 #include "renderer/engine/world_mesh.h"
+#include "renderer/engine/native_layer.h"
 #include "renderer/d3d11/engine_preview.h"
 #include "renderer/d3d11/display_context_d3d11.h"
 #include "runtime/native/runtime.h"
@@ -445,6 +446,7 @@ static void testPreviewRenderContinuation(EnginePreviewD3D11& renderer,CDisplayC
 // guest reuse and texture eviction, and unsupported state must not reuse a
 // previous texture. These fixtures are host tests, not captured game frames.
 static void testPreviewBridge(Memory& memory, PPCContext& threadContext, EnginePreviewD3D11& renderer) {
+    setPreviewTextureBudget(256ull*1024*1024);
     auto* base=memory.base();
     constexpr uint32_t context=0x82A69B00, attributes=context+16896, model=0x01000000;
     constexpr uint32_t descriptor=0x10001, positions=0x11001, colors=0x13001, indices=0x14001, id=0x42;
@@ -1289,6 +1291,31 @@ static void testPreviewBridge(Memory& memory, PPCContext& threadContext, EngineP
         require(snapshotWorldDraw(base,world,validated) && validated.material==WorldMaterial::ndsp &&
                 validated.textureObjects[0].object==primary && validated.textureObjects[1].object==primary,
                 "Image-budget fixture did not capture its shader and shared texture bindings");
+        // A producer must retain the texture generation before observation
+        // returns, even if another thread replaces the same cache entry.
+        auto beforeReplacement=std::make_shared<ColorImage>();
+        beforeReplacement->width=beforeReplacement->height=2048;
+        beforeReplacement->pixels.resize(2048*2048*4,0x31);
+        auto afterReplacement=std::make_shared<ColorImage>(*beforeReplacement);
+        afterReplacement->pixels.front()=0x72;
+        withLivePreviewProducer([&] {
+            previewEndFrame(); // Establish this thread as the frame producer.
+            previewPublishTexture(1,primary,beforeReplacement);
+            previewQueueCapturedWorld(base,captureWorldDraw(base,world));
+            std::async(std::launch::async,[&] {
+                previewPublishTexture(1,primary,afterReplacement);
+            }).get();
+            previewQueueCapturedWorld(base,captureWorldDraw(base,world));
+            previewEndFrame();
+        },[&](auto&) {
+            std::vector<SimpleMesh> commands;
+            takeLivePreviewPart(commands,0,true,true);
+            takeLivePreviewPart(commands,2,true,true);
+            require(commands[0].world && commands[1].world &&
+                    commands[0].world->textures[0]==beforeReplacement &&
+                    commands[1].world->textures[0]==afterReplacement,
+                    "Concurrent texture replacement changed an already-observed draw");
+        });
         std::weak_ptr<const ColorImage> retiredImage;
         withLivePreviewProducer([&] {
             for(unsigned i=0;i<17;++i) {
@@ -1543,6 +1570,24 @@ int main(int argc, char** argv) {
         require(!equalRenderMemory(base,UINT64_MAX,memoryProbe.data(),2) &&
                 !equalRenderMemory(base,1,memoryProbe.data(),SIZE_MAX),"Wrapped render comparison was accepted");
         require(VirtualProtect(base+0x12000,4096,PAGE_NOACCESS,&probeProtection),"Cannot protect render-copy test page");
+        // Short state reads must neither overread a page nor overwrite the
+        // destination around an odd-sized/unaligned register group.
+        std::array<uint8_t,80> shortCopy;
+        for(size_t size=0;size<=64;++size) {
+            for(unsigned offset=0;offset<8;++offset) {
+                const uint32_t source=0x11F80+offset;
+                for(size_t i=0;i<size;++i)base[source+i]=uint8_t(i*17+size);
+                shortCopy.fill(0xA5);
+                require(copyRenderMemory(base,source,shortCopy.data()+3,size),"Short render copy rejected readable bytes");
+                require(std::memcmp(shortCopy.data()+3,base+source,size)==0 &&
+                        std::all_of(shortCopy.begin(),shortCopy.begin()+3,[](auto b){return b==0xA5;}) &&
+                        std::all_of(shortCopy.begin()+3+size,shortCopy.end(),[](auto b){return b==0xA5;}),
+                        "Short render copy changed bytes outside its range");
+            }
+            require(copyRenderMemory(base,0x12000-size,shortCopy.data(),size),"Short render copy overread readable page end");
+            if(size)require(!copyRenderMemory(base,0x12001-size,shortCopy.data(),size),
+                            "Short cross-page render copy accepted inaccessible data");
+        }
         require(!equalRenderMemory(base,0x11FF0,memoryProbe.data(),memoryProbe.size()),"Cross-page comparison accepted inaccessible data");
         require(!copyRenderMemory(base,0x11FF0,memoryProbe.data(),memoryProbe.size()),"Cross-page render copy accepted inaccessible data");
         VirtualProtect(base+0x12000,4096,probeProtection,&probeIgnored);

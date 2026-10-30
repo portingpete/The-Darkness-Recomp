@@ -1,4 +1,5 @@
 #include "stored_geometry.h"
+#include "native_layer.h"
 #include "runtime/native/stall_profiler.h"
 #include "simple_mesh.h"
 #include <algorithm>
@@ -40,9 +41,8 @@ uint32_t holder(const StoredGeometry& geometry, const uint8_t* resource, unsigne
 bool sameBinding(const StoredGeometry& geometry, const uint8_t* current, bool vertices) {
     const auto* saved = geometry.resource.data();
     if (vertices)
-        return current[96] == geometry.stride && be32(current + 8) == be32(saved + 8) &&
-            be32(current + 100) == be32(saved + 100) &&
-            be32(current + 104) == be32(saved + 104) && holder(geometry, current, 12) &&
+        return current[96] == geometry.stride && std::memcmp(current + 8, saved + 8, 4) == 0 &&
+            std::memcmp(current + 100, saved + 100, 8) == 0 && holder(geometry, current, 12) &&
             holder(geometry, current, 12) == holder(geometry, saved, 12);
     return be16(current + 94) * 3u == geometry.indices.size() && holder(geometry, current, 52) &&
         holder(geometry, current, 52) == holder(geometry, saved, 52);
@@ -377,6 +377,107 @@ StoredGeometryStats StoredGeometryCache::stats() const {
     std::lock_guard lock(mutex_);
     auto result = stats_; result.cachedResources = entries_.size(); return result;
 }
+// NATIVE_LAYER_BEGIN: stored geometry fast path. Same conditions, statistics and LRU updates as
+// draw(); guest reads are direct loads inside one SEH-covered call; the cache lock is held once.
+namespace {
+// Mirrors live() + sameBinding() + holder() directly on guest memory without 108-byte stack copies.
+// A fault leaves the decision to the original draw(), which reports it as missing.
+__attribute__((hot)) __declspec(noinline) bool fastVerifyDrawImpl(
+    const uint8_t* base, const StoredGeometry& vertices, uint32_t vertexId,
+    const StoredGeometry& indices, uint32_t indexId, bool combined, uint32_t boundIndexBuffer) {
+    if (!vertexId || vertexId >= 65536 || !nativeGuestRange(vertices.address, 108)) return false;
+    const uint8_t* vRes = base + vertices.address;
+    if (be16(vRes + 92) != vertexId) return false;
+    const uint32_t table = nativeGuest32(base, context + 16636);
+    if (!table || uint64_t(table) + (uint64_t(vertexId) + 1) * 4 + 4 > 0x100000000ull) return false;
+    if (nativeGuest32(base, table + (vertexId + 1) * 4) != vertices.address) return false;
+    const uint32_t manager = nativeGuest32(base, context + 160);
+    if (!manager || uint64_t(manager) + 28 > 0x100000000ull) return false;
+    const uint32_t validity = nativeGuest32(base, manager + 24);
+    if (!validity || uint64_t(validity) + vertexId >= 0x100000000ull) return false;
+    if ((base[validity + vertexId] & 1) == 0) return false;
+    const uint8_t* iRes = vRes;
+    if (!combined) {
+        if (!indexId || indexId >= 65536 || !nativeGuestRange(indices.address, 108)) return false;
+        iRes = base + indices.address;
+        if (be16(iRes + 92) != indexId) return false;
+        if (uint64_t(table) + (uint64_t(indexId) + 1) * 4 + 4 > 0x100000000ull) return false;
+        if (nativeGuest32(base, table + (indexId + 1) * 4) != indices.address) return false;
+        if (uint64_t(validity) + indexId >= 0x100000000ull) return false;
+        if ((base[validity + indexId] & 1) == 0) return false;
+    }
+    return sameBinding(vertices, vRes, true) && sameBinding(indices, iRes, false) &&
+        boundIndexBuffer && boundIndexBuffer == holder(indices, iRes, 52);
+}
+// 1 = live & bound, 0 = missing/mismatched, -1 = fault.
+int guardedVerifyDraw(const uint8_t* base, const StoredGeometry& vertices, uint32_t vertexId,
+                      const StoredGeometry& indices, uint32_t indexId, bool combined, uint32_t boundIndexBuffer) noexcept {
+#ifdef _WIN32
+    __try { return fastVerifyDrawImpl(base, vertices, vertexId, indices, indexId, combined, boundIndexBuffer) ? 1 : 0; }
+    __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION || GetExceptionCode() == EXCEPTION_IN_PAGE_ERROR
+              ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) { return -1; }
+#else
+    // Preserve the original POSIX guarded-copy path until a native guard is available.
+    return -1;
+#endif
+}
+}
+__attribute__((hot)) int StoredGeometryCache::drawFast(uint8_t* base, uint32_t vertexId, uint32_t indexId, uint32_t firstIndex,
+                                  uint32_t indexCount, uint32_t boundIndexBuffer, StoredDraw& output) noexcept {
+    try {
+        std::lock_guard lock(mutex_);
+        auto* v=vertexId<byId_.size()?byId_[vertexId]:nullptr;
+        auto* i=indexId<byId_.size()?byId_[indexId]:nullptr;
+        if (!v || !i) { ++stats_.missingDraws; return 1; }
+        const auto& vertices = v->geometry;
+        const auto& indices = i->geometry;
+        const bool combined = v == i;
+        const int verified = guardedVerifyDraw(base, *vertices, vertexId, *indices, indexId, combined, boundIndexBuffer);
+        if (verified < 0) return 2;
+        bool missing = false, invalid = false;
+        if (!verified || vertices->vertices.empty() || indices->indices.empty()) {
+            missing = true;
+        } else if (!indexCount || indexCount % 3 || uint64_t(firstIndex) + indexCount > indices->indices.size()) {
+            invalid = true;
+        } else if (indices->maximumIndex >= vertices->vertexCount &&
+            std::any_of(indices->indices.begin() + firstIndex, indices->indices.begin() + firstIndex + indexCount,
+                [&](uint16_t index) { return index >= vertices->vertexCount; })) {
+            invalid = true;
+        }
+        if (missing) { ++stats_.missingDraws; return 1; }
+        if (invalid) { ++stats_.invalidDraws; return 1; }
+        v->used = i->used = ++clock_;
+        ++stats_.matchedDraws;
+        output.vertices = vertices;
+        output.indices = indices;
+        output.firstIndex = firstIndex;
+        output.indexCount = indexCount;
+        output.transforms.reset();
+        output.vertexBindings.reset();
+        return 0;
+    } catch (...) { return 2; }
+}
+NativeLayerResult storedGeometryDrawFast(StoredGeometryCache& cache, uint8_t* base, uint32_t vertexId, uint32_t indexId,
+                                         uint32_t firstIndex, uint32_t indexCount, uint32_t boundIndexBuffer,
+                                         StoredDraw& output) noexcept {
+    const int result = cache.drawFast(base, vertexId, indexId, firstIndex, indexCount, boundIndexBuffer, output);
+    return result == 0 ? NativeLayerResult::ok : result == 1 ? NativeLayerResult::empty : NativeLayerResult::fallback;
+}
+__attribute__((hot)) NativeLayerResult resolveStoredDrawFast(const StoredDrawRequest& request, StoredGeometryCache& cache, uint8_t* base,
+                                        uint32_t returnAddress, uint32_t primitive, uint32_t baseVertex, uint32_t first,
+                                        uint32_t count, uint32_t boundVertexId, uint32_t boundIndexBuffer,
+                                        StoredDraw& output) noexcept {
+    if (boundVertexId != request.vertices || !request.matches(returnAddress, primitive, baseVertex, first, count))
+        return NativeLayerResult::empty;
+    const auto result = storedGeometryDrawFast(cache, base, request.vertices, request.indices, first, count,
+                                               boundIndexBuffer, output);
+    if (result == NativeLayerResult::ok && request.caller == 0x8225E2E0 && count != output.indices->indices.size()) {
+        output = {};
+        return NativeLayerResult::empty;
+    }
+    return result;
+}
+// NATIVE_LAYER_END
 StoredGeometryCache& storedGeometryCache() { static StoredGeometryCache cache; return cache; }
 void printStoredGeometryCounters() {
     const auto s = storedGeometryCache().stats();
