@@ -29,7 +29,10 @@ INSTALLER = 'darkrecomp-deck-installer'
 _spec = importlib.util.spec_from_file_location('darkrecomp_package_release', ROOT / 'tools/package_release.py')
 _release = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_release)
-REQUIRED_FILES = frozenset((*_release.DOCUMENTS,
+# Older published ZIPs predate frame-drop capture. New ZIPs include these
+# files, but their absence must not invalidate an otherwise complete old ZIP.
+OPTIONAL_DIAGNOSTICS = frozenset(('LaunchFrameDrops.cmd', 'tools/analyze_frame_drops.py'))
+REQUIRED_FILES = frozenset((*(name for name in _release.DOCUMENTS if name not in OPTIONAL_DIAGNOSTICS),
     *(f'build_native/Release/{name}' for name in (*_release.BINARIES, *_release.CRT_REQUIRED)),
     'tools/update_release.ps1', 'tools/update_commits.ps1', 'tools/add_steam_shortcut.py',
     *(f'tools/{name}' for name in _release.LINUX_SETUP_TOOLS),
@@ -37,7 +40,7 @@ REQUIRED_FILES = frozenset((*_release.DOCUMENTS,
     'ThirdParty/audio/COPYING.winpthreads', 'ThirdParty/audio/LICENSE.md',
     'ThirdParty/audio/PROVENANCE.json', 'ThirdParty/audio/ffmpeg-darkxma-upstream.tar.gz',
     'ThirdParty/audio/ffmpeg-darkxma.patch', 'ThirdParty/audio/build_xma_codec.py'))
-ALLOWED_FILES = REQUIRED_FILES | frozenset(f'build_native/Release/{name}' for name in (
+ALLOWED_FILES = REQUIRED_FILES | OPTIONAL_DIAGNOSTICS | frozenset(f'build_native/Release/{name}' for name in (
     'concrt140.dll', 'msvcp140_1.dll', 'msvcp140_2.dll', 'msvcp140_atomic_wait.dll',
     'msvcp140_codecvt_ids.dll', 'vccorlib140.dll', 'vcruntime140_threads.dll'))
 PLACEHOLDER = 'Darkness/PUT_GAME_FILES_HERE.txt'

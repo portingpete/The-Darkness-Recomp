@@ -3099,7 +3099,9 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw,const Native::WorldG
     // draw depended on its geometry beyond the buffers (prompt quad, blur
     // footprint) or left bindings stale (fog).
     static constexpr std::array<Native::EngineVector,1> identityQuad{Native::EngineVector{1,0,0,0}};
-    if(repeatShortPath && bindingsValid_ && !screenFog && !fogVerify && !fogVerifyOpen_ && !measure && !inspectLighting &&
+    // A later element may be a quad even when this anchor was a triangle.
+    // Substituted prompts must prepare their own geometry-dependent transform.
+    if(repeatShortPath && bindingsValid_ && !promptSlots && !screenFog && !fogVerify && !fogVerifyOpen_ && !measure && !inspectLighting &&
        !inspectFrame_ && !captureFrame_ && !std::memcmp(&viewportValues[1],identityQuad.data(),sizeof(identityQuad)) &&
        (!hasColor || !colorWriteMask || (blurRectEmpty(colorSurface->logicalBlurRegion) &&
         !(fragmentName=="XREngine_GaussClamped" && bloomControl.snap)))) {

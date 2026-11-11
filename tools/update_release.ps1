@@ -68,11 +68,11 @@ function Assert-ManagedPath([string]$Relative) {
             $segment -match '^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)' -or
             $segment -match '[<>"|?*]') { throw "Unsafe Windows path: $Relative" }
     }
-    $rootFiles = @('RELEASE.json', 'Launch.cmd', 'LaunchWithUpdates.cmd', 'LaunchWithSettings.cmd',
+    $rootFiles = @('RELEASE.json', 'Launch.cmd', 'LaunchFrameDrops.cmd', 'LaunchWithUpdates.cmd', 'LaunchWithSettings.cmd',
         'LaunchStallProfiler.cmd', 'LaunchShadowCapture.cmd', 'Launch.sh', 'SetupLinux.cmd',
         'PlayLinux.cmd', 'START_HERE.txt', 'README.md', 'CONTROLS.md', 'RENDERING.md', 'STEAM_DECK.md', 'COPYING')
     $toolsFiles = @('tools/update_release.ps1', 'tools/add_steam_shortcut.py', 'tools/setup_linux.ps1',
-        'tools/setup_linux.py', 'tools/wsl_graphics.py', 'tools/update_commits.ps1')
+        'tools/setup_linux.py', 'tools/wsl_graphics.py', 'tools/update_commits.ps1', 'tools/analyze_frame_drops.py')
     $localizationFiles = @('assets/localization/README.md', 'assets/localization/native_menu_ru.json')
     $audioFiles = @('ThirdParty/README.txt', 'ThirdParty/audio/COPYING.LGPLv2.1',
         'ThirdParty/audio/COPYING.winpthreads', 'ThirdParty/audio/LICENSE.md', 'ThirdParty/audio/PROVENANCE.json',

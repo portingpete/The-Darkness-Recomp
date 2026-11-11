@@ -34,7 +34,8 @@ class AppImageTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix='dark appimage & test! ')
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-        self.files = {name: f'fixture: {name}\n'.encode() for name in appimage.REQUIRED_FILES}
+        self.files = {name: f'fixture: {name}\n'.encode()
+                      for name in appimage.REQUIRED_FILES | appimage.OPTIONAL_DIAGNOSTICS}
         self.files['Launch.sh'] = b'#!/bin/sh\nexit 0\n'
         self.archive = self.root / 'Windows release.zip'
         self.installer = self.root / 'installer with spaces'
@@ -66,7 +67,18 @@ class AppImageTests(unittest.TestCase):
         with zipfile.ZipFile(self.archive) as bundle:
             return appimage.validate_release(bundle)
 
+    def test_older_release_without_frame_drop_tools_is_supported(self):
+        older = {name: data for name, data in self.files.items()
+                 if name not in appimage.OPTIONAL_DIAGNOSTICS}
+        self.write_release(version='v0.1.8', files=older)
+        self.assertEqual(self.validate()['version'], 'v0.1.8')
+        destination = self.root / 'older release'
+        appimage.extract_release(self.archive, destination)
+        self.assertEqual((destination / 'Launch.cmd').read_bytes(), older['Launch.cmd'])
+
     def test_release_is_copied_exactly_with_native_appdir_entrypoint(self):
+        self.assertIn('LaunchFrameDrops.cmd', appimage.ALLOWED_FILES)
+        self.assertIn('tools/analyze_frame_drops.py', appimage.ALLOWED_FILES)
         destination = self.root / 'installer AppDir'
         manifest = appimage.prepare_appdir(self.archive, self.installer, destination)
         self.assertEqual(manifest['version'], 'v1.2.3')

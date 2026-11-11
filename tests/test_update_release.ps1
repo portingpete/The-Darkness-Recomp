@@ -161,6 +161,10 @@ $releaseList = @(
 )
 Assert-True ((Select-NewestRelease $releaseList 'v1.0.0').tag_name -eq 'v2.0.0-beta.2') 'Includes prereleases and sorts by semantic version'
 Assert-True ($null -eq (Select-NewestRelease $releaseList 'v2.0.0')) 'No downgrade'
+foreach ($relative in @('LaunchFrameDrops.cmd', 'tools/analyze_frame_drops.py')) {
+    Assert-ManagedPath $relative
+    $script:TestCount++
+}
 foreach ($relative in @('assets/localization/other.json', 'assets/localization/README.md.exe',
     'build_native/Release/CubeWnd.pc.ru.xcr.source.sha256', 'tools/update_anything.ps1')) {
     Assert-Throws { Assert-ManagedPath $relative } "Unrelated path remains excluded: $relative"

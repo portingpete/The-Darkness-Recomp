@@ -52,6 +52,7 @@ class ReleaseTests(unittest.TestCase):
         (self.root / 'tools/update_release.ps1').write_bytes((ROOT / 'tools/update_release.ps1').read_bytes())
         (self.root / 'tools/update_commits.ps1').write_bytes((ROOT / 'tools/update_commits.ps1').read_bytes())
         (self.root / 'tools/add_steam_shortcut.py').write_bytes((ROOT / 'tools/add_steam_shortcut.py').read_bytes())
+        (self.root / 'tools/analyze_frame_drops.py').write_bytes((ROOT / 'tools/analyze_frame_drops.py').read_bytes())
         for name in release.LINUX_SETUP_TOOLS:
             (self.root / 'tools' / name).write_bytes((ROOT / 'tools' / name).read_bytes())
         (self.root / 'third_party/smaa').mkdir(parents=True)
@@ -92,6 +93,8 @@ class ReleaseTests(unittest.TestCase):
                 self.assertEqual(bundle.read(name), (ROOT / name).read_bytes())
             self.assertEqual(bundle.read('LaunchWithSettings.cmd'), (ROOT / 'LaunchWithSettings.cmd').read_bytes())
             self.assertEqual(bundle.read('LaunchWithUpdates.cmd'), (ROOT / 'LaunchWithUpdates.cmd').read_bytes())
+            for name in ('LaunchFrameDrops.cmd', 'tools/analyze_frame_drops.py'):
+                self.assertEqual(bundle.read(name), (ROOT / name).read_bytes())
             self.assertEqual(bundle.read('tools/update_release.ps1'), (ROOT / 'tools/update_release.ps1').read_bytes())
             self.assertEqual(bundle.read('tools/update_commits.ps1'), (ROOT / 'tools/update_commits.ps1').read_bytes())
             for name in release.DIAGNOSTIC_LAUNCHERS:
@@ -136,6 +139,8 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual((stage / 'LaunchWithUpdates.cmd').read_bytes(),
                              (ROOT / 'LaunchWithUpdates.cmd').read_bytes())
+            for name in ('LaunchFrameDrops.cmd', 'tools/analyze_frame_drops.py'):
+                self.assertEqual((stage / name).read_bytes(), (ROOT / name).read_bytes())
             self.assertFalse((stage / 'Darkness').exists())
 
     def test_incomplete_package_is_rejected(self):
