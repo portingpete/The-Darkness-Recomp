@@ -236,7 +236,10 @@ const int recordRepeatMode = [] {
 uint64_t pendingPartSerial=1; // queueMutex: the part `pending` is building.
 // The world draw queueCapturedWorldLocked just queued, if later draws may
 // repeat it: where it sits in `pending`, valid while that part is pending.
-struct QueuedWorld {uint64_t part=0;size_t index=0;const WorldDraw* draw=nullptr;uint32_t epoch=0;};
+struct QueuedWorld {
+    uint64_t part=0;size_t index=0;const WorldDraw* draw=nullptr;uint32_t epoch=0;
+    SampledTextureGenerations textures;
+};
 thread_local QueuedWorld lastQueuedWorld;
 // ...and the record and vertex program preparation it was captured under.
 struct RepeatAnchor:QueuedWorld {bool valid=false;uint64_t record=0,prepares=0;};
@@ -994,7 +997,7 @@ void previewPrepareTexture(uint32_t id) {
     std::lock_guard lock(queueMutex);
     alphaColors.erase(id);
     if (auto it = textures.find(id); it != textures.end()) {
-        textureBytes -= it->second->pixels.size(); textures.erase(it);
+        textureBytes -= it->second->pixels.size(); textures.erase(it);bumpColorId(id);
     }
     if (auto it = colorTextures.find(id); it != colorTextures.end()) {
         colorBytes -= it->second.image->bytes(); bumpColorId(it->first);colorTextures.erase(it);
@@ -1135,7 +1138,7 @@ void previewObserveImage(uint8_t* base, uint32_t address, uint32_t id, uint32_t 
     std::lock_guard lock(queueMutex);
     if (textureBytes + image->pixels.size() > 32 * 1024 * 1024) { ++rejectedImages; return; }
     if (auto it = textures.find(id); it != textures.end()) textureBytes -= it->second->pixels.size();
-    textureBytes += image->pixels.size(); textures[id] = image; alphaColors.erase(id); ++images;
+    textureBytes += image->pixels.size(); textures[id] = image; alphaColors.erase(id);bumpColorId(id); ++images;
     if (TextureUploadTraceEnabled())
         std::printf("[EnginePreview] Copied original alpha texture id=%u size=%ux%u\n", id, image->width, image->height);
 }
@@ -1909,6 +1912,7 @@ __attribute__((hot)) static void queueCapturedWorldLocked(uint8_t* base,std::sha
             if(!streaming)maxAddImageBytes+=image->bytes();
         };
         uint32_t unresolvedSlots=0;
+        SampledTextureGenerations sampledTextures;
         for (uint32_t slots=draw->textureMask;slots;slots&=slots-1) {
             const unsigned s=std::countr_zero(slots);
             if(!draw->textureObjects[s].object)continue;
@@ -1917,6 +1921,7 @@ __attribute__((hot)) static void queueCapturedWorldLocked(uint8_t* base,std::sha
             // NATIVE_LAYER: memoized map lookup and immutable image fields.
             auto& memo=colorLookupMemo[id&(colorLookupMemo.size()-1)];
             const auto generation=colorIdGenerations[id];
+            sampledTextures.sample(s,generation);
             if(memo.id!=id || memo.generation!=generation) {
                 const auto it=colorTextures.find(id);
                 memo.id=id;memo.generation=generation;
@@ -2058,15 +2063,15 @@ __attribute__((hot)) static void queueCapturedWorldLocked(uint8_t* base,std::sha
                               draw->fragmentName!="XREngine_DepthFog";
         auto& command=pending.emplace_back();command.promptContext=draw->promptContext; // NATIVE_LAYER: in place
         command.world=std::move(draw);
-        lastQueuedWorld=repeatable?QueuedWorld{pendingPartSerial,pending.size()-1,command.world.get(),framePinEpoch}:QueuedWorld{};
+        lastQueuedWorld=repeatable?QueuedWorld{pendingPartSerial,pending.size()-1,command.world.get(),framePinEpoch,sampledTextures}:QueuedWorld{};
         ++worldQueued;
     }
 }
-// repeatAnchor still names a command of the part being built (queueMutex held).
+// The command and its sampled images must still be current (queueMutex held).
 static bool repeatAnchorPending() noexcept {
     const auto& anchor=repeatAnchor;
     return anchor.part==pendingPartSerial && anchor.index<pending.size() && pending[anchor.index].world.get()==anchor.draw &&
-           anchor.epoch==framePinEpoch;
+           anchor.epoch==framePinEpoch && anchor.textures.current(anchor.draw->textureIds,colorIdGenerations);
 }
 // Queue `geometry` as a repeat of repeatAnchor. False, with nothing changed,
 // whenever the ordinary path has a decision to make instead: the anchor's

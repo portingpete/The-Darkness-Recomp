@@ -77,6 +77,29 @@ static void testSubtitleContextLifetime() {
 // Repeats (SimpleMesh::repeat): elements of one record differ in geometry
 // and image references only; the state comparison ignores exactly those.
 static void testRepeatComparison() {
+    {
+        std::array<uint32_t,65536> generations{};
+        std::array<uint16_t,16> ids{};ids[0]=7;ids[15]=65535;
+        generations[7]=12;
+        SampledTextureGenerations sampled;
+        sampled.sample(0,generations[7]);
+        sampled.sample(15,generations[65535]); // An unresolved last slot.
+        require(sampled.current(ids,generations),"Unchanged sampled textures invalidated a repeat");
+        ++generations[8];
+        require(sampled.current(ids,generations),"An unrelated texture upload invalidated a repeat");
+        ++generations[7];
+        require(!sampled.current(ids,generations),"A replacement sampled texture retained the old repeat");
+        sampled.sample(0,generations[7]);
+        require(sampled.current(ids,generations),"A recaptured texture generation did not recover repeats");
+        ++generations[65535];
+        require(!sampled.current(ids,generations),"A newly resolved last-slot texture retained the old repeat");
+        // Publication during a budget wait must compare against the generation
+        // retained before the wait, rather than the cache after it wakes.
+        sampled.sample(15,generations[65535]);
+        const auto beforeWait=sampled;
+        ++generations[7];
+        require(!beforeWait.current(ids,generations),"A budget wait concealed a sampled texture replacement");
+    }
     auto stored=[](uint32_t id) {auto geometry=std::make_shared<StoredGeometry>();geometry->id=id;return geometry;};
     WorldDraw a,b;
     a.geometry={stored(1),stored(2),0,6,0};b.geometry={stored(3),stored(4),6,3,0};

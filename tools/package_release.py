@@ -14,7 +14,7 @@ BINARIES = (
     'avcodec-darkxma-62.dll', 'avutil-darkxma-60.dll', 'libwinpthread-1.dll',
     'CubeWnd.pc.xcr', 'CubeWnd.pc.ru.xcr', 'CubeWnd.pc.xcr.source.sha256', 'GameContext_Create.pc.xdf',
 )
-DOCUMENTS = ('Launch.cmd', 'LaunchWithSettings.cmd', 'LaunchWithUpdates.cmd', 'Launch.sh', 'SetupLinux.cmd', 'PlayLinux.cmd', 'START_HERE.txt', 'README.md', 'CONTROLS.md', 'RENDERING.md', 'STEAM_DECK.md', 'COPYING',
+DOCUMENTS = ('Launch.cmd', 'LaunchFrameDrops.cmd', 'LaunchWithSettings.cmd', 'LaunchWithUpdates.cmd', 'Launch.sh', 'SetupLinux.cmd', 'PlayLinux.cmd', 'START_HERE.txt', 'README.md', 'CONTROLS.md', 'RENDERING.md', 'STEAM_DECK.md', 'COPYING',
              'assets/localization/README.md', 'assets/localization/native_menu_ru.json')
 DIAGNOSTIC_LAUNCHERS = ('LaunchStallProfiler.cmd', 'LaunchShadowCapture.cmd')
 LINUX_SETUP_TOOLS = ('setup_linux.ps1', 'setup_linux.py', 'wsl_graphics.py')
@@ -41,6 +41,7 @@ def collect_files(root: Path, crt: Path) -> dict[str, Path]:
     files['tools/update_release.ps1'] = root / 'tools/update_release.ps1'
     files['tools/update_commits.ps1'] = root / 'tools/update_commits.ps1'
     files['tools/add_steam_shortcut.py'] = root / 'tools/add_steam_shortcut.py'
+    files['tools/analyze_frame_drops.py'] = root / 'tools/analyze_frame_drops.py'
     for name in LINUX_SETUP_TOOLS:
         files[f'tools/{name}'] = root / 'tools' / name
     for name in BINARIES:

@@ -7,6 +7,7 @@
 #include "stored_geometry.h"
 #include "engine_vertex_program.h"
 #include <windows.h>
+#include <bit>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -17,6 +18,24 @@ namespace DarkRecomp::Native {
 // (run both, compare every field, queue the original result).
 enum class NativeLayerMode : unsigned { off = 0, on = 1, check = 2 };
 NativeLayerMode nativeLayerMode() noexcept;
+
+// The queue mutex protects both sampling and validation. Retain generations
+// when images are selected, before a budget wait can release that mutex.
+// This includes a currently unresolved ID: a later upload must end the repeat.
+struct SampledTextureGenerations {
+    std::array<uint32_t,16> generations{};
+    uint16_t mask=0;
+    void sample(unsigned slot,uint32_t generation) noexcept {
+        generations[slot]=generation;mask|=uint16_t(1u<<slot);
+    }
+    bool current(const std::array<uint16_t,16>& ids,const std::array<uint32_t,65536>& latest) const noexcept {
+        for(uint32_t slots=mask;slots;slots&=slots-1) {
+            const unsigned slot=std::countr_zero(slots);
+            if(generations[slot]!=latest[ids[slot]])return false;
+        }
+        return true;
+    }
+};
 
 // Guest memory helpers. Valid when the original guarded copy would be: nonzero
 // address and address + size within the 32-bit guest space.

@@ -100,6 +100,19 @@ static void worldPromptRenderPass(WorldRendererD3D11& renderer, unsigned scale) 
     require(render(unknown) == controller, "Unknown image was replaced or enlarged");
     auto triangle = draw; triangle.geometry.indexCount = 3;
     unchangedOutside(render(triangle), background, 16, 48);
+    // A triangle anchor has no enlargement, but a repeated quad needs it.
+    // Both buffer ranges are already cached, so the geometry-only shortcut
+    // would otherwise draw the quad with the triangle's identity transform.
+    renderer.clear(clear);
+    require(renderer.draw(triangle) && renderer.draw(draw), "Complete prompt repeat reference rejected");
+    const auto expectedRepeat = renderer.readSurface(colorTarget, false);
+    renderer.clear(clear);
+    const auto shortDraws = renderer.shortPathDraws();
+    require(renderer.draw(triangle) && renderer.draw(triangle, &draw.geometry, true),
+            "Prompt repeat after a triangle anchor rejected");
+    require(renderer.readSurface(colorTarget, false) == expectedRepeat,
+            "Prompt repeat skipped the quad's geometry-dependent enlargement");
+    require(renderer.shortPathDraws() == shortDraws, "Substituted prompt entered the geometry-only shortcut");
     auto depthDraw = draw; put(depthDraw.attributes.data() + 92, 0x0110000E);
     unchangedOutside(render(depthDraw), background, 16, 48);
     // Draw-boundary adjustments must not rewrite retained original state.
