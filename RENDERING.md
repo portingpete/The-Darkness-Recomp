@@ -371,6 +371,70 @@ gap is reported separately as `lastAcceptedAgeMs`, with `haveAcceptedFrame`
 distinguishing startup from a gap after an accepted frame. These are application
 timings, not measurements of monitor scanout.
 
+### Frame-drop timeline
+
+`Launch.cmd frame-drops` (or `LaunchFrameDrops.cmd`) runs `DarkRecomp.exe` with
+`--frame-timeline <dir>/frames.csv`, `--trace-frame-hitches` and
+`DARKRECOMP_STALL_PROFILE=1`. The CSV has one row per accepted frame; rows are
+buffered on the display thread and written by a below-normal-priority thread about
+once per second, so a crash loses at most the last second. `--frame-timeline`
+requires the gameplay renderer and a CSV path that does not exist yet.
+
+Each row covers the interval since the previous accepted Present:
+
+- Display-thread stages, summed over every loop iteration in the interval (the
+  existing `FrameOutlier` boundaries): `take_ms` waiting for the engine frame,
+  `render_ms` D3D11 submission, `post_ms` captures and display copy, `pacer_ms`
+  the frame limiter, `present_ms` DXGI Present, `tail_ms` work after Present (the
+  5 s report, texture preloads), `pump_ms` window messages.
+- `gpu_ms`: D3D11 timestamp span of the frame's commands, read back without
+  stalling. `gpu_idle_before_ms` is the gap since the previous frame's commands
+  finished; near zero on consecutive frames means the GPU is saturated.
+- `engine_*`: the engine (guest) frame shown by this Present, from the producer
+  timeline: wall time between engine frame ends, engine-thread CPU time,
+  back-pressure wait, Present latency and command/draw counts. A wall time far
+  above its CPU time means the engine thread waited or was descheduled.
+- `io_*`: guest `NtReadFile` reads completed in the interval; `engine_io_ms` is the
+  part on the engine thread.
+- Render work: draws, image/geometry/transient uploads (count, KiB, ms), surface
+  creation, vertex-decode time, new and compiled vertex shaders, and draws
+  deferred by the per-frame upload budget.
+- `display_cpu_ms`, `process_cpu_ms` and `page_faults` from
+  `QueryThreadCycleTime`, `QueryProcessCycleTime` and `GetProcessMemoryInfo`.
+  Cycle counts are converted with the time-stamp counter rate measured over the
+  first second, so these columns (and `engine_cpu_ms`, from the engine thread's
+  cycle count) are empty during that second. `GetThreadTimes` was used before;
+  it advances in 15.6 ms scheduler ticks, so per-frame CPU read as 0 or 15.62.
+- `markers` counts F9 presses; `report` marks the interval that absorbed the 5 s
+  report; `stall_serial` matches `[STALL] frame=N stream=display`.
+
+The stall profiler does not time the calls made for every world draw (the
+`StallProfiler::hot` scopes: the captured D3D, vertex-program, palette and
+geometry functions, `KeTlsGetValue`, and `WorldRendererD3D11::draw`); waits
+inside them keep their own scopes. Timing them made engine frames about 20%
+slower in busy views (1.60-1.67 instead of 1.30-1.34 microseconds per world
+draw on the village route), which distorted the very frame times this mode
+records. With them off the capture costs within 2% of normal play (1.32-1.36,
+and 1.25-1.28 on the final build in `build_native/run/claude-fd-22917-26382`;
+normal play options measured 1.30-1.34 in `build_native/run/claude-play-14586-1245`).
+Set `DARKRECOMP_STALL_PROFILE=2` to time them anyway.
+
+In this mode the stall profiler reports only frames slower than
+`max(1.5 x budget, budget + 4 ms)` (25 ms at 60 FPS) and omits standalone
+`[STALL] call`/`[WAIT]` lines; each slow-frame report keeps its ranked
+contributors. `[STALL]` frame headers carry `end_qpc`, which converts to the CSV
+clock with its `origin_qpc` and `qpc_frequency` comments, so engine-thread
+(`stream=guest`) reports can be joined to rows through `engine_boundary_ms`.
+`tools/analyze_frame_drops.py <run folder>` classifies each slow frame (engine
+CPU, engine file reads, engine waits, shader compiles, uploads, render CPU,
+GPU-bound, Present, frame limiter, post-Present work), groups episodes, finds
+periodic hitches, and lists the stall contributors of the worst frames. A frame
+whose engine frame lasts at least 85% of the interval and longer than the
+display thread's own work counts as an engine frame even when rendering was the
+largest display stage; before, such frames were reported as gpu-bound because
+the GPU span follows the interval. The game log ends with two
+`[FrameDropSummary]` lines.
+
 ## Saves
 
 Offline single-player (user0) saves live portably under
@@ -1076,3 +1140,736 @@ Evidence and source/executable hashes: build_native/general-performance-20260913
 Final native input fingerprint:
 b8673a22da8ef15f0b9292639f89afe5eb0719b0f09672ddda781cdbe792371b.
 The original save files and graphics settings were verified unchanged.
+
+## Busy-scene engine thread speedup (2026-11-09)
+
+In the Chapter 2 village (OW1_Village), views with 10,000-12,000 world draws
+ran at 36-42 FPS. The engine thread, which runs the game's own code and
+captures each draw, was the limit; the GPU was mostly idle. Changes:
+
+- Generator: `xenonrecomp-non-argument-locals.patch` and
+  `xenonrecomp-stack-accesses.patch` (see `tools/patches/README.md`), enabled
+  in `config/darkness.toml`.
+- Guest loads and stores keep their null-page and MMIO checks, but the rare
+  case now takes an out-of-line cold path (`PPCLoadSpecial`).
+- The engine can publish up to `previewReadyPartDepth` (3) finished command
+  parts ahead of the display thread instead of one, so neither thread waits on
+  momentary differences in part cost. Backpressure is unchanged.
+- The D3D11 world vertex shader uploads only the planned constant rows while
+  its constant references are unchanged; any reference change, unproven palette
+  or full plan still uploads every row. The texture loop and image cache avoid
+  per-draw shared_ptr copies and repeated validity checks.
+- `configureGameThread` no longer sets an ideal processor. In the same views an
+  ideal-processor hint for the first two performance cores made engine frames
+  1-5% slower, and restricting the engine to the first performance core about
+  13% slower (its frame time also switched between two levels during a run).
+- Profile-guided optimization (PGO) of the game executable: CMake option
+  `DARK_PGO` (`generate` or `use`, default off) with `DARK_PGO_PROFILE` and
+  `DARK_PGO_RUNTIME`. It applies to the recompiled game code, the native
+  runtime and the app. `build_native` is configured with `DARK_PGO=use` and
+  `build_native/pgo/darkrecomp.profdata`; `tools/build.ps1` keeps those cache
+  values. A fresh build directory builds without PGO. To refresh the profile,
+  configure a separate directory with `-DDARK_PGO=generate` and
+  `-DDARK_PGO_RUNTIME=<VC\Tools\Llvm\x64\lib\clang\N\lib\windows\clang_rt.profile-x86_64.lib>`,
+  build `DarkRecomp`, play the busy scenes with `LLVM_PROFILE_FILE` set (the
+  counters are written when the game exits), merge the `.profraw` files with
+  `llvm-profdata merge`, and reconfigure `build_native` with `-DDARK_PGO=use`.
+  The helper scripts `build_native/claude-pgo-gen.cmd`, `claude-pgo-bench.cmd`
+  and `claude-pgo-use.cmd` do this for the automated village route. Profile
+  data never changes behavior; a stale profile only loses speed (its warnings
+  are disabled).
+- `--sample-engine` reports `[CpuSystemCaller]` lines: samples in system DLLs
+  (for example SRW lock functions) with the executable source line that called
+  them, and lists 40 engine functions instead of 12.
+
+Same automated route in every run (isolated settings and saves,
+`dev mission OW1_Village:ow1+layer1`, noclip to a fixed view with about 10,800
+world draws, 55-75 seconds of frames; diagnostic sampling enabled):
+
+| Build | Median frame | FPS (median) | p95 | p99 | Frames over 16.7 ms |
+|---|---|---|---|---|---|
+| Before | 23.02 ms | 43.4 | 25.77 ms | 27.32 ms | 100% |
+| After, without PGO | 15.35 ms | 65.1 | 17.06 ms | 18.49 ms | 7.8% |
+| After, with PGO (run 1) | 13.91 ms | 71.9 | 15.29 ms | 16.45 ms | 0.8% |
+| After, with PGO (run 2) | 13.94 ms | 71.7 | 15.23 ms | 16.27 ms | 0.5% |
+
+Display-thread render time per frame fell from 14.0 ms to 10.1-10.2 ms. Nearby
+views with 10,300-11,250 draws took 21.9-23.9 ms of engine time per frame
+before, 15.0-16.0 ms after without PGO and 13.3-14.5 ms with PGO; the
+11,247-draw view took 16.02 ms without and 14.46 ms with PGO. The first
+profile was recorded on this route only. The current profile merges it with a
+second run that also covers the checkpoint tunnel on foot, firing, reloading,
+crouching and manifesting and using Darkness powers, so code outside the
+aerial route is not treated as cold. With it the same route measured 14.36 ms
+(69.6 FPS, p99 16.89 ms, 1.3% over 16.7 ms) at 11,066 draws
+(`build_native/run/claude-bench-3155-11485`), within about 2% of the first
+profile. All 137 CTest tests pass with and without PGO.
+
+Also measured and not adopted: moving world-draw queueing (texture resolution,
+budgets, part streaming) to a helper thread behind a lock-free ring passed all
+tests but gained only about 1% (13.74 ms at 10,818 draws), so it was reverted.
+ThinLTO on top of PGO (CMake option `DARK_THINLTO`, off by default; it needs
+lld-link and llvm-lib, for example Ninja with clang-cl, so the Visual Studio
+generator used by `tools/build.ps1` does not use it) gained 2-3.5% in the same
+views (13.77 ms at 11,123 draws); `build_native/claude-lto3.cmd` builds it in
+`build_lto` as `build_native/Release/DarkRecomp-lto.exe`. Compiling the game code, runtime and app with the
+integer instructions of Haswell/Zen-era CPUs (MOVBE for the guest's byte-swapped
+loads and stores, LZCNT, POPCNT, BMI1/BMI2; no AVX, FMA or SSE4) passed all tests
+but was not faster on an i9-14900K: 1.30-1.37 instead of 1.30-1.32 microseconds
+per world draw on the same route with normal play options
+(`build_native/run/claude-play-27905-10433` against
+`build_native/run/claude-play-25224-583`), so it was reverted. These results
+suggest the engine thread is now limited by moving each draw's data through
+memory rather than by the instructions it runs.
+
+Remaining limit: the engine thread still bounds frames at about 1.3-1.5
+microseconds per world draw, and that cost depends on what is in view. The
+user's own heaviest spot (36-37 FPS in the older build) was re-measured with
+`LaunchFrameDrops.cmd` on the PGO build: 11,783 draws at 55.6 FPS, median
+frame interval about 18 ms, engine frame 17.9-18.3 ms, display-thread render
+12.1 ms (`build_native/run/frame-drops-20906-14478`). That capture still timed
+every per-draw call (see "Frame-drop timeline"), about 1.53 microseconds per
+draw; on the same route the capture cost was a factor of about 1.2, so that
+view takes about 15 ms per engine frame (roughly 66 FPS) in normal play and in
+the corrected capture. Its report called the slow frames "gpu-bound" because
+the GPU span tracks the frame interval; the engine thread is the limit there.
+With normal play options on the final build, the same village from the air
+measured 10,400-11,190 draws at 13.6-14.7 ms per engine frame (68-73 FPS,
+`build_native/run/claude-play-28142-20632`), and the 8,163-draw view that the
+user's capture also shows took 7.65 ms instead of 8.39 ms. The user's own
+`LaunchFrameDrops.cmd` capture on that build (`build_native/run/frame-drops-8429-1145`)
+then held a heavier village view of 12,811-12,825 draws for about 30 seconds at
+63.1 FPS: median frame 15.76 ms, p95 16.94 ms, p99 17.65 ms, 8.3% of frames over
+16.7 ms, engine CPU 15.4 ms of a 15.7 ms engine frame. Evidence:
+`build_native/run/claude-bench-11741-13008` (before),
+`build_native/run/claude-bench-10814-7884` (without PGO),
+`build_native/run/claude-bench-19311-24134` and
+`build_native/run/claude-bench-21211-21018` (with PGO).
+
+### Level of detail in these views (checked 2026-11-09)
+
+Model and world level of detail behave as the original game data defines, so
+they do not explain the draw counts. Checked on the automated village route
+with a temporary opt-in probe (not kept in the source tree; a copy is in
+`build_native/claude-stage/lod-probe`):
+
+- Model LOD: `xr_lodoffset` is 0 and `xr_lodscale` 1 (the menu's "Model
+  quality: dynamic"; "high" would set the offset to -1000000). The LOD
+  distance is (camera distance + offset) * FOV / 90 * scale. Models with LOD
+  meshes (thresholds 150/300/600) at about 1,300 units all used their lowest
+  LOD. Forcing full detail (offset -1000000) changed world draws by under 1%
+  (9,810 to 9,882), and a 16x scale by none: LOD meshes have fewer triangles,
+  not fewer draws.
+- World LOD (`CWObject_WorldLOD`, `sv_wlod_*`): OW1_Village's ENGINESETTINGS
+  only sets color correction, so every range is 0, which means unlimited
+  (setting 2000, 4000 or 100000 gives the same draws as 0). A shorter range is
+  a real lever but changes the original look: `sv_wlod_range_onclientrender`
+  of 1000 cut that view from 9,681 to 6,873 draws, 300 to 6,861, and adding
+  `sv_wlod_range_onclientrender_object(300)` to 6,259.
+- Draw distance (`[Display] DrawDistance`, `--draw-distance N`, settings launcher
+  row; 0 = Original; default 1500 = Near when nothing is saved): `runtime/native/draw_distance.cpp`
+  wraps 82498C48, which copies the view's WorldLOD ranges into the client render
+  context (enable bits at +80: 0x10 generic, 0x08 characters, 0x04 engine paths,
+  0x02 objects, 0x01 pickups, 0x20 any; squared ranges at +88..+104). It shortens
+  only the generic and object ranges in that per-frame copy (a level's shorter
+  range stays), so no game or save state changes and characters, pickups and
+  engine paths are unaffected. Through the console, a generic range of 1000 units
+  cut the aerial village view from 9,681 to 6,873 draws, and generic plus object
+  ranges of 300 units to 6,259.
+  With the option at 1000 on the built game (`build_native/run/claude-play-11489-12626`),
+  the automated route's heaviest aerial view drew 5,938 draws at 7.8 ms per engine
+  frame (127 FPS) instead of about 10,990 at 13.8-14.8 ms; the level geometry stays.
+  At the Near default (1500 units, `build_native/run/claude-play-21041-27203`) the
+  same route's view drew 10,130-10,360 at 12.3-12.9 ms (78-81 FPS): about 6-8% fewer
+  draws there, since most of that view is within 1500 units of the camera.
+- FieldOfView=95 (guest FOV 78.6 instead of 70) adds about 6% of draws and 7%
+  of engine time in that view (9,683 draws and 12.85 ms versus 9,128 and
+  12.00 ms with the original FOV).
+
+## Redundant geometry passes (2026-11-10)
+
+Frame time in busy scenes follows the number of world draws the game emits: the
+engine thread spends about 1.3 microseconds on each. Two of the game's passes
+redraw geometry for a result that is not used, or that one pass over the screen
+can produce.
+
+### Velocity pass with motion blur off
+
+The "MotionMap" pass redraws moving and static geometry into a velocity target
+that only the motion-blur input of the final composite reads. With motion blur
+off, `renderer/engine/render_trace.cpp` returns from its emitter (82276148)
+without drawing. `DARK_VELOCITY_PASS=1` keeps the original call; motion blur on
+is unchanged. On the automated village route this removed 17-23% of the draws
+and gave 8-25% more frames per second in its five views (for example 9,177
+draws at 88.0 FPS to 7,575 at 96.6).
+
+### Screen-space depth fog
+
+The Otherworld levels (`OW1_*`, `OW2_*`) fog the scene by drawing every
+depth-prepass object again with `XREngine_DepthFog`: depth EQUAL, stencil EQUAL
+then increment, blended. Both of its interpolants are linear texture-generation
+stages of the clip position and are the same function for every object of a
+view, so one draw's constants give the fog inputs of any pixel from its
+position and stored depth (`renderer/engine/screen_fog.h`).
+
+- Engine thread (`simple_mesh.cpp`, `world_mesh.cpp`, hook 82868FE8): the first
+  fog draw of a run is captured and held. Later fog draws whose device state
+  bytes and vertex constants match it are absorbed before capture; the original
+  indexed draw is not called for them either. The held draw is queued when the
+  run ends.
+- Display thread (`world_renderer.cpp`, `drawScreenFog`): the held draw becomes
+  one pass over its viewport that reads stored depth, rebuilds the two
+  interpolants and runs the original fragment program. The original stencil
+  test and increment stay in the output merger.
+- Which pixels: the pass covers pixels that still hold their prepass depth. The
+  depth target is copied before the first depth write outside the prepass, and
+  the pass requires the stored depth to equal that copy and to differ from the
+  cleared value. Geometry that wrote depth after the prepass keeps its own fog
+  draw (matched by resource ids and index range), drawn before the pass, so the
+  stencil increment keeps the pass off its pixels. A fog draw with different
+  state, an inconsistent mapping, or prepass clip planes that differ from its
+  own also stays a per-object draw.
+- Multisampling: the pass runs per sample, at the sample's own position and
+  depth. The per-object draws shade a triangle once per pixel, so silhouette
+  pixels can differ slightly.
+- `DARK_SCREEN_FOG=0` restores the original per-object pass.
+  `DARK_SCREEN_FOG_DEBUG=1` paints the pass's decisions instead (red cleared
+  depth, green depth changed since the prepass, blue fog amount).
+
+`DARK_SCREEN_FOG_VERIFY=1` checks the equivalence in running frames. Every fog
+draw stays per object; for sampled runs the renderer keeps the color and
+depth-stencil targets from before the first fog draw, then restores them and
+draws the run again as the screen-space mode queues it, and logs the difference
+between the two color results in the target's own half-float values
+(`[ScreenFogVerify]`). On the village recording with the final build (1280x720
+guest viewport, 2560x1440 render):
+
+| Antialiasing | Sampled runs | Fogged pixels | Over 1/255 | Largest difference |
+|---|---|---|---|---|
+| Off | 183 | 537 million | 1 | 0.0041 |
+| 4x MSAA | 173 | 547 million | 5 | 0.0048 |
+| 8x MSAA | 174 | 514 million | 2 | 0.0079 |
+
+An earlier 4x run at 3440x1440 with a longer view to the horizon found about
+12,000 silhouette pixels over 1/255 in 954 million (largest 0.053). The
+Chapter 2 hills at 2x MSAA gave 26 in 488 million. New York levels have no such
+pass (checked in Chinatown) and are unaffected.
+
+Frame times on the same recording, original pass (`DARK_SCREEN_FOG=0`) against
+the screen-space pass, profile-guided build:
+
+| View | Draws | Frame ms | FPS |
+|---|---|---|---|
+| Spawn | 6,296 to 4,526 | 5.88 to 4.90 | 170 to 204 |
+| Aerial 1 | 7,472 to 5,917 | 9.66 to 9.08 | 104 to 110 |
+| Aerial 2 | 7,273 to 5,755 | 9.35 to 8.75 | 107 to 114 |
+| Aerial 3 | 6,599 to 5,347 | 8.75 to 8.20 | 114 to 122 |
+| Aerial 4 | 5,253 to 4,181 | 6.82 to 6.45 | 147 to 155 |
+
+An absorbed fog draw is not free: the game still prepares its state, and the
+match against the held draw costs time, so a removed draw saves about 0.4 of
+the 1.3 microseconds. Evidence: `build_native/run/claude-play-19456-17682`
+(original), `claude-play-19887-27448` (screen-space), `claude-play-19011-30459`,
+`claude-play-21085-7185` and `claude-play-20612-21530` (verification, off, 4x
+and 8x).
+
+### Recordings
+
+A `--test-input` script can be written in advance and plays from launch to
+exit without a driver. Besides the existing commands it accepts `wait <ms>`
+(1-600000), `wait world` (the game renders its world), `wait menu` (a mission
+can be loaded), `wait player` (a player is active; `menu` and `player` are
+published only while the developer panel is open, and `dev mission` closes
+it), `#` comment lines and `quit`. Waits ahead of the first command keep
+`--test-skip-intros` active. `tools/recordings/village-route.txt` is the route
+used above; `hills-tour.txt`, `trench-tour.txt` and `castle-tour.txt` look
+around from a spawn point, and `level-changes.txt` loads three missions in one
+session. `build_native/claude-play.cmd` plays the file named by
+`BENCH_RECORDING`.
+
+## Per-draw overheads (2026-11-10)
+
+After the redundant passes above, both threads spend their time on work that
+is repeated for every draw. Samples of the engine thread in Chinatown put 60%
+of it in the native capture (`renderer/engine`), 26% in the game's own code and
+9% in locks. The display thread spent about 40% of its rendering time in
+`WorldRendererD3D11::draw` itself rather than in Direct3D. The changes below
+remove work whose result is not used or is already known; none changes what is
+drawn.
+
+### The original indexed draw
+
+In preview play the hook on 82868FE8 returns after the native observation
+instead of running the original draw (`DARK_SKIP_XBOX_DRAW=0` runs it again;
+renderer tracing and non-preview runs always do). That call flushes the
+device's dirty state into the Xbox command stream and appends the draw packet;
+nothing in this port reads that stream, and its five callers ignore the result.
+
+What else it changes was measured rather than assumed: a temporary audit
+copied the device object (16 KiB) and the render context around 6.8 million
+original draws on the village route and recorded every word that differed,
+with a control window (the same copies, no call) to tell the call's effects
+from other threads' writes. The call changes only
+
+- the dirty masks (device+0..39), which then stay set until the next original
+  flush (clear, resolve, non-indexed draw),
+- command-buffer bookkeeping (+48..56, +10908, +13224..13360, +14892..14908),
+- values the flush derives from the bound programs and depth state and that
+  only the flush paths consume (+10528..10536, the low bits of +10560, +10580,
+  flag bytes +10941/10942, +11824).
+
+None of it is state the native capture reads (samplers +1152, constants +1920
+and +6016, clip planes +10272, surface words +10368..10391, clip control
++10564, targets +12432, bound textures +12536, the program binding +12688).
+The one draw-time write into that range found by reading the code (82872238,
+color-info format at +10372 under device flag +10943 bit 2) never happened:
+the flag is clear in this title. Words of the render context that changed in
+the audit changed as often in the control windows.
+
+Effect on the village route, same build: 1.50 to 1.34-1.37 microseconds of
+engine CPU per draw, 110 to 120 FPS in the first aerial view.
+
+### Queued prompt and subtitle contexts
+
+The game queues every draw in its vertex-buffer manager and executes the queue
+later. The port records, per queued draw, whether it belongs to a gameplay
+prompt or a subtitle (`simple_mesh.cpp`, hooks 8259D098, 8259CA10, 82299EA0),
+which took the same mutex five times per draw. The sets are empty unless a
+prompt or subtitle is on screen, so the functions now return before the lock
+while an atomic count of tracked entries is zero (an erase or a lookup cannot
+find anything then), and a thread reuses the generation it last read for a
+manager until an epoch counter says a frame's identity changed. The unit tests
+of these functions are unchanged.
+
+### Display thread: lookups repeated for every draw
+
+`renderer/d3d11/world_renderer.cpp`:
+
+- Views and samplers chosen for a draw were kept alive with an AddRef/Release
+  pair per slot until the context held them, in case a later slot's lookup
+  evicted them. The caches now park what they give up while a draw is in
+  progress (`retiredViews_`, `retiredSamplers_`) and release it when the
+  outermost `draw()` returns; the selection keeps plain pointers.
+- The last sampler per slot, the depth-stencil, blend and rasterizer state of
+  the last draw (keyed by attribute bytes 92..147, render scale and sample
+  count) and the two target surfaces are remembered, with the invalidation
+  noted beside each member in `world_renderer.h`.
+- A 64-bit mask of hashed keys skips the lookup in the resolve-destination map
+  for ordinary textures; the fetch exponent scale comes from a table of the
+  exact `std::exp2` values.
+- `beginFrame()` walked all cached images, vertex buffers and index buffers
+  every frame to find orphans, reading one shared reference count each. The
+  complete walk now runs every 16th frame (and at once while the image cache
+  is nearly full); immediate geometry, which is owned by a single frame, is
+  still checked every frame from the list of what `draw()` uploaded.
+- `engine_preview.cpp` asks the processor for the next captured draw's lines
+  while the current one is submitted, and `ColorImage` is cache-line aligned
+  so its reference counts do not share a line with the fields the display
+  thread reads.
+
+`DARK_DISPLAY_MEMO_CHECK=1` runs every replaced lookup as well and compares:
+534 million comparisons on the village recording and 89 million on the
+Chinatown walk, no mismatch. The screen-space fog verification
+(`DARK_SCREEN_FOG_VERIFY=1`) on the same build: 237 runs, 528 million fogged
+pixels, none over 1/255 (largest 0.0036); on the regenerated profile-guided
+build 233 runs, 519 million pixels, 4 over 1/255 (largest 0.0063).
+
+### Fog pass tracking
+
+`screenFogObserveDraw`/`screenFogObserveClear` now run only while fog draws
+keep arriving: the first fog draw starts the watch, 8,192 depth clears without
+one end it. Levels without the pass skip the bookkeeping; a pass is tracked
+from its first observed clear after the watch starts, and until then its fog
+draws are per object as before.
+
+### Result
+
+Frame times of steady views, 1280x720 guest, 2560x1440 render, antialiasing
+off. Chinatown is a noclip view over the streets from the first mission's
+spawn (`tools/recordings/chinatown-under.txt`); "before" there already has the
+original draw skipped, so the row shows the context and display-thread changes
+alone. The village rows compare with the state at the end of the previous
+section.
+
+| View | Draws | Before | After |
+|---|---|---|---|
+| Chinatown, noclip | 8,267 | 8.45 ms, 118 FPS (engine 7.44, display 8.36) | 6.91 ms, 145 FPS (engine 6.79, display 6.06) |
+| Village, aerial 2 | 5,755 | 8.75 ms, 114 FPS (engine 8.54, display 6.9) | 7.7 ms, 129 FPS (engine 7.6, display 5.6) |
+| Village, spawn | 4,526 | 4.90 ms, 204 FPS | 4.50 ms, 222 FPS |
+
+Engine and display are the two threads' CPU milliseconds per frame. In
+Chinatown the display thread was the limit before (its CPU time equalled the
+frame time); the engine thread is the limit in every view now, at about 0.82
+microseconds per draw in Chinatown and 1.32 in the village.
+
+The profile for the profile-guided build was regenerated afterwards from three
+recordings (village route, Chinatown noclip, Fulton Street). By then the test
+machine itself had changed state: every configuration, including code that had
+not changed, ran about 10% slower than an hour earlier, the window message
+pump and `Present` took longer in the game's own frame log, and the processor
+showed 25-35% load between runs. Compared with the previous build in that
+same state, the regenerated build needed the same engine time and about 5%
+less display rendering time (`claude-play-14295-19046` against
+`claude-play-17364-30004` and `claude-play-20996-21912`).
+
+Timed again that afternoon, the regenerated build ran Chinatown in 7.16 ms
+(140 FPS; engine 7.01, display 6.07), village aerial 2 in 7.78 ms (128 FPS)
+and the village spawn in 4.46 ms (224 FPS) (`claude-play-2391-8886`,
+`claude-play-1473-3240`). The slow state had passed by itself. What ran
+beside the game then used about 10% of the processor: two renderer processes
+of the Oculus desktop client at 45% of a core each (running for three days),
+the desktop compositor, the Claude desktop app and vendor monitoring services.
+Nothing was closed.
+
+Evidence under `build_native/run`: `claude-play-1040-5472` and
+`claude-play-619-27952` (original draw run and skipped, same build),
+`claude-play-3953-24795` and `claude-play-10595-30797` (Chinatown before and
+after), `claude-play-7421-3570` (village after), `claude-play-11450-28832` and
+`claude-play-11862-6875` (lookup comparison), `claude-play-13162-24901` and
+`claude-play-20561-1398` (fog verification), `claude-play-31620-13000` and `claude-play-32391-26488` (draw
+audit).
+
+### Tried without gain
+
+- PREFETCHW of the pooled draw the next capture fills (engine thread).
+- Following the manager's record list to prefetch the next records' stored
+  geometry, guest resource and attribute block. For reference, the list as
+  825A24D0 walks it: a record's node at +20 points to the next record's node,
+  a set low bit in the node's second word ends the list; record +4 is the
+  geometry chain (with record flag 8: vertex id +8, kind +12, index id +16),
+  +12 the attribute block. The requests were issued for 97% of the records and
+  changed nothing measurable, so the engine thread's time is instructions, not
+  cache misses on these structures.
+- Draw references that own nothing were first tried in an unsafe form
+  (about 4.5% on each thread). The safe version is the next section.
+
+## Draw references and queued fog records (2026-11-10)
+
+Two more costs that the hot threads paid for every draw. Neither changes what
+is drawn.
+
+### Draws refer to their resources without counting
+
+A queued world draw held a counted reference to its vertices, its indices and
+every image it samples: 4.9 per draw on the village route. The engine thread
+took them at capture, the display thread released them when it retired the
+part, and each count is a locked write, usually to a cache line the other
+thread wrote last.
+
+A draw now holds references that own nothing (`unowned_reference.h`). The
+owners are kept once per pin epoch of eight frames (`previewPinEpochFrames`):
+
+- `StoredGeometryCache::drawFast` keeps one owner per cache entry and epoch,
+  under the cache lock, before the reference leaves it.
+- `queueCapturedWorldLocked` adds an image's owner the first time a draw that
+  samples it is queued in the epoch, under the queue lock and before anything
+  later in the same call can replace or evict the cache entry.
+- Every part published in the epoch shares the epoch's set through its first
+  command (`SimpleMesh::retained`), so a part's draws are valid for as long as
+  the part exists, wherever it is. The engine holds the current set and the
+  one before; at an epoch boundary it releases the set before that, outside
+  the queue lock. Its parts are long retired by then, so in steady state only
+  the engine thread ever writes these counts.
+- A draw captured before an epoch boundary and queued after it (another thread
+  ending the frame while it waited, or a held fog draw) takes its owners from
+  the previous set into the current one. A draw older than that cannot be
+  shown to be alive and is not drawn (`[EngineFramePins] staleDrops`). Neither
+  case occurred in any run.
+
+Immediate geometry, images decoded while a draw is queued, alpha images, the
+slow capture path and hand-built draws keep owning references; the two kinds
+mix freely. Whatever outlives a part takes the owner with `ownerOf()`: the
+renderer's image, vertex and index caches on a miss (their orphan sweeps still
+see a count of one when only the cache is left), the texture-mod worker and
+the subtitle font registry. `keepWorldDraw()` keeps a single draw together
+with its part's owners.
+
+One behaviour changed: a resource that is replaced or evicted while in use is
+released once two further epochs have closed (at most sixteen frames later),
+no longer when the part that drew it retires. The unit tests that kept a
+draw's image, or a single draw, beyond its frame were adapted to that.
+
+`DARK_OWNED_DRAW_REFERENCES=1` restores counted references.
+`DARK_DRAW_PIN_CHECK=1` confirms, before each part is published, that
+everything its draws refer to without owning is pinned. On the final build:
+three level changes in one session (`tools/recordings/level-changes.txt`), the
+hills, the trench, the castle and a Chinatown walk, together 247,000 parts, 66
+million draws and 308 million references (4.6% of them owning), none unpinned.
+
+Same executable, Chinatown noclip view (8,267 draws; 5,102 geometry objects
+and 995 images pinned per epoch): 7.55 ms with counted references, 7.10 ms
+without (132 to 141 FPS); engine thread 7.42 to 6.97 ms, display thread 6.60
+to 6.09 ms (`claude-play-9287-1296`, `claude-play-8925-20639`; one epoch was
+one frame in that build).
+
+### Queued fog records
+
+The screen-space fog pass above decides at the indexed draw whether a fog
+draw belongs to the held run, after the game has bound the object's geometry
+and prepared its transform, vertex program and constants. The game queues
+these draws as records of many elements that share one set of attributes and
+one transform: 82299EA0 (called from 825A2E18) walks the record's element
+chain and calls the indexed subset draw 8225E2F0 once per element. On the
+village route a fog record has 236 elements on average
+(`claude-play-11724-24216`).
+
+Once one element's draw has been absorbed, the state that decision compared
+is the state of every later element of the record. Preparing another element
+binds its vertex and index buffers and, when the vertex format differs,
+selects the vertex program; it applies no attributes, no transform and no
+view, and writes none of the device words `screenFogRawMatches` reads. The
+hook on 82299EA0 therefore executes such a record itself while fog draws keep
+arriving (`ScreenFogState::watching`): it reads the chain once
+(`screenFogQueuedElements`: flag 8, every element of kind -4 or without a
+vertex resource; any other record runs the original), calls 8225E2F0 for each
+element as the original does, and leaves out the elements the run is known to
+cover. An element whose geometry wrote depth after the prepass (a late twin)
+is always executed, and so are the first element of a record and every
+element after one that was not absorbed. The manager only adds the returned
+element count to a statistic. What a skipped element's preparation would have
+bound is bound again by the next element that is executed, as after any other
+draw.
+
+`DARK_FOG_EMITTER=0` executes every element as before. `DARK_FOG_EMITTER=2`
+executes them all and compares each prediction with the decision at the draw:
+21.0 million predictions on the village route, the hills, the trench and the
+castle, every one confirmed. In normal play one predicted element in 64 is
+executed and compared in the same way, and a single disagreement ends the
+skipping for the session (`[ScreenFogEmitter]` reports the counts).
+
+The prediction covers 95% of the absorbed fog draws on the village route, 98%
+in the castle, 87% in the hills and 84% in the trench; the rest are
+single-element records and the elements at the start of a run. Same
+executable, village aerial view 2: 7.74 ms with every element executed, 7.40
+ms without (129 to 135 FPS); engine time per captured draw 1.33 to 1.26
+microseconds (`claude-play-13471-7445`, `claude-play-13040-30447`).
+
+### Result
+
+Profile-guided build regenerated from the same three recordings, 1280x720
+guest, 2560x1440 render, antialiasing off. "Before" is the build at the end of
+the previous section as timed that afternoon.
+
+| View | Draws | Before | After |
+|---|---|---|---|
+| Chinatown, noclip | 8,267 | 7.16 ms, 140 FPS (engine 7.01, display 6.07) | 6.86 ms, 146 FPS (engine 6.75, display 5.63) |
+| Village, aerial 1 | 5,918 | 8.04 ms, 124 FPS (engine 7.91, display 5.51) | 7.61 ms, 131 FPS (engine 7.49, display 5.31) |
+| Village, aerial 2 | 5,763 | 7.78 ms, 128 FPS (engine 7.64, display 5.43) | 7.31 ms, 137 FPS (engine 7.20, display 5.16) |
+| Village, spawn | 4,526 | 4.46 ms, 224 FPS | 4.00 ms, 250 FPS |
+
+The engine thread remains the limit in every view, at 0.82 microseconds per
+captured draw in Chinatown and 1.25 in the village. Samples of it on the
+village route (`claude-play-23294-29403`) put 10% in the fast snapshot of a
+draw's state, 8% in queueing the draw and close to 4% in taking and releasing
+the two locks every draw still passes (the queue and the geometry cache); the
+rest is spread over the game's own draw preparation and the capture.
+
+On this build: CTest 137 of 137, including new cases for the cache's pins
+(`pinContracts`) and the element chain (`queuedElementContracts`) in
+`tests/stored_geometry_tests.cpp`; `DARK_SCREEN_FOG_VERIFY=1` on the village
+route, 258 runs and 503 million fogged pixels, one over 1/255 (largest
+difference 0.0060); `DARK_DISPLAY_MEMO_CHECK=1` on the Chinatown walk, 80.7
+million comparisons without a mismatch; recordings of every level above plus
+Pier 19 and Fulton Street played to their end.
+
+Evidence under `build_native/run`: `claude-play-19803-8157` and
+`claude-play-20129-1654` (result), `claude-play-20550-11942`,
+`claude-play-21001-20662`, `claude-play-21331-24907`, `claude-play-21615-9747`
+and `claude-play-22330-4352` (pin check; fog predictions compared in the
+second to fourth; lookup comparison in the last), `claude-play-12573-753`
+(fog predictions compared, village), `claude-play-21902-5334` (fog
+verification).
+
+## Repeated elements of a queued record (2026-11-10)
+
+The game queues most of its draws as records of elements (82299EA0, see
+"Queued fog records" above). The elements of a record share the record's
+attributes, transform, view, textures and constants and differ in geometry.
+Each element was still captured in full: the engine thread read the device
+state again, filled a pooled `WorldDraw`, resolved its images and queued it,
+and the display thread translated the same state once more.
+
+### How often an element repeats the one before
+
+A probe (`DARK_RECORD_REPEAT=2`) runs the
+record loop for every record and compares each captured element with the
+previous capture of the same record in everything but geometry and image
+references (`sameCapturedWorldDraw(..., stateOnly)`). It also tests a
+prediction made before the element is prepared: nothing is waiting to be
+applied (context+340 has no bits beyond 0x1800, context+8228 and
+context+8344 are zero: `fogEmitter.elementClean`, see 82249488 under
+"Functions" in the handoff) and the game ran no vertex program preparation
+(82248C80, counted by `engineVertexProgramPrepares()`) since that capture.
+
+| Recording | Captured draws | Identical to the previous element | Predicted | Predicted wrongly |
+|---|---|---|---|---|
+| `chinatown-under` | 30.87 M | 24.73 M | 24.71 M | 0 |
+| `village-route` | 31.53 M | 21.45 M | 19.82 M | 0 |
+| `trench-tour` | 12.49 M | 7.22 M | 6.58 M | 0 |
+
+(`claude-play-4744-2493`, `claude-play-5364-13074`, `claude-play-5074-6738`.)
+The differences that remain are vertex constants and vertex options after
+the game re-prepared the element; the prediction excludes them.
+
+### Repeats
+
+- The hook on 82299EA0 now executes every record of the element shape it
+  handles (flag 8, elements of kind -4 or without a vertex resource), not
+  only while fog draws arrive (`screenFogEmitterBegin`). Records of any
+  other shape, single-element records and records begun inside another
+  one run the original, as before.
+- A draw captured in full inside the loop and queued becomes the record's
+  anchor (`repeatAnchor`: the part being built, its index in `pending`, the
+  pin epoch, the record's serial number and the preparation count).
+- At the indexed draw of a later element of the same record, if the element
+  was clean and nothing was prepared since the anchor, the geometry is
+  resolved as before and queued as a command that shares the anchor's
+  `WorldDraw` and carries its own geometry (`SimpleMesh::repeat`,
+  `queueRepeatedWorld`). The device is not read, no `WorldDraw` is filled,
+  no image is looked up.
+- The full capture is used instead, and becomes the next anchor, when the
+  anchor's part has been published, a command or geometry budget of the part
+  is reached, or the fog pass needs this draw's own flags (it would be the
+  first depth write of a tracked pass after the prepass). A fog draw
+  (`XREngine_DepthFog`) or a draw that carries fog requests is never an
+  anchor: every fog draw is still offered to the fog pass.
+- The fog pass's bookkeeping for a repeat (`screenFogObserveRepeat`) is the
+  bookkeeping `screenFogObserveDraw` does for a full draw, with the repeat's
+  geometry key.
+- `WorldRendererD3D11::draw(draw, repeat)` takes the geometry from the
+  repeat everywhere it reads geometry (vertex and index buffers, the flat
+  quad used for blur footprints, rejection reports). Inspection, capture
+  and fog paths are given an equivalent complete draw.
+- One predicted repeat in 64 is captured in full and compared with its
+  anchor; a single difference ends repeats for the session
+  (`[RecordRepeat] MISMATCH`). `[RecordRepeat]` reports the counts every
+  1000 frames.
+- `checkDrawPins` (`DARK_DRAW_PIN_CHECK=1`) checks the repeats' geometry too.
+
+`DARK_RECORD_REPEAT=0` captures every element in full. With it,
+`DARK_FOG_EMITTER=0` again leaves every record to the original 82299EA0.
+
+### Checks
+
+- Repeat audits: 0 mismatches in every run (Chinatown 775,625 compared,
+  village 342,709, trench 104,452, level changes 149,409).
+- `DARK_DRAW_PIN_CHECK=1`: nothing unpinned (Chinatown 28.6 M draws,
+  village 36.7 M, trench 14.7 M, level changes 18.5 M).
+- `DARK_DISPLAY_MEMO_CHECK=1`: 0 mismatches in 488 M (village), 181 M
+  (trench) and 223 M (level changes) comparisons.
+- Fog predictions (change of the previous section): all confirmed.
+- Captures of the same views with and without repeats differ only as much as
+  two runs without them do (camera timing).
+- `DARK_SCREEN_FOG_VERIFY=1` on the village route, twice with repeats: the
+  1280x720 passes agree as before (176 and 185 runs, none over 1/255). In
+  the first run a 512x512 view seen in no other run had 1 to 4 pixels per
+  verified pass (11 of 60 passes) fogged by the per-object draws and not by
+  the pass (largest difference 0.22); the second run (78 passes at 512x512)
+  and the runs with repeats off or with the loop alone had none. Earlier
+  verification runs show only differences below 0.016 there. Not resolved;
+  see the handoff.
+
+### Result
+
+Same executable (not profile-guided for the edited functions), Chinatown
+noclip view (8,267 draws): 7.22 ms with `DARK_RECORD_REPEAT=0`, 4.88 ms with
+repeats (139 to 205 FPS); engine thread CPU 7.06 to 4.61 ms, display thread
+CPU 6.12 to 4.56 ms (`claude-play-11928-23259`, `claude-play-11592-30285`).
+Village (`claude-play-17868-12114`, `claude-play-17450-12574`): engine
+microseconds per draw 1.29 to 1.06; the spawn view 4.18 to 2.80 ms. (The
+aerial views of that pair ended at slightly different camera positions,
+5,917 and 6,009 draws; the route reaches either one in runs with and
+without repeats.)
+The display thread gains as well because consecutive draws now share one
+`WorldDraw`, so its memos (previous section) hit more often.
+
+Profile-guided build regenerated from the same three recordings with
+repeats on (17:45), against the profile-guided build at the end of the
+previous section (changes 1-8). Same settings as there.
+
+| View | Draws | Before | After |
+|---|---|---|---|
+| Chinatown, noclip | 8,267 | 6.86 ms, 146 FPS (engine 6.75, display 5.63) | 4.52 ms, 221 FPS (engine 4.37, display 4.13) |
+| Village, aerial 1 | 5,917 | 7.61 ms, 131 FPS (engine 7.49, display 5.31) | 6.35 ms, 157 FPS (engine 6.25, display 4.62) |
+| Village, aerial 2 | 5,762 | 7.31 ms, 137 FPS (engine 7.20, display 5.16) | 6.15 ms, 163 FPS (engine 6.03, display 4.52) |
+| Village, spawn | 4,526 | 4.00 ms, 250 FPS | 2.77 ms, 361 FPS (the 360 FPS limit of the settings) |
+
+(`claude-play-20788-20165`, `claude-play-21121-2391`.) In those runs 87% of
+the draws in Chinatown were repeats (54.7 M repeats, 8.3 M full captures)
+and 77% in the village (30.5 M, 9.1 M); 869,705 and 485,138 audits agreed.
+
+The engine thread is still the limit. Samples of it in the Chinatown view
+(`claude-play-21549-1408`): geometry verification (`fastVerifyDrawImpl`)
+9.7%, lock release and acquire 9%, queueing full captures 6%, the game's
+resource lookup 822527F0 5.5%, the native observation 5.3%, the geometry
+resolve 4.3%, the fast snapshot 4.2%, appending the command 2.9%, the rest
+the game's own per-element work. Display thread by phase: states 44%,
+textures 26%, geometry 11%, constants 9%.
+
+On this build: CTest 137 of 137, including `testRepeatComparison`.
+
+Evidence under `build_native/run`: `claude-play-4744-2493`,
+`claude-play-5364-13074`, `claude-play-5074-6738` (probe),
+`claude-play-11229-16860`, `claude-play-12291-3916`,
+`claude-play-15367-3603`, `claude-play-15670-20165`,
+`claude-play-17163-16986` (checks), `claude-play-11592-30285`,
+`claude-play-11928-23259`, `claude-play-17450-12574`,
+`claude-play-17868-12114` (same executable, on and off),
+`claude-play-12797-31519`, `claude-play-13296-4857`,
+`claude-play-13741-24848`, `claude-play-14890-7199` (fog verification),
+`claude-play-20788-20165`, `claude-play-21121-2391` (result),
+`claude-play-21549-1408` (samples).
+
+### Display thread: repeats drawn with their geometry only
+
+A repeat usually follows its anchor directly in the command list. Its
+`WorldDraw` is the anchor's, so everything `WorldRendererD3D11::draw` derives
+from the state (targets, the three state objects, viewport, scissor,
+shaders, textures and samplers, all constants) is what the previous call
+just bound. `engine_preview.cpp` now tells `draw()` when the command before
+was a world draw of the same `WorldDraw` that was drawn (`continues`), and a
+full `draw()` notes (`shortPathDraw_`) when it ended with every binding of
+its `WorldDraw` in place and nothing depending on its geometry beyond the
+vertex and index buffers. That excludes a fog pass or fog verification
+(bindings stale), the prompt quad transform of flat UI rectangles (computed
+from the vertices), color targets with a tracked blur footprint (computed
+from the geometry's flat quad), inspection, capture and diagnostics.
+
+`drawRepeat()` then does only the geometry's part: same vertex formats as
+the previous draw, index range, vertex and index buffers already uploaded
+(a miss takes the full path, which owns uploads and their budget), the
+skinning index-bounds check `bind()` makes
+(`WorldVertexShaderD3D11::indexBoundsValid`), the index check against the
+vertex count, `IASetVertexBuffers` / `IASetIndexBuffer` when they change,
+`DrawIndexed`, and the counters.
+
+`DARK_REPEAT_SHORT_PATH=0` draws repeats with the full path.
+`DARK_REPEAT_SHORT_PATH=2` draws them with the full path and requires that
+it bound nothing but the vertex and index buffers and uploaded no constants
+(`[RepeatShortPath] checks=.. mismatches=.. rejected=..`; `rejected` counts
+repeats the full path refused because their geometry upload exceeded the
+frame's budget while a level loads, where `drawRepeat` falls back to it as
+well): Chinatown 13.6 M checked repeats, village 30.4 M, trench over 5 M,
+no mismatch (`claude-play-23207-22111`, `claude-play-24390-13642`,
+`claude-play-24817-12659`).
+
+Same executable, Chinatown noclip view: 4.53 ms with
+`DARK_REPEAT_SHORT_PATH=0`, 4.27 ms with the short path (221 to 234 FPS);
+display thread CPU 4.32 to 2.71 ms, render 3.87 to 2.16 ms; engine thread
+CPU 4.33 to 4.18 ms (`claude-play-23910-6490`, `claude-play-23576-24264`).
+The engine thread is now the only limit.
+
+Profile-guided build regenerated with the short path (18:28), against the
+17:45 build of the previous result:
+
+| View | Draws | 17:45 build | 18:28 build |
+|---|---|---|---|
+| Chinatown, noclip | 8,267 | 4.52 ms, 221 FPS (engine 4.37, display 4.13) | 4.23 ms, 236 FPS (engine 4.15, display 2.61) |
+| Village, aerial 1 | 5,917-5,920 | 6.35 ms, 157 FPS (display 4.62) | 6.31 ms, 158 FPS (display 3.72) |
+| Village, spawn | 4,526 | 2.77 ms | 2.73 ms (the 360 FPS limit) |
+
+(`claude-play-29239-17009`, `claude-play-29569-21254`.) The village views are
+limited by the engine thread alone; there the change shows as display
+headroom. CTest 137 of 137, including a repeat drawn with the short path
+in `deadNormalContract` (`tests/world_renderer_tests.cpp`) that must match
+the pixels of the equivalent complete draws.

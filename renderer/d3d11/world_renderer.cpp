@@ -11,6 +11,7 @@
 #include "renderer/engine/subtitle_font.h"
 #include "renderer/engine/engine_performance.h"
 #include "renderer/engine/render_trace.h"
+#include "renderer/engine/screen_fog.h"
 #include <d3d11shader.h>
 #include "engine_world_template.generated.h"
 #include "engine_world_fragments.generated.h"
@@ -48,8 +49,8 @@ struct FlatPostQuad {
     std::array<double,4> screen{};
     std::array<std::array<double,2>,4> uv{}; // x/y corner bits, not index order.
 };
-std::optional<FlatPostQuad> flatPostQuad(const Native::WorldDraw& draw,unsigned scale) {
-    const auto& g=draw.geometry;const auto& o=draw.options;
+std::optional<FlatPostQuad> flatPostQuad(const Native::WorldDraw& draw,unsigned scale,const Native::WorldGeometry* repeat=nullptr) {
+    const auto& g=repeat?*repeat:draw.geometry;const auto& o=draw.options;
     if(!g || g.vertices->vertexCount!=4 || g.indexCount!=6 ||
        g.firstIndex>g.indices->indices.size() || g.indices->indices.size()-g.firstIndex<6 ||
        o.weights || o.positionConversion || o.normal || o.tangents || o.vertexColor ||
@@ -189,11 +190,29 @@ double millisBetween(std::chrono::steady_clock::time_point begin,std::chrono::st
 // McDonald GDC12: UpdateSubresource costs more CPU than Map/Unmap on dynamic
 // buffers. Constant updates below stay gated on content changes exactly as
 // before; only the upload mechanism changes to DISCARD mapping.
+// Constant uploads of the world renderer (the repeat short-path check counts them).
+uint64_t worldConstantUpdates=0;
 void updateConstants(ID3D11DeviceContext* context,ID3D11Buffer* buffer,const void* data,size_t bytes) {
+    ++worldConstantUpdates;
     D3D11_MAPPED_SUBRESOURCE mapped{};
     check(stallProfileMap(context,buffer,0,D3D11_MAP_WRITE_DISCARD,0,&mapped,
                          "world constants Map"),"world constant map");
     std::memcpy(mapped.pData,data,bytes);
+    context->Unmap(buffer,0);
+}
+// Upload only the planned rows. WRITE_DISCARD leaves the other rows undefined,
+// which the plan proves the bound shader never reads.
+void updateConstantRows(ID3D11DeviceContext* context,ID3D11Buffer* buffer,const Native::EngineVector* rows,
+                        const WorldConstantRanges& plan) {
+    ++worldConstantUpdates;
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    check(stallProfileMap(context,buffer,0,D3D11_MAP_WRITE_DISCARD,0,&mapped,
+                         "world constants Map"),"world constant map");
+    auto* destination=static_cast<Native::EngineVector*>(mapped.pData);
+    for(unsigned i=0;i<plan.count;++i) {
+        const auto range=plan.ranges[i];
+        std::memcpy(destination+range.first,rows+range.first,size_t(range.count)*sizeof(Native::EngineVector));
+    }
     context->Unmap(buffer,0);
 }
 // Proven normal-independent output modes (audit38): texcoord0, linear1,
@@ -327,6 +346,16 @@ VertexOutput rasterMain(VertexInput input) {
     check(device->CreateBuffer(&desc,nullptr,&constants_),"world constants");desc.ByteWidth=144;
     check(device->CreateBuffer(&desc,nullptr,&references_),"world references");
 }
+bool WorldVertexShaderD3D11::indexBoundsValid(const Native::WorldVertexConstants& c,
+                                              const std::array<std::array<float,2>,8>& bounds) const {
+    auto valid=[&](float index) {
+        const float address=std::floor(index*c.vectors[8][3]);
+        return std::isfinite(address) && address>=0 && address<=153 && uint64_t(c.references[0][0])+unsigned(address)+2<256;
+    };
+    for(unsigned w=0;w<options_.weights;++w)
+        if(!valid(bounds[w][0]) || !valid(bounds[w][1]))return false;
+    return true;
+}
 bool WorldVertexShaderD3D11::bind(ID3D11DeviceContext* context,const Native::WorldVertexConstants& c,std::span<const Native::WorldVertex> vertices,
                                const std::array<std::array<float,2>,8>* indexBounds,bool alreadyBound) {
     if (!context) return false;
@@ -358,11 +387,26 @@ bool WorldVertexShaderD3D11::bind(ID3D11DeviceContext* context,const Native::Wor
     if(vectorsUploaded_ && countDiagnostics) {
         ++constantCompareCalls_;constantCompareReadBytes_+=size_t(unprovenPalette?256:constantRanges_.rows)*sizeof(Native::EngineVector);
     }
-    if(!vectorsUploaded_ || (unprovenPalette?
+    // Rows outside an earlier plan are undefined after a planned upload, so a
+    // new plan or a complete-bank comparison then needs a complete upload.
+    const bool planned=!unprovenPalette && constantRanges_.rows<256;
+    if(!vectorsUploaded_ || (!vectorRowsComplete_ && (referencesChanged || !planned)) || (unprovenPalette?
         std::memcmp(uploadedConstants_->vectors.data(),c.vectors.data(),sizeof(c.vectors))!=0:
         !constantRanges_.equal(uploadedConstants_->vectors,c.vectors))) {
-        updateConstants(context,constants_.Get(),c.vectors.data(),sizeof(c.vectors));
-        uploadedConstants_->vectors=c.vectors;
+        if(planned && vectorsUploaded_ && !referencesChanged) {
+            // Same plan: the GPU rows the shader reads match the mirror's.
+            updateConstantRows(context,constants_.Get(),c.vectors.data(),constantRanges_);
+            for(unsigned i=0;i<constantRanges_.count;++i) {
+                const auto range=constantRanges_.ranges[i];
+                std::memcpy(uploadedConstants_->vectors.data()+range.first,c.vectors.data()+range.first,
+                            size_t(range.count)*sizeof(Native::EngineVector));
+            }
+            vectorRowsComplete_=false;
+        } else {
+            updateConstants(context,constants_.Get(),c.vectors.data(),sizeof(c.vectors));
+            uploadedConstants_->vectors=c.vectors;
+            vectorRowsComplete_=true;
+        }
         vectorsUploaded_=true;++constantUploadCount_;
     }
     if(referencesChanged) {
@@ -376,6 +420,57 @@ bool WorldVertexShaderD3D11::bind(ID3D11DeviceContext* context,const Native::Wor
         context->IASetInputLayout(layout_.Get());context->VSSetShader(shader_.Get(),nullptr,0);
     }
     return true;
+}
+namespace {
+// Screen-space depth fog (renderer/engine/screen_fog.h). The original fog
+// draws test depth EQUAL, so only a pixel still holding its prepass depth is
+// eligible; the original stencil test and increment stay in the output merger.
+constexpr char screenFogPixelSource[]=R"(
+#undef pixelMain
+cbuffer NativeAlphaTest : register(b2) {uint alphaFunction;float alphaReference;uint2 alphaPadding;};
+cbuffer NativeScreenFog : register(b6) {float4 fogRows[9];float4 fogControl;};
+#if SCREEN_FOG_MULTISAMPLE
+Texture2DMS<float> fogStoredDepth : register(t14);
+Texture2DMS<float> fogPrepassDepth : register(t15);
+float4 pixelMain(float4 position : SV_Position, uint sampleIndex : SV_SampleIndex) : SV_Target {
+    int2 pixel=int2(position.xy);
+    float depth=fogStoredDepth.Load(pixel,sampleIndex);
+    float prepass=fogPrepassDepth.Load(pixel,sampleIndex);
+    float2 at=float2(pixel)+0.5+fogStoredDepth.GetSamplePosition(sampleIndex);
+#else
+Texture2D<float> fogStoredDepth : register(t14);
+Texture2D<float> fogPrepassDepth : register(t15);
+float4 pixelMain(float4 position : SV_Position) : SV_Target {
+    int3 pixel=int3(int2(position.xy),0);
+    float depth=fogStoredDepth.Load(pixel);
+    float prepass=fogPrepassDepth.Load(pixel);
+    float2 at=position.xy;
+#endif
+    // fogControl.y: DARK_SCREEN_FOG_DEBUG=1 paints the pass's decisions
+    // instead: red = cleared depth, green = depth changed since the prepass,
+    // blue = the fog amount of an eligible pixel.
+    if(fogControl.y!=0 && depth==fogControl.x)return float4(1,0,0,1);
+    if(fogControl.y!=0 && depth!=prepass)return float4(0,1,0,1);
+    if(depth==fogControl.x || depth!=prepass)discard;
+    float4 v=float4(at,depth,1);
+    float w=dot(fogRows[8],v);
+    Fragment input=(Fragment)0;
+    input.position=position;
+    input.tex[0]=float4(dot(fogRows[0],v),dot(fogRows[1],v),dot(fogRows[2],v),dot(fogRows[3],v))/w;
+    input.tex[1]=float4(dot(fogRows[4],v),dot(fogRows[5],v),dot(fogRows[6],v),dot(fogRows[7],v))/w;
+    float4 color=originalPixelMain(input);
+    if(fogControl.y!=0)return float4(0,0,color.a,1);
+    bool alphaPasses=alphaFunction==8 ||
+        (alphaFunction==2 && color.a<alphaReference) ||
+        (alphaFunction==3 && color.a==alphaReference) ||
+        (alphaFunction==4 && color.a<=alphaReference) ||
+        (alphaFunction==5 && color.a>alphaReference) ||
+        (alphaFunction==6 && color.a!=alphaReference) ||
+        (alphaFunction==7 && color.a>=alphaReference);
+    if(!alphaPasses)discard;
+    return color;
+}
+)";
 }
 WorldRendererD3D11::WorldRendererD3D11(ID3D11Device* d,ID3D11DeviceContext* c,uint32_t scale,
                                    const std::function<void()>& startup):device_(d),context_(c),scale_(scale),transientBuffers_(d,c) {
@@ -442,11 +537,11 @@ WorldRendererD3D11::WorldRendererD3D11(ID3D11Device* d,ID3D11DeviceContext* c,ui
     Native::StartupTrace::mark("world-fragment-prewarm.begin");
     unsigned fragmentCacheHits=0,fragmentCacheMisses=0;
     const auto fragmentsStart=std::chrono::steady_clock::now();
-    auto compile=[&](const char* source,const char* name,Ptr<ID3D11PixelShader>& shader) {
+    auto compile=[&](const char* source,const char* name,Ptr<ID3D11PixelShader>& shader,bool trace=true) {
         // One detail per preparation keeps all existing fragment names inside
         // the budget. The next begin or batch end proves this call returned;
         // a missing successor alone does not identify the blocked API.
-        Native::StartupTrace::mark("world-fragment-prepare.begin",name,true);
+        if(trace)Native::StartupTrace::mark("world-fragment-prepare.begin",name,true);
         Native::StallProfiler::Scope stallCompile(Native::StallProfiler::Section::Rendering,
                                                  "WorldRendererD3D11 fragment compile");
         Ptr<ID3DBlob> code,errors;
@@ -542,6 +637,16 @@ float4 pixelMain(Fragment input) : SV_Target {
         if(captureMask!=source.textures || (program.textures&~captureMask))
             throw std::runtime_error("Native capture omits a compiled original texture binding");
         fragments_.emplace(std::string(source.name)+":"+std::to_string(source.flags),std::move(program));
+        if(std::string_view(source.name)=="XREngine_DepthFog" && source.flags<screenFogPixel_.size()) {
+            // Screen-space depth fog: the same original fragment, fed from
+            // the stored depth instead of interpolated vertex outputs.
+            for(unsigned multisample=0;multisample<2;++multisample) {
+                std::string fogSource=multisample?"#define SCREEN_FOG_MULTISAMPLE 1\n":"#define SCREEN_FOG_MULTISAMPLE 0\n";
+                fogSource+="#define pixelMain originalPixelMain\n";fogSource+=source.source;fogSource+=screenFogPixelSource;
+                compile(fogSource.c_str(),multisample?"XREngine_DepthFog.screen.multisample":"XREngine_DepthFog.screen",
+                    screenFogPixel_[source.flags][multisample],false);
+            }
+        }
         if (startup) startup();
     }
     Native::StartupTrace::mark("world-fragment-prewarm.end");
@@ -756,7 +861,7 @@ bool WorldRendererD3D11::setSampleCount(unsigned requested) {
         if(supported>1)attachMultisample(next,supported,true);
         replacement.emplace(key,std::move(next));
     }
-    surfaces_.swap(replacement);sampleCount_=supported;requestedSampleCount_=requested;
+    surfaces_.swap(replacement);surfaceMemo_={};sampleCount_=supported;requestedSampleCount_=requested;
     context_->ClearState();invalidateBindings();pixelBuffersBound_=false;
     std::fprintf(stderr,"[Antialiasing] requestedSamples=%u activeSamples=%u retainedSurfaces=%zu\n",requested,supported,surfaces_.size());
     return true;
@@ -773,7 +878,7 @@ bool WorldRendererD3D11::setRenderScale(uint32_t scale) {
     surfaces.reserve(surfaces_.size());resolved.reserve(resolved_.size());
     for(auto& [key,surface]:surfaces_)surfaces.emplace(key,resizedSurface(surface,scale));
     for(auto& [key,surface]:resolved_)resolved.emplace(key,resizedSurface(surface,scale));
-    surfaces_.swap(surfaces);resolved_.swap(resolved);scale_=scale;
+    surfaces_.swap(surfaces);resolved_.swap(resolved);surfaceMemo_={};scale_=scale;
     boundColor_=nullptr;boundDepth_=nullptr;boundViews_.fill(nullptr);
     return true;
 }
@@ -797,12 +902,14 @@ bool WorldRendererD3D11::preloadImage(const std::shared_ptr<const ColorImage>& s
     return image(source,true)!=nullptr;
 }
 ID3D11ShaderResourceView* WorldRendererD3D11::image(const std::shared_ptr<const ColorImage>& source,bool speculative) {
-    if (!source || !source->valid())return nullptr;
-    const unsigned levels=std::bit_width((std::max)(source->width,source->height));
+    if (!source)return nullptr;
+    // A cached entry retains its immutable source image, validated on upload.
     if (auto it=images_.find(source.get());it!=images_.end()) {
         if(!speculative)it->second.used=++resourceUse_;
         return it->second.view.Get();
     }
+    if (!source->valid())return nullptr;
+    const unsigned levels=std::bit_width((std::max)(source->width,source->height));
     const auto imageStart=std::chrono::steady_clock::now();
     Native::StallProfiler::Scope stallUpload(Native::StallProfiler::Section::Rendering,
                                             "WorldRendererD3D11 image upload");
@@ -814,7 +921,8 @@ ID3D11ShaderResourceView* WorldRendererD3D11::image(const std::shared_ptr<const 
     if (source->faces==6) desc.MiscFlags|=D3D11_RESOURCE_MISC_TEXTURECUBE;
     // Preloading uses only spare cache capacity. Keep speculative entries cold
     // until a draw uses them, so ordinary LRU eviction prefers unused images.
-    Image result;result.source=source;result.used=speculative?0:++resourceUse_;
+    // A draw's reference may own nothing; the cache entry must (unowned_reference.h).
+    Image result;result.source=ownerOf(source);result.used=speculative?0:++resourceUse_;
     for(unsigned mip=0;mip<desc.MipLevels;++mip)
         result.bytes+=size_t((std::max)(1u,source->width>>mip))*(std::max)(1u,source->height>>mip)*source->faces*4;
     if(source->generatedSubtitleFont && result.bytes>imageBudget_)return nullptr;
@@ -822,6 +930,8 @@ ID3D11ShaderResourceView* WorldRendererD3D11::image(const std::shared_ptr<const 
     auto makeRoom=[&] {
         while(!images_.empty() && imageBytes_+result.bytes>imageBudget_) {
             auto oldest=std::min_element(images_.begin(),images_.end(),[](const auto& l,const auto& r){return l.second.used<r.second.used;});
+            // A draw in progress may already have chosen this view for an earlier slot.
+            if(drawDepth_)retiredViews_.push_back(std::move(oldest->second.view));
             imageBytes_-=oldest->second.bytes;images_.erase(oldest);
         }
     };
@@ -1037,7 +1147,7 @@ bool WorldRendererD3D11::resolve(const Native::WorldResolve& r) {
         case 23:if(!depth)return reject(3);format=DXGI_FORMAT_R32_FLOAT;break;
         default:return reject(4);
     }
-    auto& dest=resolved_[r.destination.key()];
+    auto& dest=resolved_[r.destination.key()];resolvedFilter_|=resolvedBit(r.destination.key());
     D3D11_TEXTURE2D_DESC existing{};if(dest.texture)dest.texture->GetDesc(&existing);
     if(dest.width!=r.destination.width || dest.height!=r.destination.height || existing.Format!=format || existing.ArraySize!=r.destination.faces) {
         dest={};dest.width=r.destination.width;dest.height=r.destination.height;
@@ -1647,10 +1757,348 @@ void WorldRendererD3D11::captureShadow(const Native::WorldDraw& draw,unsigned co
 }
 void WorldRendererD3D11::noteWorstUpload(double ms, size_t bytes, const char* kind) {
     if (ms > worstUploadMs_) { worstUploadMs_ = ms; worstUploadBytes_ = bytes; worstUploadKind_ = kind; }
+    // Cumulative frame-timeline totals; every upload/creation site reports here.
+    const std::string_view name(kind);
+    auto& totals = workTotals_;
+    if (name == "image") { totals.imageUploadMs += ms; totals.imageUploadBytes += bytes; }
+    else if (name.starts_with("surface")) { totals.surfaceMs += ms; ++totals.surfaceCreates; }
+    else if (name.ends_with("-transient")) { totals.transientUploadMs += ms; totals.transientUploadBytes += bytes; }
+    else { totals.geometryUploadMs += ms; totals.geometryUploadBytes += bytes; ++totals.geometryUploads; }
 }
-bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
-    Native::StallProfiler::Scope stallRender(Native::StallProfiler::Section::Rendering, "WorldRendererD3D11::draw");
+// Screen-space depth fog: keep the depth this pass held before its first depth
+// write outside the prepass (WorldDraw::fogDepthSnapshot).
+void WorldRendererD3D11::snapshotFogDepth(const Native::WorldDraw& draw) {
+    if(!draw.targets[4])return;
+    const auto found=surfaces_.find(draw.surfaceKey(4));
+    if(found==surfaces_.end())return;
+    auto& surface=found->second;
+    ID3D11Texture2D* source=surface.multisample?surface.multisample.Get():surface.texture.Get();
+    if(!source)return;
+    if(surface.fogSnapshotFor!=source) {
+        surface.fogSnapshot.Reset();surface.fogSnapshotView.Reset();surface.fogSnapshotFor=nullptr;
+        D3D11_TEXTURE2D_DESC desc{};source->GetDesc(&desc);
+        check(device_->CreateTexture2D(&desc,nullptr,&surface.fogSnapshot),"fog depth snapshot");
+        D3D11_SHADER_RESOURCE_VIEW_DESC view{};view.Format=DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+        if(desc.SampleDesc.Count>1)view.ViewDimension=D3D11_SRV_DIMENSION_TEXTURE2DMS;
+        else {view.ViewDimension=D3D11_SRV_DIMENSION_TEXTURE2D;view.Texture2D.MipLevels=1;}
+        check(device_->CreateShaderResourceView(surface.fogSnapshot.Get(),&view,&surface.fogSnapshotView),"fog depth snapshot view");
+        surface.fogSnapshotFor=source;
+    }
+    context_->CopyResource(surface.fogSnapshot.Get(),source);
+}
+// One pass over the draw's viewport in place of its run of per-object fog
+// draws. The caller has bound the draw's own fragment constants, textures,
+// samplers, blend state, viewport and scissor; this replaces the vertex stage,
+// the pixel shader and the depth test, and leaves the cached bindings stale.
+bool WorldRendererD3D11::drawScreenFog(const Native::WorldDraw& draw,unsigned fragmentFlags,const D3D11_DEPTH_STENCIL_DESC& originalDepth,
+                                       UINT stencilReference,const D3D11_RASTERIZER_DESC& originalRaster,ID3D11RenderTargetView* color,
+                                       bool ignoreStencil) {
+    if(!color || !draw.targets[4] || fragmentFlags>=screenFogPixel_.size())return false;
+    const auto found=surfaces_.find(draw.surfaceKey(4));
+    if(found==surfaces_.end())return false;
+    auto& surface=found->second;
+    const bool multisample=bool(surface.multisample);
+    ID3D11Texture2D* texture=multisample?surface.multisample.Get():surface.texture.Get();
+    ID3D11ShaderResourceView* stored=multisample?surface.multisampleDepthView.Get():surface.view.Get();
+    auto* pixel=screenFogPixel_[fragmentFlags][multisample?1:0].Get();
+    if(!texture || !stored || !pixel || !surface.depth)return false;
+    Native::ScreenFogMapping mapping;
+    struct Constants {float rows[9][4];float control[4];} constants{};
+    if(!Native::screenFogMappingFrom(draw.options,draw.constants,mapping) ||
+       !Native::screenFogPixelRows(mapping,{double(draw.viewport[0])*scale_,double(draw.viewport[1])*scale_,
+            double(draw.viewport[2])*scale_,double(draw.viewport[3])*scale_},draw.depthRange[0],draw.depthRange[1],constants.rows))return false;
+    constants.control[0]=draw.fogClearDepth;
+    static const bool debugPass=[]{const char* value=std::getenv("DARK_SCREEN_FOG_DEBUG");return value && *value=='1';}();
+    constants.control[1]=debugPass?1.0f:0.0f;
+    if(surface.fogReadOnlyFor!=surface.depth.Get()) {
+        surface.fogReadOnlyDepth.Reset();surface.fogReadOnlyFor=nullptr;
+        D3D11_DEPTH_STENCIL_VIEW_DESC view{};view.Format=DXGI_FORMAT_D24_UNORM_S8_UINT;
+        view.ViewDimension=multisample?D3D11_DSV_DIMENSION_TEXTURE2DMS:D3D11_DSV_DIMENSION_TEXTURE2D;
+        view.Flags=D3D11_DSV_READ_ONLY_DEPTH;
+        check(device_->CreateDepthStencilView(texture,&view,&surface.fogReadOnlyDepth),"fog depth view");
+        surface.fogReadOnlyFor=surface.depth.Get();
+    }
+    ID3D11ShaderResourceView* prepass=stored;
+    if((draw.screenFog&3)==2) {
+        if(surface.fogSnapshotView && surface.fogSnapshotFor==texture)prepass=surface.fogSnapshotView.Get();
+        else if(screenFogMissingSnapshots_++<4)std::fprintf(stderr,"[ScreenFogRender] snapshot missing target=%08X\n",draw.targets[4]);
+    }
+    if(!screenFogConstants_) {
+        D3D11_BUFFER_DESC buffer{};buffer.ByteWidth=sizeof(Constants);
+        buffer.BindFlags=D3D11_BIND_CONSTANT_BUFFER;buffer.Usage=D3D11_USAGE_DYNAMIC;
+        buffer.CPUAccessFlags=D3D11_CPU_ACCESS_WRITE;
+        check(device_->CreateBuffer(&buffer,nullptr,&screenFogConstants_),"screen fog constants");
+    }
+    updateConstants(context_.Get(),screenFogConstants_.Get(),&constants,sizeof(constants));
+    auto depthDesc=originalDepth;
+    depthDesc.DepthEnable=FALSE;depthDesc.DepthWriteMask=D3D11_DEPTH_WRITE_MASK_ZERO;depthDesc.DepthFunc=D3D11_COMPARISON_ALWAYS;
+    if(ignoreStencil)depthDesc.StencilEnable=FALSE;
+    auto& depthState=depthStates_.entry(depthDesc);
+    if(!depthState)check(device_->CreateDepthStencilState(&depthDesc,&depthState),"fog depth state");
+    auto rasterDesc=originalRaster;
+    rasterDesc.CullMode=D3D11_CULL_NONE;rasterDesc.DepthBias=0;rasterDesc.SlopeScaledDepthBias=0;
+    auto& rasterState=rasterStates_.entry(rasterDesc);
+    if(!rasterState)check(device_->CreateRasterizerState(&rasterDesc,&rasterState),"fog raster state");
+    // The stored depth is sampled while its stencil is still tested and written.
+    context_->OMSetRenderTargets(1,&color,surface.fogReadOnlyDepth.Get());
+    context_->OMSetDepthStencilState(depthState.Get(),stencilReference);
+    context_->RSSetState(rasterState.Get());
+    context_->IASetInputLayout(nullptr);
+    context_->VSSetShader(transferVertex_.Get(),nullptr,0);
+    context_->PSSetShader(pixel,nullptr,0);
+    ID3D11Buffer* buffer=screenFogConstants_.Get();context_->PSSetConstantBuffers(6,1,&buffer);
+    ID3D11ShaderResourceView* views[2]{stored,prepass};context_->PSSetShaderResources(14,2,views);
+    context_->Draw(3,0);
+    ID3D11ShaderResourceView* none[2]{};context_->PSSetShaderResources(14,2,none);
+    if(!screenFogPasses_++)std::fprintf(stderr,"[ScreenFogRender] first pass viewport=%ux%u scale=%u multisample=%u snapshot=%u\n",
+        draw.viewport[2],draw.viewport[3],unsigned(scale_),unsigned(multisample),unsigned((draw.screenFog&3)==2));
+    return true;
+}
+// DARK_SCREEN_FOG_VERIFY=1. Engine side, every fog draw of a run stays per
+// object and the run's held draw arrives last; the draws the screen-space
+// mode would also have left per object are marked (fogVerifyStay). A sampled
+// run keeps the color and depth-stencil targets from before its first fog
+// draw. After its last one both are put back and the run is drawn again the
+// way the screen-space mode queues it: the marked draws, then the pass. The
+// two color results are compared in the target's own values, and the
+// per-object result is put back afterwards.
+void WorldRendererD3D11::beginFogVerify(const Native::WorldDraw& draw) {
+    fogVerifySampled_=false;
+    const auto found=surfaces_.find(draw.surfaceKey(0));
+    if(found==surfaces_.end() || (fogVerifyRuns_++%37)!=5 || fogVerifyReports_>=800)return;
+    auto& surface=found->second;
+    ID3D11Texture2D* target=surface.multisample?surface.multisample.Get():surface.texture.Get();
+    if(!target)return;
+    if(fogVerifyFor_!=target) {
+        fogVerifyBefore_.Reset();fogVerifyOriginal_.Reset();fogVerifyFor_=nullptr;
+        D3D11_TEXTURE2D_DESC desc{};target->GetDesc(&desc);
+        check(device_->CreateTexture2D(&desc,nullptr,&fogVerifyBefore_),"fog verify copy");
+        check(device_->CreateTexture2D(&desc,nullptr,&fogVerifyOriginal_),"fog verify copy");
+        fogVerifyFor_=target;
+    }
+    const auto depthFound=surfaces_.find(draw.surfaceKey(4));
+    if(depthFound==surfaces_.end())return;
+    auto& depthSurface=depthFound->second;
+    ID3D11Texture2D* stencil=depthSurface.multisample?depthSurface.multisample.Get():depthSurface.texture.Get();
+    if(!stencil)return;
+    if(fogVerifyStencilFor_!=stencil) {
+        fogVerifyStencil_.Reset();fogVerifyStencilFor_=nullptr;
+        D3D11_TEXTURE2D_DESC desc{};stencil->GetDesc(&desc);
+        check(device_->CreateTexture2D(&desc,nullptr,&fogVerifyStencil_),"fog verify stencil copy");
+        fogVerifyStencilFor_=stencil;
+    }
+    context_->CopyResource(fogVerifyBefore_.Get(),target);
+    context_->CopyResource(fogVerifyStencil_.Get(),stencil);
+    fogVerifyStay_.clear();
+    fogVerifySampled_=true;
+}
+void WorldRendererD3D11::finishFogVerify(const Native::WorldDraw& draw,unsigned fragmentFlags,const D3D11_DEPTH_STENCIL_DESC& originalDepth,
+                                         UINT stencilReference,const D3D11_RASTERIZER_DESC& originalRaster,ID3D11RenderTargetView* color) {
+    fogVerifySampled_=false;
+    const auto found=surfaces_.find(draw.surfaceKey(0));
+    if(found==surfaces_.end())return;
+    auto& surface=found->second;
+    ID3D11Texture2D* target=surface.multisample?surface.multisample.Get():surface.texture.Get();
+    if(!target || fogVerifyFor_!=target || !surface.texture)return;
+    D3D11_TEXTURE2D_DESC desc{};surface.texture->GetDesc(&desc);
+    if(desc.Format!=DXGI_FORMAT_R16G16B16A16_FLOAT && desc.Format!=DXGI_FORMAT_R16G16B16A16_TYPELESS)return;
+    const auto depthFound=surfaces_.find(draw.surfaceKey(4));
+    if(depthFound==surfaces_.end())return;
+    auto& depthSurface=depthFound->second;
+    ID3D11Texture2D* stencil=depthSurface.multisample?depthSurface.multisample.Get():depthSurface.texture.Get();
+    if(!stencil || fogVerifyStencilFor_!=stencil)return;
+    (void)fragmentFlags;(void)originalDepth;(void)stencilReference;(void)originalRaster;(void)color;
+    context_->CopyResource(fogVerifyOriginal_.Get(),target);
+    context_->CopyResource(target,fogVerifyBefore_.Get());
+    context_->CopyResource(stencil,fogVerifyStencil_.Get());
+    surface.resolveDirty=bool(surface.multisample);
+    depthSurface.resolveDirty=depthSurface.stencilDirty=bool(depthSurface.multisample);
+    const uint64_t passesBefore=screenFogPasses_;
+    {
+        fogVerifyReplay_=true;bindingsValid_=false;
+        const auto stay=std::move(fogVerifyStay_);fogVerifyStay_.clear();
+        for(const auto& kept:stay)this->draw(kept);
+        Native::WorldDraw pass=draw;pass.screenFog&=3;
+        this->draw(pass);
+        fogVerifyReplay_=false;bindingsValid_=false;
+    }
+    const bool drawn=screenFogPasses_!=passesBefore;
+    surface.resolveDirty=bool(surface.multisample);
+    const auto screen=readSurface(draw,0);
+    context_->CopyResource(target,fogVerifyBefore_.Get());surface.resolveDirty=bool(surface.multisample);
+    const auto before=readSurface(draw,0);
+    context_->CopyResource(target,fogVerifyOriginal_.Get());surface.resolveDirty=bool(surface.multisample);
+    const auto original=readSurface(draw,0);
+    const size_t row=size_t(desc.Width)*8;
+    if(!drawn || screen.size()!=row*desc.Height || before.size()!=screen.size() || original.size()!=screen.size()) {
+        std::fprintf(stderr,"[ScreenFogVerify] skipped drawn=%u bytes=%zu,%zu,%zu\n",unsigned(drawn),screen.size(),before.size(),original.size());
+        bindingsValid_=false;
+        return;
+    }
+    auto half=[](const uint8_t* p) {
+        const uint16_t h=uint16_t(p[0]|p[1]<<8);const int e=(h>>10)&31;const int m=h&1023;
+        float v=e==0?std::ldexp(float(m),-24):e==31?(m?0.0f:65504.0f):std::ldexp(float(m|1024),e-25);
+        return (h&0x8000)?-v:v;
+    };
+    const uint32_t x0=(std::min)(draw.viewport[0]*scale_,desc.Width),y0=(std::min)(draw.viewport[1]*scale_,desc.Height);
+    const uint32_t x1=(std::min)((draw.viewport[0]+draw.viewport[2])*scale_,desc.Width),y1=(std::min)((draw.viewport[1]+draw.viewport[3])*scale_,desc.Height);
+    uint64_t pixels=0,foggedOriginal=0,foggedScreen=0,onlyOriginal=0,onlyScreen=0,over1=0,over4=0,over16=0;
+    double sum=0,sumOriginal=0,sumFog=0;float worst=0;uint32_t worstX=0,worstY=0;
+    for(uint32_t y=y0;y<y1;++y) for(uint32_t x=x0;x<x1;++x) {
+        const size_t at=row*y+size_t(x)*8;
+        float difference=0,changedOriginal=0,changedScreen=0,value=0;
+        for(unsigned channel=0;channel<3;++channel) {
+            const float b=half(before.data()+at+channel*2),o=half(original.data()+at+channel*2),s=half(screen.data()+at+channel*2);
+            difference=(std::max)(difference,std::abs(o-s));
+            changedOriginal=(std::max)(changedOriginal,std::abs(o-b));changedScreen=(std::max)(changedScreen,std::abs(s-b));
+            value+=o;
+        }
+        ++pixels;sum+=difference;sumOriginal+=value/3;sumFog+=changedOriginal;
+        const bool fo=changedOriginal>1e-4f,fs=changedScreen>1e-4f;
+        foggedOriginal+=fo;foggedScreen+=fs;onlyOriginal+=fo && !fs;onlyScreen+=fs && !fo;
+        over1+=difference>1.0f/255;over4+=difference>4.0f/255;over16+=difference>16.0f/255;
+        if(difference>worst) {worst=difference;worstX=x;worstY=y;}
+    }
+    ++fogVerifyReports_;
+    const size_t worstAt=row*worstY+size_t(worstX)*8;
+    bindingsValid_=false;
+    std::fprintf(stderr,"[ScreenFogVerify] viewport=%ux%u samples=%u snapshot=%u stay=%u pixels=%llu fogged=%llu/%llu onlyOriginal=%llu onlyScreen=%llu "
+        "meanValue=%.5f meanFog=%.6f meanDiff=%.7f maxDiff=%.5f over1=%llu over4=%llu over16=%llu worst=%u,%u before=%.4f,%.4f,%.4f original=%.4f,%.4f,%.4f screen=%.4f,%.4f,%.4f\n",
+        draw.viewport[2],draw.viewport[3],unsigned(surface.multisample?sampleCount_:1),unsigned((draw.screenFog&3)==2),unsigned(draw.fogVerifyStay),
+        static_cast<unsigned long long>(pixels),static_cast<unsigned long long>(foggedOriginal),static_cast<unsigned long long>(foggedScreen),
+        static_cast<unsigned long long>(onlyOriginal),static_cast<unsigned long long>(onlyScreen),
+        pixels?sumOriginal/double(pixels):0.0,pixels?sumFog/double(pixels):0.0,pixels?sum/double(pixels):0.0,double(worst),
+        static_cast<unsigned long long>(over1),static_cast<unsigned long long>(over4),static_cast<unsigned long long>(over16),worstX,worstY,
+        double(half(before.data()+worstAt)),double(half(before.data()+worstAt+2)),double(half(before.data()+worstAt+4)),
+        double(half(original.data()+worstAt)),double(half(original.data()+worstAt+2)),double(half(original.data()+worstAt+4)),
+        double(half(screen.data()+worstAt)),double(half(screen.data()+worstAt+2)),double(half(screen.data()+worstAt+4)));
+}
+// 2^exponent for a texture's fetch exponent bias (six signed bits), exactly
+// the value std::exp2 returns for it.
+static const std::array<float,64> exponentScales=[] {
+    std::array<float,64> table{};
+    for(int exponent=-32;exponent<32;++exponent)table[size_t(exponent+32)]=std::exp2(float(exponent));
+    return table;
+}();
+static inline float exponentScale(int exponent) noexcept {
+    return exponent>=-32 && exponent<32?exponentScales[size_t(exponent+32)]:std::exp2(float(exponent));
+}
+// DARK_DISPLAY_MEMO_CHECK=1: every shortcut of draw() below is compared with
+// the lookup it replaces (diagnostic; the lookups then run for every draw).
+static const bool displayMemoCheck=[] {
+    const char* value=std::getenv("DARK_DISPLAY_MEMO_CHECK");
+    return value && *value=='1';
+}();
+static void displayMemoChecked(const char* shortcut,bool same) noexcept {
+    static uint64_t checks=0,mismatches=0;
+    ++checks;
+    if(!same && mismatches++<32)std::fprintf(stderr,"[DisplayMemoCheck] MISMATCH shortcut=%s\n",shortcut);
+    if((checks&0x3FFFFF)==0x100000)
+        std::fprintf(stderr,"[DisplayMemoCheck] checks=%llu mismatches=%llu\n",
+            static_cast<unsigned long long>(checks),static_cast<unsigned long long>(mismatches));
+}
+static inline bool equalBytes56(const uint8_t* left,const uint8_t* right) noexcept {
+    uint64_t difference=0;
+    for(unsigned i=0;i<56;i+=8) {uint64_t l,r;std::memcpy(&l,left+i,8);std::memcpy(&r,right+i,8);difference|=l^r;}
+    return difference==0;
+}
+// Repeats drawn right after their WorldDraw take drawRepeat().
+// DARK_REPEAT_SHORT_PATH=0 draws them with the full path; 2 does that and
+// requires it to change no binding but the vertex and index buffers and to
+// upload no constants ([RepeatShortPath] checks/mismatches).
+static const int repeatShortPath=[] {
+    const char* value=std::getenv("DARK_REPEAT_SHORT_PATH");
+    return value && *value=='0'?0:value && *value=='2'?2:1;
+}();
+struct WorldBindingSnapshot {
+    const void* vertex; const void* color; const void* depth; const void* depthState; const void* blend; const void* raster;
+    const void* pixel; unsigned stencil; D3D11_RECT scissor; D3D11_VIEWPORT viewport;
+    std::array<ID3D11ShaderResourceView*,16> views; std::array<ID3D11SamplerState*,16> samplers;
+    bool pixelBuffers,clipBuffer; uint64_t constantUpdates;
+};
+bool WorldRendererD3D11::drawRepeat(const Native::WorldDraw& draw,const Native::WorldGeometry& g) {
+    Native::setRenderSamplePhase(Native::RenderSamplePhase::geometry);
+    if(!g || !boundVertex_ || g.vertices->formats!=shortPathFormats_)return false;
+    const auto count=g.indexCount;const auto& indices=g.indices->indices;
+    if(!count || g.firstIndex>indices.size() || count>indices.size()-g.firstIndex)return false;
+    // Uploads, budgets and rejections stay with the full path.
+    const auto vertex=geometry_.find(g.vertices.get());
+    if(vertex==geometry_.end())return false;
+    const auto index=indices_.find(g.indices.get());
+    if(index==indices_.end())return false;
+    if(draw.options.weights && !boundVertex_->indexBoundsValid(draw.constants,vertex->second.metadata.indexBounds))return false;
+    if(index->second.maximum>=vertex->second.metadata.count)
+        for(size_t i=g.firstIndex;i<g.firstIndex+count;++i)
+            if(indices[i]>=vertex->second.metadata.count)return false;
+    vertex->second.used=++resourceUse_;index->second.used=++resourceUse_;
+    Native::setRenderSamplePhase(Native::RenderSamplePhase::submit);
+    ID3D11Buffer* vb=vertex->second.buffer.Get();UINT stride=sizeof(Native::WorldVertex),offset=0;
+    if(boundVB_!=vb) {context_->IASetVertexBuffers(0,1,&vb,&stride,&offset);boundVB_=vb;}
+    auto* ib=index->second.buffer.Get();
+    if(boundIB_!=ib) {context_->IASetIndexBuffer(ib,DXGI_FORMAT_R16_UINT,0);boundIB_=ib;}
+    context_->DrawIndexed(count,g.firstIndex,0);
+    ++drawOrdinals_[unsigned(draw.material)];++profileDraws_;++workTotals_.draws;
+    if((++shortPathDraws_&0x3FFFFF)==0x100000)
+        std::fprintf(stderr,"[RepeatShortPath] draws=%llu\n",static_cast<unsigned long long>(shortPathDraws_));
+    Native::recordWorldSubmission(draw.material);
+    return true;
+}
+bool WorldRendererD3D11::draw(const Native::WorldDraw& draw,const Native::WorldGeometry* repeat,bool continues) {
+    if(continues && repeat && repeatShortPath && shortPathDraw_==&draw && bindingsValid_ && !inspectFrame_ &&
+       !captureFrame_ && !diagnostics_) {
+        if(repeatShortPath==1) {
+            if(drawRepeat(draw,*repeat))return true;
+        } else {
+            auto snapshot=[&] {
+                return WorldBindingSnapshot{boundVertex_,boundColor_,boundDepth_,boundDepthState_,boundBlend_,boundRaster_,boundPixel_,
+                    boundStencil_,boundScissor_,boundViewport_,boundViews_,boundSamplers_,pixelBuffersBound_,clipBufferBound_,
+                    worldConstantUpdates};
+            };
+            const auto before=snapshot();
+            const bool drawn=this->draw(draw,repeat,false);
+            const auto after=snapshot();
+            // A repeat the full path rejects (a geometry upload over the
+            // frame's budget) would have left drawRepeat() at its cache miss.
+            if(!drawn) {++shortPathRejected_;return false;}
+            const bool same=before.vertex==after.vertex && before.color==after.color && before.depth==after.depth &&
+                before.depthState==after.depthState && before.blend==after.blend && before.raster==after.raster &&
+                before.pixel==after.pixel && before.stencil==after.stencil &&
+                !std::memcmp(&before.scissor,&after.scissor,sizeof(before.scissor)) &&
+                !std::memcmp(&before.viewport,&after.viewport,sizeof(before.viewport)) && before.views==after.views &&
+                before.samplers==after.samplers && before.pixelBuffers==after.pixelBuffers && before.clipBuffer==after.clipBuffer &&
+                before.constantUpdates==after.constantUpdates && bindingsValid_ && shortPathDraw_==&draw;
+            ++shortPathChecks_;
+            if(!same && shortPathMismatches_++<16)
+                std::fprintf(stderr,"[RepeatShortPath] MISMATCH program=%s material=%u constants=%llu\n",draw.fragmentName.c_str(),
+                    unsigned(draw.material),static_cast<unsigned long long>(after.constantUpdates-before.constantUpdates));
+            if((shortPathChecks_&0x3FFFFF)==0x100000)
+                std::fprintf(stderr,"[RepeatShortPath] checks=%llu mismatches=%llu rejected=%llu\n",static_cast<unsigned long long>(shortPathChecks_),
+                    static_cast<unsigned long long>(shortPathMismatches_),static_cast<unsigned long long>(shortPathRejected_));
+            return drawn;
+        }
+    }
+    shortPathDraw_=nullptr;
+    Native::StallProfiler::Scope stallRender(Native::StallProfiler::hot, Native::StallProfiler::Section::Rendering, "WorldRendererD3D11::draw");
+    // Inspection, capture and fog paths read a draw's own geometry in
+    // several helpers. The engine does not queue repeats of fog draws; for
+    // the rest, draw an equivalent complete draw.
+    if(repeat && (inspectFrame_ || captureFrame_ || draw.screenFog || draw.fogDepthSnapshot || draw.fogVerifyStay)) {
+        Native::WorldDraw complete=draw;complete.geometry=*repeat;
+        const bool drawn=this->draw(complete);
+        shortPathDraw_=nullptr;
+        return drawn;
+    }
     Native::setRenderSamplePhase(Native::RenderSamplePhase::textures);
+    struct DrawScope {
+        WorldRendererD3D11& self;
+        explicit DrawScope(WorldRendererD3D11& renderer):self(renderer) {++self.drawDepth_;}
+        ~DrawScope() {
+            if(--self.drawDepth_)return;
+            if(!self.retiredViews_.empty())self.retiredViews_.clear();
+            if(!self.retiredSamplers_.empty())self.retiredSamplers_.clear();
+        }
+    } drawScope(*this);
+    if(draw.fogDepthSnapshot)snapshotFogDepth(draw);
     const unsigned command=captureFrame_?captureCommand_++:0;
     unsigned captureFlags=draw.fragmentFlags,captureTextureMask=0,captureResolvedMask=0;
     if(draw.fragmentName=="XREngine_RadialBlurInvert") {
@@ -1727,20 +2175,21 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
         return true;
     };
     auto rejected=[&](unsigned step) {
+        const auto& geometry=repeat?*repeat:draw.geometry;
         if(captureFrame_)Native::traceWorldDrawResult(inspection_,command,smokeOrdinal,step,captureFlags,captureTextureMask,captureResolvedMask);
         static std::set<std::string> reports;
         const auto key=draw.fragmentName+":"+std::to_string(draw.fragmentFlags)+":"+std::to_string(step);
         if(reports.size()<64 && reports.insert(key).second) {
             std::fprintf(stderr,"[EngineWorldRejectReason] step=%u program=%s flags=%u material=%u vptr=%p formats=%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u modes=%u,%u,%u,%u,%u,%u,%u,%u coords=%u,%u,%u,%u,%u,%u,%u,%u weights=%u normal=%u tangents=%u normalize=%u color=%u\n",step,
-            draw.fragmentName.c_str(),draw.fragmentFlags,unsigned(draw.material),static_cast<const void*>(draw.geometry.vertices.get()),
-            draw.geometry.vertices?draw.geometry.vertices->formats[0]:0,draw.geometry.vertices?draw.geometry.vertices->formats[1]:0,
-            draw.geometry.vertices?draw.geometry.vertices->formats[2]:0,draw.geometry.vertices?draw.geometry.vertices->formats[3]:0,
-            draw.geometry.vertices?draw.geometry.vertices->formats[4]:0,draw.geometry.vertices?draw.geometry.vertices->formats[5]:0,
-            draw.geometry.vertices?draw.geometry.vertices->formats[6]:0,draw.geometry.vertices?draw.geometry.vertices->formats[7]:0,
-            draw.geometry.vertices?draw.geometry.vertices->formats[8]:0,draw.geometry.vertices?draw.geometry.vertices->formats[9]:0,
-            draw.geometry.vertices?draw.geometry.vertices->formats[10]:0,draw.geometry.vertices?draw.geometry.vertices->formats[11]:0,
-            draw.geometry.vertices?draw.geometry.vertices->formats[12]:0,draw.geometry.vertices?draw.geometry.vertices->formats[13]:0,
-            draw.geometry.vertices?draw.geometry.vertices->formats[14]:0,draw.geometry.vertices?draw.geometry.vertices->formats[15]:0,
+            draw.fragmentName.c_str(),draw.fragmentFlags,unsigned(draw.material),static_cast<const void*>(geometry.vertices.get()),
+            geometry.vertices?geometry.vertices->formats[0]:0,geometry.vertices?geometry.vertices->formats[1]:0,
+            geometry.vertices?geometry.vertices->formats[2]:0,geometry.vertices?geometry.vertices->formats[3]:0,
+            geometry.vertices?geometry.vertices->formats[4]:0,geometry.vertices?geometry.vertices->formats[5]:0,
+            geometry.vertices?geometry.vertices->formats[6]:0,geometry.vertices?geometry.vertices->formats[7]:0,
+            geometry.vertices?geometry.vertices->formats[8]:0,geometry.vertices?geometry.vertices->formats[9]:0,
+            geometry.vertices?geometry.vertices->formats[10]:0,geometry.vertices?geometry.vertices->formats[11]:0,
+            geometry.vertices?geometry.vertices->formats[12]:0,geometry.vertices?geometry.vertices->formats[13]:0,
+            geometry.vertices?geometry.vertices->formats[14]:0,geometry.vertices?geometry.vertices->formats[15]:0,
             draw.options.modes[0],draw.options.modes[1],draw.options.modes[2],draw.options.modes[3],
             draw.options.modes[4],draw.options.modes[5],draw.options.modes[6],draw.options.modes[7],
             draw.options.coordinates[0],draw.options.coordinates[1],draw.options.coordinates[2],draw.options.coordinates[3],
@@ -1748,7 +2197,7 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
             draw.options.weights,unsigned(draw.options.normal),unsigned(draw.options.tangents),unsigned(draw.options.normalizeNormal),unsigned(draw.options.vertexColor));
             if(step==4) {
                 std::fprintf(stderr,"[EngineWorldTargetEvidence] attributes=%08X geometry=%u color=%08X depth=%08X colorKey=%016llX depthKey=%016llX viewport=%u,%u,%u,%u\n",
-                    word(draw.attributes.data()+92),unsigned(bool(draw.geometry)),draw.targets[0],draw.targets[4],
+                    word(draw.attributes.data()+92),unsigned(bool(geometry)),draw.targets[0],draw.targets[4],
                     static_cast<unsigned long long>(draw.surfaceKey(0)),static_cast<unsigned long long>(draw.surfaceKey(4)),
                     draw.viewport[0],draw.viewport[1],draw.viewport[2],draw.viewport[3]);
             }
@@ -1813,11 +2262,12 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
     // Consecutive draws usually repeat the previous material: then reuse the
     // cached key/program instead of reformatting and rehashing the key.
     const char* effectiveName=draw.fragmentName.empty()?fallback:draw.fragmentName.c_str();
-    const unsigned fragmentFlags=Native::graphicsFragmentFlags(effectiveName,draw.fragmentFlags,bloom_,motionBlur_);
+    const std::string_view effectiveView=draw.fragmentName.empty()?std::string_view(fallback):std::string_view(draw.fragmentName);
+    const unsigned fragmentFlags=Native::graphicsFragmentFlags(effectiveView,draw.fragmentFlags,bloom_,motionBlur_);
     captureFlags=fragmentFlags;
     const FragmentProgram* frag = nullptr;
     bool fragFound = false;
-    if (lastFragmentValid_ && lastFragmentFlags_ == fragmentFlags && lastFragmentName_ == effectiveName) {
+    if (lastFragmentValid_ && lastFragmentFlags_ == fragmentFlags && lastFragmentName_ == effectiveView) {
         frag = lastFragment_; fragFound = lastFragmentFound_;
     } else {
         char fragmentKey[128]{};
@@ -1843,18 +2293,18 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
     std::array<ID3D11ShaderResourceView*,16> views{};std::array<ID3D11SamplerState*,16> samplers{};
     uint16_t promptSlots = 0;
     // Selecting a later slot can evict an earlier slot from either cache.
-    // Retain each selection until the context has acquired its own reference.
-    std::array<Ptr<ID3D11ShaderResourceView>,16> retainedViews;
-    std::array<Ptr<ID3D11SamplerState>,16> retainedSamplers;
+    // The caches then park what they give up in retiredViews_/retiredSamplers_
+    // (drawScope), so each selection lives until the context has acquired its
+    // own reference.
     std::array<Native::EngineVector,16> scales{};for(auto& scale:scales)scale.fill(1);
     struct ColorLookup {float inverseLookupScale;uint32_t logicalLookupMask;uint32_t padding[2];};
     ColorLookup colorLookup{1.0f/float(scale_),0,{0,0}};
     static_assert(sizeof(colorLookup)==sizeof(uploadedColorLookup_));
-    const std::string_view fragmentName=effectiveName;
+    const std::string_view fragmentName=effectiveView;
     const bool bloomFilter=fragmentName=="XRUtil_ShrinkTexture8" || fragmentName=="XREngine_GaussClamped";
     std::optional<FlatPostQuad> postQuad;bool postQuadChecked=false;
     const auto checkedPostQuad=[&]() -> const FlatPostQuad* {
-        if(!postQuadChecked) {postQuad=flatPostQuad(draw,scale_);postQuadChecked=true;}
+        if(!postQuadChecked) {postQuad=flatPostQuad(draw,scale_,repeat);postQuadChecked=true;}
         return postQuad?&*postQuad:nullptr;
     };
     struct BloomControl {float renderScale;uint32_t snap;uint32_t padding[2];};
@@ -1882,7 +2332,10 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
     const bool radialBlur=draw.fragmentName=="XREngine_RadialBlurInvert";
     const bool unmaskedRadialBlur=radialBlur && unboundTexture(1) && unboundTexture(2) && unboundTexture(3);
     if(fragFound) for(unsigned slot=0;slot<16;++slot)if(frag->textures&(1u<<slot)) {
-        const auto& texture=draw.textureObjects[slot];const auto resolved=resolved_.find(texture.key());
+        const auto& texture=draw.textureObjects[slot];
+        // Every use below requires texture.object; most textures are not resolve destinations.
+        const auto resolved=texture.object && (resolvedFilter_&resolvedBit(texture.key()))?resolved_.find(texture.key()):resolved_.end();
+        if(displayMemoCheck && texture.object)displayMemoChecked("resolved",resolved==resolved_.find(texture.key()));
         // Retail RenderDeathScene0 (8235F390 -> 822968A8) explicitly binds
         // texture zero in the three RadialBlurInvert mask slots. Keep those
         // SRVs null: their zero samples select the shader's unmasked result.
@@ -1902,17 +2355,20 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
             // resolved render-targets keep the original image. Replacement
             // icons have their own complete mip chain, so the sampler uses
             // that chain rather than the original texture's resident LODs.
-            std::shared_ptr<const ColorImage> effective = draw.textures[slot];
+            // Refer to the draw's image; copy only a substitute. Copying the
+            // shared pointer would touch its reference count on every draw.
+            std::shared_ptr<const ColorImage> substitute;
+            const std::shared_ptr<const ColorImage>* effectiveImage = &draw.textures[slot];
             bool promptSubstituted = false;
             bool subtitleSubstituted = false;
             ID3D11SamplerState* subtitleSampler = nullptr;
-            if(draw.subtitle && slot==0 && effective && !cube &&
+            if(draw.subtitle && slot==0 && (*effectiveImage) && !cube &&
                draw.material==Native::WorldMaterial::fixed && fragmentName=="MRenderXenon_Attrib_TexEnvMode01") {
                 const auto height=subtitleRenderHeight_?subtitleRenderHeight_:draw.viewport[3]*scale_;
                 const auto factor=Native::subtitleFontRasterScale(height,Native::graphicsSettings().subtitleScalePercent);
                 const bool failed=std::any_of(failedSubtitles_.begin(),failedSubtitles_.end(),
-                    [&](const auto& entry){return entry.factor==factor && entry.source.lock()==effective;});
-                if(!failed)if(auto replacement=Native::subtitleFontReplacementFor(draw.textureIds[slot],effective,factor)) {
+                    [&](const auto& entry){return entry.factor==factor && entry.source.lock()==(*effectiveImage);});
+                if(!failed)if(auto replacement=Native::subtitleFontReplacementFor(draw.textureIds[slot],(*effectiveImage),factor)) {
                     try {
                         Native::WorldSampler fontSampler;
                         fontSampler.valid=true;fontSampler.minLinear=fontSampler.magLinear=true;
@@ -1920,21 +2376,22 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
                         fontSampler.minLevel=fontSampler.maxLevel=0;fontSampler.baseOnly=true;
                         subtitleSampler=sampler(fontSampler);
                         if(auto* view=image(replacement)) {
-                            views[slot]=view;effective=std::move(replacement);subtitleSubstituted=true;
+                            views[slot]=view;substitute=std::move(replacement);effectiveImage=&substitute;subtitleSubstituted=true;
                         }
                     } catch(const std::exception&) {} // Optional font resources may retain the original bitmap.
                     if(!subtitleSubstituted) {
-                        failedSubtitles_[failedSubtitleNext_++%failedSubtitles_.size()]={effective,factor};
+                        failedSubtitles_[failedSubtitleNext_++%failedSubtitles_.size()]={ownerOf(*effectiveImage),factor};
                         std::fprintf(stderr,"[SubtitleFont] GPU atlas unavailable id=%u factor=%u; retaining original\n",
                             draw.textureIds[slot],factor);
                     }
                 }
             }
-            if (!subtitleSubstituted && promptKeyboardMouse_ && effective && effective->faces == 1 && !cube && effective->promptOrigin) {
-                if (auto icon = Prompts::replacementFor(draw.textureIds[slot], effective,
+            if (!subtitleSubstituted && promptKeyboardMouse_ && (*effectiveImage) && (*effectiveImage)->faces == 1 && !cube && (*effectiveImage)->promptOrigin) {
+                if (auto icon = Prompts::replacementFor(draw.textureIds[slot], (*effectiveImage),
                         Prompts::Source::KeyboardMouse, draw.promptContext == Native::PromptRenderContext::Gameplay ?
                             Prompts::Context::Gameplay : Prompts::Context::Menu)) {
-                    effective = std::move(icon);
+                    substitute = std::move(icon);
+                    effectiveImage = &substitute;
                     promptSubstituted = true;
                     promptSlots |= uint16_t(1u << slot);
                     static std::atomic<unsigned> promptLogs{0};
@@ -1951,18 +2408,18 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
             // by the worker; this lookup returns an original-path miss until ready.
             const auto& authoredSampler=draw.samplers[slot];
             if(textureMods_ && surfaceFiltering && draw.material!=Native::WorldMaterial::post &&
-               draw.material!=Native::WorldMaterial::fixed && !draw.subtitle && !cube && effective &&
+               draw.material!=Native::WorldMaterial::fixed && !draw.subtitle && !cube && (*effectiveImage) &&
                !promptSubstituted && !subtitleSubstituted && authoredSampler.valid && authoredSampler.minLevel==0 &&
-               (authoredSampler.baseOnly || authoredSampler.maxLevel==0 || authoredSampler.maxLevel>=effective->mips.size())) {
-                if(auto replacement=textureMods_->request(effective);replacement.view) {
-                    views[slot]=replacement.view.Get(); retainedViews[slot]=replacement.view;
+               (authoredSampler.baseOnly || authoredSampler.maxLevel==0 || authoredSampler.maxLevel>=(*effectiveImage)->mips.size())) {
+                if(auto replacement=textureMods_->request((*effectiveImage));replacement.view) {
+                    views[slot]=replacement.view.Get(); retiredViews_.push_back(replacement.view);
                     textureModMips=replacement.mipLevels;
                     static std::atomic<unsigned> modLogs{0};
                     if(modLogs++<64)std::fprintf(stderr,"[TextureMods] bound slot=%u id=%u logical=%ux%u physical=%ux%u mips=%u\n",
-                        slot,draw.textureIds[slot],effective->width,effective->height,replacement.width,replacement.height,replacement.mipLevels);
+                        slot,draw.textureIds[slot],(*effectiveImage)->width,(*effectiveImage)->height,replacement.width,replacement.height,replacement.mipLevels);
                 }
             }
-            if(!effective || effective->faces!=(cube?6u:1u) || (!views[slot] && !(views[slot]=image(effective)))) {
+            if(!(*effectiveImage) || (*effectiveImage)->faces!=(cube?6u:1u) || (!views[slot] && !(views[slot]=image((*effectiveImage))))) {
                 static std::set<uint32_t> missing;
                 if(missing.size()<64 && missing.insert(draw.textureIds[slot]).second) std::fprintf(stderr,"[EngineWorldMissingTexture] program=%s slot=%u id=%u object=%08X storage=%08X format=%u size=%ux%u faces=%u\n",
                     lastFragmentKey_.c_str(),slot,draw.textureIds[slot],texture.object,texture.storage,texture.format,texture.width,texture.height,texture.faces);
@@ -1974,8 +2431,8 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
                     samplers[slot]=subtitleSampler;
                 } else samplers[slot]=(cube || draw.material==Native::WorldMaterial::post ||
                     draw.material==Native::WorldMaterial::fixed)?cubeSampler_.Get():wrapSampler_.Get();
-                scales[slot].fill(std::exp2(float(texture.exponent)));
-                retainedViews[slot]=views[slot];retainedSamplers[slot]=samplers[slot];
+                scales[slot].fill(exponentScale(texture.exponent));
+                if(displayMemoCheck)displayMemoChecked("exponent",scales[slot][0]==std::exp2(float(texture.exponent)));
                 continue;
             }
         }
@@ -2063,7 +2520,7 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
                !(texture.object && resolved!=resolved_.end()) && draw.textures[slot] &&
                captured.minLinear && captured.magLinear && !captured.baseOnly)
                 captured.anisotropy=uint8_t(anisotropy);
-            samplers[slot]=sampler(captured);
+            samplers[slot]=slotSampler(slot,captured);
         }
         else if(firstMip || captured.lodValid) {
             Native::WorldSampler fallback;
@@ -2079,7 +2536,7 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
             }
             // Keep existing fallback addressing/filtering without sampling an
             // uninitialized prefix or discarding independently valid LOD limits.
-            samplers[slot]=sampler(fallback);
+            samplers[slot]=slotSampler(slot,fallback);
         } else samplers[slot]=(cube || draw.material==Native::WorldMaterial::post ||
             draw.material==Native::WorldMaterial::fixed)?cubeSampler_.Get():wrapSampler_.Get();
         if(shadowProjector && slot==0) {
@@ -2098,20 +2555,20 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
             // sampler's addressing, border and LOD, including fallback state.
             D3D11_SAMPLER_DESC desc{};samplers[slot]->GetDesc(&desc);
             desc.Filter=D3D11_FILTER_MIN_MAG_MIP_POINT;desc.MaxAnisotropy=1;
-            if(samplerStates_.size()>512)samplerStates_.clear();
+            if(samplerStates_.size()>512)retireSamplerStates();
             auto& state=samplerStates_.entry(desc);
             if(!state)check(device_->CreateSamplerState(&desc,&state),"shadow point sampler");
             samplers[slot]=state.Get();
         }
         // Fetch scaling belongs to the binding, including CPU-owned images.
-        scales[slot].fill(std::exp2(float(texture.exponent)));
-        retainedViews[slot]=views[slot];retainedSamplers[slot]=samplers[slot];
+        scales[slot].fill(exponentScale(texture.exponent));
+        if(displayMemoCheck)displayMemoChecked("exponent",scales[slot][0]==std::exp2(float(texture.exponent)));
     }
     timing(profileTextures_);
     Native::setRenderSamplePhase(Native::RenderSamplePhase::geometry);
     const auto* a=draw.attributes.data();const auto flags=word(a+92);
-    if (!draw.geometry || ((flags&(2|0x4000)) && !draw.targets[4])) return rejected(4);
-    const auto& g=draw.geometry; const auto count=g.indexCount;
+    const auto& g=repeat?*repeat:draw.geometry; const auto count=g.indexCount;
+    if (!g || ((flags&(2|0x4000)) && !draw.targets[4])) return rejected(4);
     if (!count || g.firstIndex>g.indices->indices.size() || count>g.indices->indices.size()-g.firstIndex) return rejected(5);
     const auto& formats=g.vertices->formats;const auto& options=draw.options;
     // A missing normal stream is dead prologue data when no live output can
@@ -2146,7 +2603,7 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
         const bool storedUpload = (g.vertices->address != 0 || g.vertices->id != 0);
         const size_t estimate=size_t(g.vertices->vertexCount)*sizeof(Native::WorldVertex);
         if (storedUpload && !budgetFor(estimate)) return rejected(12);
-        Geometry native;native.source=g.vertices;
+        Geometry native;native.source=ownerOf(g.vertices);
         std::vector<Native::WorldVertex> vertices;
         const auto decodeStart=Clock::now();
         if (!Native::decodeWorldVertices(*g.vertices,vertices)) return rejected(8);
@@ -2154,6 +2611,7 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
         const size_t decodedBytes=vertices.size()*sizeof(Native::WorldVertex);
         const double decodeMs=millisBetween(decodeStart,Clock::now());
         if (decodeMs > worstDecodeMs_) { worstDecodeMs_=decodeMs; worstDecodeBytes_=decodedBytes; }
+        workTotals_.decodeMs+=decodeMs;
         const auto uploadStart=Clock::now();
         D3D11_BUFFER_DESC b{};b.ByteWidth=UINT(decodedBytes);b.BindFlags=D3D11_BIND_VERTEX_BUFFER;b.Usage=D3D11_USAGE_IMMUTABLE;
         if(!g.vertices->address && !g.vertices->id)
@@ -2172,6 +2630,7 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
         geometryBytes_+=bytes;++vertexUploads_;
         if (storedUpload) frameUploadBytes_+=bytes;
         it=geometry_.emplace(g.vertices.get(),std::move(native)).first;
+        if(!storedUpload)immediateVertices_.push_back(g.vertices.get());
         noteWorstUpload(millisBetween(uploadStart,Clock::now()),bytes,it->second.transientCapacity?"vertex-transient":"vertex");
     }
     it->second.used=++resourceUse_;
@@ -2266,7 +2725,7 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
         const bool storedIndices = (g.indices->address != 0 || g.indices->id != 0);
         if (storedIndices && !budgetFor(bytes)) return rejected(12);
         const auto uploadStart=Clock::now();
-        Indices native;native.source=g.indices;native.maximum=*std::max_element(indices.begin(),indices.end());
+        Indices native;native.source=ownerOf(g.indices);native.maximum=*std::max_element(indices.begin(),indices.end());
         D3D11_BUFFER_DESC ib{};ib.ByteWidth=UINT(bytes);ib.BindFlags=D3D11_BIND_INDEX_BUFFER;ib.Usage=D3D11_USAGE_IMMUTABLE;
         if(!g.indices->address && !g.indices->id)
             native.transientCapacity=transientBuffers_.upload(indices.data(),ib.ByteWidth,ib.BindFlags,native.buffer);
@@ -2280,6 +2739,7 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
             indexBytes_-=oldest->second.bytes();indices_.erase(oldest);
         }
         cachedIndex=indices_.emplace(g.indices.get(),std::move(native)).first;indexBytes_+=allocationBytes;++indexUploads_;
+        if(!storedIndices)immediateIndices_.push_back(g.indices.get());
         if (storedIndices) frameUploadBytes_+=allocationBytes;
         noteWorstUpload(millisBetween(uploadStart,Clock::now()),allocationBytes,cachedIndex->second.transientCapacity?"index-transient":"index");
     }
@@ -2294,67 +2754,116 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
     // Allocation history can leave the two attachments at different extents.
     // D3D11 requires a matching pair; retain the union before obtaining views
     // so neither attachment shrinks or loses pixels from an earlier viewport.
-    auto retainExtent=[&](uint64_t key) {
-        if(const auto found=surfaces_.find(key);found!=surfaces_.end()) {
-            width=(std::max)(width,found->second.width);height=(std::max)(height,found->second.height);
+    // The two targets usually repeat from draw to draw: remember their map
+    // nodes (surfaceMemo_) instead of hashing the keys again for each use.
+    auto knownSurface=[&](unsigned memo,uint64_t key) -> Surface* {
+        auto& entry=surfaceMemo_[memo];
+        if(displayMemoCheck && entry.surface && entry.key==key) {
+            const auto found=surfaces_.find(key);
+            displayMemoChecked("surface",found!=surfaces_.end() && &found->second==entry.surface);
         }
+        if(entry.surface && entry.key==key)return entry.surface;
+        const auto found=surfaces_.find(key);
+        if(found==surfaces_.end())return nullptr;
+        entry={key,&found->second};
+        return entry.surface;
+    };
+    auto retainExtent=[&](unsigned memo,uint64_t key) {
+        if(const auto* found=knownSurface(memo,key)) {
+            width=(std::max)(width,found->width);height=(std::max)(height,found->height);
+        }
+    };
+    // surface() returns an existing large enough entry as it is.
+    auto targetSurface=[&](unsigned memo,uint64_t key,bool depthTarget) -> Surface& {
+        if(auto* known=knownSurface(memo,key);known && known->texture && known->width>=width && known->height>=height)return *known;
+        auto& created=surface(key,width,height,depthTarget);
+        surfaceMemo_[memo]={key,&created};
+        return created;
     };
     // A textured/alpha-tested shadow caster needs its pixel shader even when
     // the original draw binds only depth. Fragment presence does not imply a
     // color attachment; preserve that separation through allocation/binding.
     const bool hasColor=draw.targets[0] && draw.material!=Native::WorldMaterial::depth;
-    if(draw.targets[4])retainExtent(draw.surfaceKey(4));
-    if(hasColor)retainExtent(draw.surfaceKey(0));
-    auto* depth=draw.targets[4]?surface(draw.surfaceKey(4),width,height,true).depth.Get():nullptr;
-    ID3D11RenderTargetView* color=hasColor?surface(draw.surfaceKey(0),width,height,false).color.Get():nullptr;
+    const uint64_t depthKey=draw.targets[4]?draw.surfaceKey(4):0,colorKey=hasColor?draw.surfaceKey(0):0;
+    if(draw.targets[4])retainExtent(1,depthKey);
+    if(hasColor)retainExtent(0,colorKey);
+    Surface* const depthSurface=draw.targets[4]?&targetSurface(1,depthKey,true):nullptr;
+    Surface* const colorSurface=hasColor?&targetSurface(0,colorKey,false):nullptr;
+    auto* depth=depthSurface?depthSurface->depth.Get():nullptr;
+    ID3D11RenderTargetView* color=colorSurface?colorSurface->color.Get():nullptr;
     if(!bindingsValid_ || boundColor_!=color || boundDepth_!=depth) {
         boundViews_.fill(nullptr);context_->PSSetShaderResources(0,16,boundViews_.data());
         context_->OMSetRenderTargets(color?1:0,color?&color:nullptr,depth);
         boundColor_=color;boundDepth_=depth;
     }
-    // Original82248680 selects ALWAYS when testing is off while retaining
-    // independent depth writes (82248118). D3D11 disables writes as well when
-    // DepthEnable is false; DV5 needs those writes to mask its second pass.
-    D3D11_DEPTH_STENCIL_DESC ds{};ds.DepthEnable=(flags&6)!=0;ds.DepthWriteMask=(flags&4)?D3D11_DEPTH_WRITE_MASK_ALL:D3D11_DEPTH_WRITE_MASK_ZERO;
-    ds.DepthFunc=(flags&2)?WorldRenderState::depthComparison(a[96]):D3D11_COMPARISON_ALWAYS;
-    ds.StencilEnable=(flags&0x4000)!=0;ds.StencilReadMask=a[125];ds.StencilWriteMask=a[126];
-    ds.FrontFace=WorldRenderState::stencilFace(a+120);ds.BackFace=(flags&0x80)?WorldRenderState::stencilFace(a+122):ds.FrontFace;
-    if(depthStates_.size()>512)depthStates_.clear();
-    auto& depthState=depthStates_.entry(ds);
-    if(!depthState)check(device_->CreateDepthStencilState(&ds,&depthState),"world depth state");
-    if(!bindingsValid_ || boundDepthState_!=depthState.Get() || boundStencil_!=a[124]) {
-        context_->OMSetDepthStencilState(depthState.Get(),a[124]);boundDepthState_=depthState.Get();boundStencil_=a[124];
+    // The three state objects depend only on attribute bytes 92..147, the
+    // render scale and the sample count (stateMemo_). Consecutive draws mostly
+    // repeat them; the descriptors and cache entries of the last draw then stand.
+    const bool statesKnown=stateMemo_.valid && stateMemo_.scale==scale_ && stateMemo_.samples==sampleCount_ &&
+        equalBytes56(stateMemo_.attributes.data(),a+92);
+    std::optional<StateMemo> checkedStates;
+    if(displayMemoCheck && statesKnown)checkedStates=stateMemo_;
+    if(!statesKnown || displayMemoCheck) {
+        stateMemo_.valid=false;
+        // Original82248680 selects ALWAYS when testing is off while retaining
+        // independent depth writes (82248118). D3D11 disables writes as well when
+        // DepthEnable is false; DV5 needs those writes to mask its second pass.
+        D3D11_DEPTH_STENCIL_DESC ds{};ds.DepthEnable=(flags&6)!=0;ds.DepthWriteMask=(flags&4)?D3D11_DEPTH_WRITE_MASK_ALL:D3D11_DEPTH_WRITE_MASK_ZERO;
+        ds.DepthFunc=(flags&2)?WorldRenderState::depthComparison(a[96]):D3D11_COMPARISON_ALWAYS;
+        ds.StencilEnable=(flags&0x4000)!=0;ds.StencilReadMask=a[125];ds.StencilWriteMask=a[126];
+        ds.FrontFace=WorldRenderState::stencilFace(a+120);ds.BackFace=(flags&0x80)?WorldRenderState::stencilFace(a+122):ds.FrontFace;
+        if(depthStates_.size()>512)depthStates_.clear();
+        auto& depthState=depthStates_.entry(ds);
+        if(!depthState)check(device_->CreateDepthStencilState(&ds,&depthState),"world depth state");
+        D3D11_BLEND_DESC blend{};blend.RenderTarget[0].RenderTargetWriteMask=UINT8(((flags&0x100000)?7:0)|((flags&0x1000000)?8:0));
+        blend.AlphaToCoverageEnable=(flags&1)!=0;
+        if (flags&8) {
+            constexpr D3D11_BLEND factors[]{D3D11_BLEND_ZERO,D3D11_BLEND_ZERO,D3D11_BLEND_ONE,D3D11_BLEND_SRC_COLOR,D3D11_BLEND_INV_SRC_COLOR,
+                D3D11_BLEND_SRC_ALPHA,D3D11_BLEND_INV_SRC_ALPHA,D3D11_BLEND_DEST_ALPHA,D3D11_BLEND_INV_DEST_ALPHA,
+                D3D11_BLEND_DEST_COLOR,D3D11_BLEND_INV_DEST_COLOR,D3D11_BLEND_SRC_ALPHA_SAT};
+            if (a[144]>=std::size(factors) || a[145]>=std::size(factors)) return rejected(11);
+            auto& rt=blend.RenderTarget[0];rt.BlendEnable=TRUE;rt.SrcBlend=factors[a[144]];rt.DestBlend=factors[a[145]];
+            auto alpha=[](D3D11_BLEND f) {return f==D3D11_BLEND_SRC_COLOR?D3D11_BLEND_SRC_ALPHA:f==D3D11_BLEND_INV_SRC_COLOR?D3D11_BLEND_INV_SRC_ALPHA:
+                f==D3D11_BLEND_DEST_COLOR?D3D11_BLEND_DEST_ALPHA:f==D3D11_BLEND_INV_DEST_COLOR?D3D11_BLEND_INV_DEST_ALPHA:f;};
+            rt.SrcBlendAlpha=alpha(rt.SrcBlend);rt.DestBlendAlpha=alpha(rt.DestBlend);rt.BlendOp=rt.BlendOpAlpha=D3D11_BLEND_OP_ADD;
+        }
+        if(blendStates_.size()>512)blendStates_.clear();
+        auto& blendState=blendStates_.entry(blend);
+        if(!blendState)check(device_->CreateBlendState(&blend,&blendState),"world blend state");
+        D3D11_RASTERIZER_DESC raster{};raster.FillMode=D3D11_FILL_SOLID;raster.CullMode=(flags&0x800)?D3D11_CULL_BACK:D3D11_CULL_NONE;
+        // Original822482CC sets face=1 (CW front) when culling is enabled
+        // without0x1000, and face=0 (CCW front) with0x1000. Disabling culling
+        // clears both cull and face bits, also defining the stencil front side.
+        raster.FrontCounterClockwise=!(flags&0x800) || (flags&0x1000)!=0;
+        raster.DepthClipEnable=TRUE;raster.ScissorEnable=(flags&0x20)!=0;raster.MultisampleEnable=sampleCount_>1;
+        if(!WorldRenderState::depthBias(flags,std::bit_cast<float>(word(a+100)),
+            std::bit_cast<float>(word(a+104)),scale_,raster))return rejected(11);
+        if(rasterStates_.size()>512)rasterStates_.clear();
+        auto& rasterState=rasterStates_.entry(raster);
+        if(!rasterState)check(device_->CreateRasterizerState(&raster,&rasterState),"world raster state");
+        stateMemo_.depth=ds;stateMemo_.blend=blend;stateMemo_.raster=raster;
+        stateMemo_.depthState=depthState.Get();stateMemo_.blendState=blendState.Get();stateMemo_.rasterState=rasterState.Get();
+        std::memcpy(stateMemo_.attributes.data(),a+92,stateMemo_.attributes.size());
+        stateMemo_.scale=scale_;stateMemo_.samples=sampleCount_;stateMemo_.valid=true;
     }
-    D3D11_BLEND_DESC blend{};blend.RenderTarget[0].RenderTargetWriteMask=UINT8(((flags&0x100000)?7:0)|((flags&0x1000000)?8:0));
-    blend.AlphaToCoverageEnable=(flags&1)!=0;
-    if (flags&8) {
-        constexpr D3D11_BLEND factors[]{D3D11_BLEND_ZERO,D3D11_BLEND_ZERO,D3D11_BLEND_ONE,D3D11_BLEND_SRC_COLOR,D3D11_BLEND_INV_SRC_COLOR,
-            D3D11_BLEND_SRC_ALPHA,D3D11_BLEND_INV_SRC_ALPHA,D3D11_BLEND_DEST_ALPHA,D3D11_BLEND_INV_DEST_ALPHA,
-            D3D11_BLEND_DEST_COLOR,D3D11_BLEND_INV_DEST_COLOR,D3D11_BLEND_SRC_ALPHA_SAT};
-        if (a[144]>=std::size(factors) || a[145]>=std::size(factors)) return rejected(11);
-        auto& rt=blend.RenderTarget[0];rt.BlendEnable=TRUE;rt.SrcBlend=factors[a[144]];rt.DestBlend=factors[a[145]];
-        auto alpha=[](D3D11_BLEND f) {return f==D3D11_BLEND_SRC_COLOR?D3D11_BLEND_SRC_ALPHA:f==D3D11_BLEND_INV_SRC_COLOR?D3D11_BLEND_INV_SRC_ALPHA:
-            f==D3D11_BLEND_DEST_COLOR?D3D11_BLEND_DEST_ALPHA:f==D3D11_BLEND_INV_DEST_COLOR?D3D11_BLEND_INV_DEST_ALPHA:f;};
-        rt.SrcBlendAlpha=alpha(rt.SrcBlend);rt.DestBlendAlpha=alpha(rt.DestBlend);rt.BlendOp=rt.BlendOpAlpha=D3D11_BLEND_OP_ADD;
+    if(displayMemoCheck && statesKnown)displayMemoChecked("states",
+        !std::memcmp(&checkedStates->depth,&stateMemo_.depth,sizeof(stateMemo_.depth)) &&
+        !std::memcmp(&checkedStates->blend,&stateMemo_.blend,sizeof(stateMemo_.blend)) &&
+        !std::memcmp(&checkedStates->raster,&stateMemo_.raster,sizeof(stateMemo_.raster)) &&
+        checkedStates->depthState==stateMemo_.depthState && checkedStates->blendState==stateMemo_.blendState &&
+        checkedStates->rasterState==stateMemo_.rasterState);
+    // Copies: the fog verification replays draws from inside this one, and
+    // each replayed draw rewrites stateMemo_.
+    const D3D11_DEPTH_STENCIL_DESC ds=stateMemo_.depth;const D3D11_RASTERIZER_DESC raster=stateMemo_.raster;
+    const UINT8 colorWriteMask=stateMemo_.blend.RenderTarget[0].RenderTargetWriteMask;
+    auto* const depthState=stateMemo_.depthState;auto* const blendState=stateMemo_.blendState;auto* const rasterState=stateMemo_.rasterState;
+    if(!bindingsValid_ || boundDepthState_!=depthState || boundStencil_!=a[124]) {
+        context_->OMSetDepthStencilState(depthState,a[124]);boundDepthState_=depthState;boundStencil_=a[124];
     }
-    if(blendStates_.size()>512)blendStates_.clear();
-    auto& blendState=blendStates_.entry(blend);
-    if(!blendState)check(device_->CreateBlendState(&blend,&blendState),"world blend state");
-    if(!bindingsValid_ || boundBlend_!=blendState.Get()) {
-        context_->OMSetBlendState(blendState.Get(),nullptr,~0u);boundBlend_=blendState.Get();
+    if(!bindingsValid_ || boundBlend_!=blendState) {
+        context_->OMSetBlendState(blendState,nullptr,~0u);boundBlend_=blendState;
     }
-    D3D11_RASTERIZER_DESC raster{};raster.FillMode=D3D11_FILL_SOLID;raster.CullMode=(flags&0x800)?D3D11_CULL_BACK:D3D11_CULL_NONE;
-    // Original822482CC sets face=1 (CW front) when culling is enabled
-    // without0x1000, and face=0 (CCW front) with0x1000. Disabling culling
-    // clears both cull and face bits, also defining the stencil front side.
-    raster.FrontCounterClockwise=!(flags&0x800) || (flags&0x1000)!=0;
-    raster.DepthClipEnable=TRUE;raster.ScissorEnable=(flags&0x20)!=0;raster.MultisampleEnable=sampleCount_>1;
-    if(!WorldRenderState::depthBias(flags,std::bit_cast<float>(word(a+100)),
-        std::bit_cast<float>(word(a+104)),scale_,raster))return rejected(11);
-    if(rasterStates_.size()>512)rasterStates_.clear();
-    auto& rasterState=rasterStates_.entry(raster);
-    if(!rasterState)check(device_->CreateRasterizerState(&raster,&rasterState),"world raster state");
-    if(!bindingsValid_ || boundRaster_!=rasterState.Get()) {context_->RSSetState(rasterState.Get());boundRaster_=rasterState.Get();}
+    if(!bindingsValid_ || boundRaster_!=rasterState) {context_->RSSetState(rasterState);boundRaster_=rasterState;}
     const auto leftTop=word(a+112),rightBottom=word(a+116);
     D3D11_RECT rect{LONG((leftTop&65535)*scale_),LONG((leftTop>>16)*scale_),LONG((rightBottom&65535)*scale_),LONG((rightBottom>>16)*scale_)};
     if(!bindingsValid_ || std::memcmp(&boundScissor_,&rect,sizeof(rect))) {context_->RSSetScissorRects(1,&rect);boundScissor_=rect;}
@@ -2487,11 +2996,29 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
     // MSAA diagnostic readbacks may draw depth/stencil transfer helpers. Only
     // the native geometry belongs in this material's pipeline statistics.
     if(measure)context_->Begin(queries_[material].Get());
-    context_->DrawIndexed(count,g.firstIndex,0);
+    // Screen-space depth fog: this draw stands for its whole run. If the pass
+    // cannot be set up, its own geometry is still drawn as captured.
+    static const bool fogVerifyMode=[]{const char* value=std::getenv("DARK_SCREEN_FOG_VERIFY");return value && *value=='1';}();
+    if(fogVerifyMode && !fogVerifyReplay_) {
+        const bool fogDraw=color && draw.fragmentName=="XREngine_DepthFog";
+        if(fogDraw && !fogVerifyOpen_)beginFogVerify(draw);
+        fogVerifyOpen_=fogDraw;
+        if(fogDraw && fogVerifySampled_ && draw.fogVerifyStay && !(draw.screenFog&4) && fogVerifyStay_.size()<4096)fogVerifyStay_.push_back(draw);
+    }
+    const bool fogVerify=(draw.screenFog&4)!=0 && !fogVerifyReplay_;
+    bool screenFog=draw.screenFog && !fogVerify && drawScreenFog(draw,fragmentFlags,ds,a[124],raster,color,false);
+    if(!screenFog)context_->DrawIndexed(count,g.firstIndex,0);
+    if(fogVerify) {
+        if(fogVerifySampled_ && color) {
+            finishFogVerify(draw,fragmentFlags,ds,a[124],raster,color);
+            screenFog=true; // Bindings are stale either way.
+        }
+        fogVerifyOpen_=false;
+    }
     if(measure) {context_->End(queries_[material].Get());queryPending_[material]=true;queryOrdinals_[material]=ordinal;}
     if(hasColor) {
-        auto& output=surfaces_.at(draw.surfaceKey(0));output.resolveDirty=bool(output.multisample);
-        if(blend.RenderTarget[0].RenderTargetWriteMask &&
+        auto& output=*colorSurface;output.resolveDirty=bool(output.multisample);
+        if(colorWriteMask &&
            (!blurRectEmpty(output.logicalBlurRegion) || (fragmentName=="XREngine_GaussClamped" && bloomControl.snap))) {
             // Prompt replacement can enlarge the rasterized quad. Its original
             // geometry bounds are no longer a conservative write footprint.
@@ -2505,17 +3032,17 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
             // quad and no conditional coverage, blending, bias or user clipping.
             if(quad && fragmentName=="XREngine_GaussClamped" && bloomControl.snap &&
                !(flags&(1u|6u|8u|0x800u|0x4000u|0x40000u)) && a[97]==8 &&
-               blend.RenderTarget[0].RenderTargetWriteMask==15 && !blurRectEmpty(written))
+               colorWriteMask==15 && !blurRectEmpty(written))
                 output.logicalBlurRegion=written;
         }
     }
-    if(depth) {auto& output=surfaces_.at(draw.surfaceKey(4));output.resolveDirty=output.stencilDirty=bool(output.multisample);}
+    if(depth) {auto& output=*depthSurface;output.resolveDirty=output.stencilDirty=bool(output.multisample);}
     if(otherWorldPass)captureOtherWorldDraw(draw,command,smokeOrdinal,otherWorldPass,true);
     if(captureFinal)captureFinalCompositeDraw(draw,command,smokeOrdinal,true);
     if(captureReflection)captureReflectionDraw(draw,command,smokeOrdinal,reflectionPass,true);
     if(captureProjector && shadowPass<8)captureShadow(draw,command,smokeOrdinal,shadowPass,true,views);
     if(captureFrame_)Native::traceWorldDrawResult(inspection_,command,smokeOrdinal,0,fragmentFlags,captureTextureMask,captureResolvedMask);
-    bindingsValid_=true;
+    bindingsValid_=!screenFog;
     if (inspectLighting) {
         const auto after=readSurface(draw,0);size_t changed=0,nonfinite=0;
         if (after.size()==beforeLighting.size()) for(size_t i=0;i+8<=after.size();i+=8) {
@@ -2545,7 +3072,17 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw) {
             inspection_,presentCount_,draw.fragmentName.c_str(),draw.fragmentFlags,draw.targets[0],nonzero,nonfinite,sum[0]/(pixels.size()/8),sum[1]/(pixels.size()/8),sum[2]/(pixels.size()/8),maximum[0],maximum[1],maximum[2],
             draw.fragmentConstants[0][0],draw.fragmentConstants[0][1],draw.fragmentConstants[0][2],draw.fragmentConstants[0][3]);
     }
-    timing(profileSubmit_);++profileDraws_;
+    // Next: a repeat of this WorldDraw needs only its geometry, unless this
+    // draw depended on its geometry beyond the buffers (prompt quad, blur
+    // footprint) or left bindings stale (fog).
+    static constexpr std::array<Native::EngineVector,1> identityQuad{Native::EngineVector{1,0,0,0}};
+    if(repeatShortPath && bindingsValid_ && !screenFog && !fogVerify && !fogVerifyOpen_ && !measure && !inspectLighting &&
+       !inspectFrame_ && !captureFrame_ && !std::memcmp(&viewportValues[1],identityQuad.data(),sizeof(identityQuad)) &&
+       (!hasColor || !colorWriteMask || (blurRectEmpty(colorSurface->logicalBlurRegion) &&
+        !(fragmentName=="XREngine_GaussClamped" && bloomControl.snap)))) {
+        shortPathDraw_=&draw;shortPathFormats_=g.vertices->formats;
+    }
+    timing(profileSubmit_);++profileDraws_;++workTotals_.draws;
     Native::recordWorldSubmission(draw.material);return true;
 }
 // Task-54 opt-in smoke evidence. Called only for accepted blended draws of
@@ -2763,27 +3300,68 @@ void WorldRendererD3D11::beginFrame() {
     bloom_ = graphics.bloom;
     motionBlur_ = graphics.motionBlur;
     invalidateBindings();
-    for(auto it=images_.begin();it!=images_.end();) {
-        if(it->second.source.use_count()==1) {imageBytes_-=it->second.bytes;it=images_.erase(it);} else ++it;
+    // Orphans are resources that only these caches still hold. Walking every
+    // entry of the three caches reads one shared reference count each, which
+    // the engine thread keeps writing; the complete walk therefore runs every
+    // 16th frame, and at once while the image cache is nearly full.
+    const bool completeSweep=(orphanSweep_++&15)==0;
+    if(completeSweep || imageBytes_>imageBudget_-imageBudget_/8) {
+        for(auto it=images_.begin();it!=images_.end();) {
+            if(it->second.source.use_count()==1) {imageBytes_-=it->second.bytes;it=images_.erase(it);} else ++it;
+        }
     }
     // Discard orphan images before pressure trims live LRU entries. No raw
     // last-draw binding identity survives eviction at this boundary; snapshots
     // and COM bindings retain their independent lifetimes.
     refreshImageBudget();
     // Immediate geometry is owned by a single frame. Do not retain thousands
-    // of obsolete snapshots or force scans of a full cache for every draw.
-    for(auto it=geometry_.begin();it!=geometry_.end();) {
-        if(it->second.source.use_count()==1+int(indices_.contains(it->first))) {
+    // of obsolete snapshots or force scans of a full cache for every draw:
+    // what draw() uploaded for it is checked every frame from its key lists.
+    const auto immediate=[](const Native::StoredGeometry& source) {return !source.address && !source.id;};
+    if(completeSweep) {
+        immediateVertices_.clear();immediateIndices_.clear();
+        for(auto it=geometry_.begin();it!=geometry_.end();) {
+            if(it->second.source.use_count()==1+int(indices_.contains(it->first))) {
+                transientBuffers_.recycle(it->second.buffer,it->second.transientCapacity,D3D11_BIND_VERTEX_BUFFER);
+                geometryBytes_-=it->second.bytes();it=geometry_.erase(it);
+            } else {
+                if(immediate(*it->second.source))immediateVertices_.push_back(it->first);
+                ++it;
+            }
+        }
+        for(auto it=indices_.begin();it!=indices_.end();) {
+            if(it->second.source.use_count()==1+int(geometry_.contains(it->first))) {
+                transientBuffers_.recycle(it->second.buffer,it->second.transientCapacity,D3D11_BIND_INDEX_BUFFER);
+                indexBytes_-=it->second.bytes();it=indices_.erase(it);
+            } else {
+                if(immediate(*it->second.source))immediateIndices_.push_back(it->first);
+                ++it;
+            }
+        }
+        return;
+    }
+    // Vertices first, as in the complete walk: an object cached as both is
+    // released by the second list once the first has let go of it.
+    size_t kept=0;
+    for(const auto* key:immediateVertices_) {
+        const auto it=geometry_.find(key);
+        if(it==geometry_.end())continue;
+        if(it->second.source.use_count()==1+int(indices_.contains(key))) {
             transientBuffers_.recycle(it->second.buffer,it->second.transientCapacity,D3D11_BIND_VERTEX_BUFFER);
-            geometryBytes_-=it->second.bytes();it=geometry_.erase(it);
-        } else ++it;
+            geometryBytes_-=it->second.bytes();geometry_.erase(it);
+        } else immediateVertices_[kept++]=key;
     }
-    for(auto it=indices_.begin();it!=indices_.end();) {
-        if(it->second.source.use_count()==1+int(geometry_.contains(it->first))) {
+    immediateVertices_.resize(kept);
+    kept=0;
+    for(const auto* key:immediateIndices_) {
+        const auto it=indices_.find(key);
+        if(it==indices_.end())continue;
+        if(it->second.source.use_count()==1+int(geometry_.contains(key))) {
             transientBuffers_.recycle(it->second.buffer,it->second.transientCapacity,D3D11_BIND_INDEX_BUFFER);
-            indexBytes_-=it->second.bytes();it=indices_.erase(it);
-        } else ++it;
+            indexBytes_-=it->second.bytes();indices_.erase(it);
+        } else immediateIndices_[kept++]=key;
     }
+    immediateIndices_.resize(kept);
 }
 ID3D11SamplerState* WorldRendererD3D11::sampler(const Native::WorldSampler& source) {
     D3D11_SAMPLER_DESC desc{};
@@ -2798,9 +3376,35 @@ ID3D11SamplerState* WorldRendererD3D11::sampler(const Native::WorldSampler& sour
     desc.MinLOD=source.minLevel;desc.MaxLOD=source.baseOnly?source.minLevel:source.maxLevel;
     desc.ComparisonFunc=D3D11_COMPARISON_NEVER;
     std::fill(std::begin(desc.BorderColor),std::end(desc.BorderColor),source.border?1.0f:0.0f);
-    if(samplerStates_.size()>512)samplerStates_.clear();
+    if(samplerStates_.size()>512)retireSamplerStates();
     auto& state=samplerStates_.entry(desc);
     if(!state)check(device_->CreateSamplerState(&desc,&state),"world sampler");
     return state.Get();
+}
+void WorldRendererD3D11::retireSamplerStates() {
+    // Samplers already chosen for the draw in progress live until it returns.
+    if(drawDepth_)samplerStates_.retire(retiredSamplers_);else samplerStates_.clear();
+    for(auto& memo:samplerMemo_)memo.state=nullptr;
+}
+ID3D11SamplerState* WorldRendererD3D11::slotSampler(unsigned slot,const Native::WorldSampler& source) {
+    auto& memo=samplerMemo_[slot];
+    const auto& last=memo.source;
+    if(memo.state && last.valid==source.valid && last.minLinear==source.minLinear && last.magLinear==source.magLinear &&
+       last.mipLinear==source.mipLinear && last.baseOnly==source.baseOnly && last.lodValid==source.lodValid &&
+       last.address==source.address && last.anisotropy==source.anisotropy && last.minLevel==source.minLevel &&
+       last.maxLevel==source.maxLevel && last.border==source.border && std::memcmp(&last.bias,&source.bias,sizeof(source.bias))==0) {
+        if(displayMemoCheck) {
+            // sampler() may empty the cache and with it this memo; compare first.
+            auto* const expected=memo.state;
+            auto* const fresh=sampler(source);
+            if(memo.state)displayMemoChecked("sampler",fresh==expected);
+            else {memo.source=source;memo.state=fresh;}
+        }
+        return memo.state;
+    }
+    // sampler() empties every memo when it empties the cache; record afterwards.
+    auto* const state=sampler(source);
+    memo.source=source;memo.state=state;
+    return state;
 }
 }

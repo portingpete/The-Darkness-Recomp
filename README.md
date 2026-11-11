@@ -38,7 +38,9 @@ the expected folder layout and help with startup problems.
 - Full gameplay with keyboard, mouse, and controller input, XMA audio, saves,
   and persistent achievement tracking.
 - Resolution, FOV, original Xbox gamma calibration and color profiles, bloom,
-  frame cap, VSync, FXAA/SMAA/MSAA antialiasing, and 16x texture filtering.
+  frame cap, VSync, FXAA/SMAA/MSAA antialiasing, 16x texture filtering, and a
+  draw distance for props in large open views (Near by default; Original restores
+  the unlimited original).
 - Remappable keys and mouse buttons, clickable menus, and adjustable subtitle size.
 - Language selection and support for the original disc revision and the
   [Russian localization identified in issue #37](https://github.com/portingpete/The-Darkness-Recomp/issues/37).
@@ -282,6 +284,7 @@ the problem. Do not post game files.
 - `Launch.cmd mute` — Play muted
 - `Launch.cmd preview` — Engine preview build (muted by default)
 - `Launch.cmd stutter` — Play with sound while recording slow-frame timings
+- `LaunchFrameDrops.cmd` (`Launch.cmd frame-drops`) — Short run that records every frame for frame-drop analysis
 - `Launch.cmd performance` / `render-profile` / `steady-60` — Diagnostic recording runs
 - `Launch.cmd help` — Full usage
 
@@ -297,7 +300,10 @@ then close the game. The newest `build_native/run/desktop-*/runtime.log` include
 `[WAIT]` details, and the largest slow-frame contributors. The launcher uses
 your saved game settings. Profiling is disabled by default; set
 `DARKRECOMP_STALL_PROFILE=1` to enable it for another launch, or use
-`tools/run_native.py --stall-profile` for a bounded development run. Build with
+`tools/run_native.py --stall-profile` for a bounded development run. Calls made
+for every world draw are not timed at level 1, so busy scenes keep their normal
+speed while profiled; `DARKRECOMP_STALL_PROFILE=2` times them too (about 20%
+slower engine frames in busy views). Build with
 `-DDARK_STALL_PROFILER=OFF` to exclude the profiler completely.
 
 </details>

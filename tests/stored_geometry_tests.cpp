@@ -1,4 +1,5 @@
 #include "renderer/engine/stored_geometry.h"
+#include "renderer/engine/screen_fog.h"
 #include "renderer/engine/simple_mesh.h"
 #include "renderer/engine/render_trace.h"
 #include "runtime/native/runtime.h"
@@ -349,6 +350,86 @@ static void attributeContracts(uint8_t* base, PPCContext initial) {
     std::printf("Stored attributes: %llu bit-exact float comparisons against original 82760598 across 13 formats, 4 slots, scaling and boundary/random values.\n",comparisons);
 }
 
+// drawFast() hands out references that own nothing. The cache keeps one owner
+// per entry and epoch until takePins() moves the epoch's owners to the caller.
+static void pinContracts(uint8_t* base) {
+    if(drawReferencesOwned)return; // The comparison switch restores owning references.
+    streams(base);
+    StoredGeometryCache cache(1024,2);
+    auto prepare=[&] {
+        initialize(base,40); auto upload=cache.begin(base,resource(40));
+        cache.vertices(upload,base,descriptor,destination,formats,constants,0);
+        cache.indices(upload,base,indexOutput,6,6); return upload;
+    };
+    require(cache.finish(prepare(),base),"Pin fixture upload was rejected");
+    const std::weak_ptr<const StoredGeometry> generation=cache.draw(base,40,40,0,3,indexBuffer).vertices;
+    require(!generation.expired(),"Pin fixture resource is not drawable");
+    StoredDraw first,second;
+    require(cache.drawFast(base,40,40,0,3,indexBuffer,first)==0 && cache.drawFast(base,40,40,3,3,indexBuffer,second)==0,
+            "Fast draw rejected a live stored resource");
+    require(first && first.pinEpoch==1 && second.pinEpoch==1 && first.vertices.use_count()==0 && first.indices.use_count()==0 &&
+            first.vertices.get()==generation.lock().get() && second.vertices==first.vertices && second.firstIndex==3,
+            "Fast draw did not hand out unowned references of the first epoch");
+    require(DarkRecomp::ownerOf(first.vertices).use_count()>0 && DarkRecomp::ownerOf(first.vertices)==generation.lock(),
+            "An unowned reference did not lead back to its owner");
+    std::vector<const StoredGeometry*> pinned;cache.pinnedNow(pinned);
+    require(pinned.size()==1 && pinned[0]==first.vertices.get(),"An entry was not pinned exactly once in its epoch");
+    // A replaced entry's pinned generation outlives the cache entry...
+    auto replacement=prepare();
+    require(!cache.draw(base,40,40,0,3,indexBuffer) && !generation.expired() && first.vertices->id==40 &&
+            first.indices->indices.size()==6,"Replacing an entry destroyed its pinned generation");
+    // ...until the owners that takePins() handed over are released.
+    std::vector<std::shared_ptr<const StoredGeometry>> owners;
+    require(cache.takePins(owners)==2 && owners.size()==1 && owners[0].get()==first.vertices.get(),
+            "takePins did not hand over the epoch's owners or start the next epoch");
+    pinned.clear();cache.pinnedNow(pinned);
+    require(pinned.empty() && !generation.expired(),"Handed-over owners were kept or lost");
+    first={};second={};owners.clear();
+    require(generation.expired(),"A released epoch kept a replaced generation");
+    // The next epoch pins the new generation again, appending to what the caller already holds.
+    require(cache.finish(std::move(replacement),base),"Pin fixture replacement was rejected");
+    StoredDraw third;
+    require(cache.drawFast(base,40,40,0,6,indexBuffer,third)==0 && third.pinEpoch==2 && third.vertices.use_count()==0,
+            "Fast draw did not pin in the new epoch");
+    owners.push_back(cache.draw(base,40,40,0,3,indexBuffer).vertices);
+    require(cache.takePins(owners)==3 && owners.size()==2 && owners[1].get()==third.vertices.get(),
+            "takePins did not append to owners the caller already holds");
+    std::puts("Stored pins: unowned fast references, one owner per entry and epoch, replacement safety and hand-over passed.");
+}
+
+// A queued record's element chain as the fog emitter reads it (82299EA0:
+// flag 8, next at +0, vertex id +8, triangles +10, kind +12, index id +16,
+// first index +18).
+static void queuedElementContracts(uint8_t* base) {
+    constexpr uint32_t record=fixture+0x1F000,chain=fixture+0x1F100;
+    std::memset(base+record,0,0x800);
+    auto element=[&](unsigned i,uint16_t vertices,int kind,uint16_t triangles,uint16_t indices,uint16_t first,bool last) {
+        const auto address=chain+i*32;
+        put32(base,address,last?0:address+32);put16(base,address+8,vertices);put16(base,address+10,triangles);
+        put16(base,address+12,uint16_t(kind));put16(base,address+16,indices);put16(base,address+18,first);
+    };
+    put16(base,record,8);put32(base,record+4,chain);
+    element(0,40,-4,2,41,6,false);element(1,0,7,9,9,9,false);element(2,42,-4,5,43,3,true);
+    std::array<ScreenFogQueuedElement,4> out{};size_t count=99;
+    require(screenFogQueuedElements(base,record,out.data(),out.size(),count) && count==3 &&
+            out[0].vertices==40 && out[0].indices==41 && out[0].triangles==2 && out[0].first==6 &&
+            out[1].vertices==0 && out[2].vertices==42 && out[2].indices==43 && out[2].triangles==5 && out[2].first==3,
+            "Queued element chain was not read as the original executes it");
+    require(!screenFogQueuedElements(base,record,out.data(),2,count),"A chain longer than the limit was accepted");
+    element(2,42,-3,5,43,3,true);
+    require(!screenFogQueuedElements(base,record,out.data(),out.size(),count),"A whole-resource element was accepted");
+    element(2,42,1,5,43,3,true);
+    require(!screenFogQueuedElements(base,record,out.data(),out.size(),count),"An immediate element was accepted");
+    element(2,42,-4,5,43,3,true);put16(base,record,0);
+    require(!screenFogQueuedElements(base,record,out.data(),out.size(),count),"A record without an element chain was accepted");
+    put16(base,record,8);put32(base,record+4,0);
+    require(!screenFogQueuedElements(base,record,out.data(),out.size(),count),"An empty chain was accepted");
+    put32(base,record+4,0xFFFFFFF0);
+    require(!screenFogQueuedElements(base,record,out.data(),out.size(),count) &&
+            !screenFogQueuedElements(base,0xFFFFFFFC,out.data(),out.size(),count),"An unreadable record or chain was accepted");
+    std::puts("Queued elements: order, skipped empty elements, limit, other element kinds and unreadable chains passed.");
+}
+
 static void indexedCacheContracts(uint8_t* base) {
     const auto area=memory->allocate(0x100000);
     require(area!=0,"Allocate resource index fixture");
@@ -489,8 +570,8 @@ int main(int argc,char** argv) {
         require(owner.commit(fixture,extent),"Cannot commit stored geometry fixture"); auto* base=owner.base();
         std::memset(base+fixture,0,extent);
         put32(base,context+160,manager); put32(base,manager+24,validity); put32(base,context+16636,table);
-        originalContracts(base,initial); cacheContracts(base); drawRouteContracts(base); attributeContracts(base,initial);
-        indexedCacheContracts(base); threadedContracts(base);
+        originalContracts(base,initial); cacheContracts(base); pinContracts(base); drawRouteContracts(base); attributeContracts(base,initial);
+        indexedCacheContracts(base); threadedContracts(base); queuedElementContracts(base);
         std::puts("StoredGeometryContract passed: original converter/copy/packed ABI, original attribute values, owned bytes, generation invalidation, actual IB binding, separate IB/VB ranges, cache budgets and concurrent draw/stream stability.");
         return 0;
     } catch(const std::exception& e) { std::fprintf(stderr,"StoredGeometryContract failed: %s\n",e.what()); return 1; }

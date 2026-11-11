@@ -1,0 +1,59 @@
+# The Darkness Recomp recording. It plays by itself from launch to exit:
+#   DarkRecomp.exe --test-skip-intros --test-input <a copy of this file> ...
+# (build_native\claude-play.cmd does this when BENCH_RECORDING names the file).
+# Three missions in one session with a short noclip look at each. A level change
+# replaces most stored geometry and decoded images while frames are in flight.
+wait world
+wait 2500
+dev open
+wait menu
+dev mission OW1_Village:ow1+layer1
+# The mission closes the panel; reopen it so the player state keeps updating.
+dev open
+wait player
+wait 3000
+dev noclip on
+dev invincible on
+dev close
+wait 3000
+capture
+74 300
+wait 2500
+87 1500
+wait 2500
+capture
+dev open
+wait menu
+dev mission NY1_Chinatown:ny1+layer1
+wait 9000
+dev open
+wait player
+wait 3000
+dev noclip on
+dev invincible on
+dev close
+wait 3000
+capture
+74 300
+wait 2500
+87 1500
+wait 2500
+capture
+dev open
+wait menu
+dev mission OW1_Hills:ow1+layer1
+wait 9000
+dev open
+wait player
+wait 3000
+dev noclip on
+dev invincible on
+dev close
+wait 3000
+capture
+74 300
+wait 2500
+87 1500
+wait 2500
+capture
+quit

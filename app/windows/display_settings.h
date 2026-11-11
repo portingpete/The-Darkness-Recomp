@@ -11,6 +11,11 @@ bool parseFieldOfView(std::wstring_view text, float& value) noexcept;
 float loadFieldOfView(const std::filesystem::path& path) noexcept;
 bool saveFieldOfView(const std::filesystem::path& path, float value) noexcept;
 Native::GraphicsSettings loadGraphicsSettings(const std::filesystem::path& path) noexcept;
+// [Display] DrawDistance in world units; 0 keeps the game's own ranges and a
+// missing or invalid value uses kDefaultDrawDistance (Near). Saving the other
+// display settings preserves it.
+unsigned loadDrawDistance(const std::filesystem::path& path) noexcept;
+bool saveDrawDistance(const std::filesystem::path& path, unsigned units) noexcept;
 bool saveDisplaySettings(const std::filesystem::path& path, float fov,
                          const Native::GraphicsSettings& settings) noexcept;
 // Save an explicit language selection together with display preferences.

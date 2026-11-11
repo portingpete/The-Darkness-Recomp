@@ -63,7 +63,7 @@ static void testWorldSourceRecovery(Memory& memory,const StoredDraw& world,uint3
         previewObserveWorld(base,world);const auto commands=finish();
         require(commands.size()==1 && commands[0].world && commands[0].world->fragmentName==fragment &&
                 commands[0].world->fragmentFlags==flags,"World source pass was lost during queue capture");
-        const auto draw=commands[0].world;
+        const auto draw=keepWorldDraw(commands,0); // Returned beyond its frame.
         const auto mask=worldFragmentTextureMask(fragment,flags);
         require(mask!=0xFFFF && draw->textureMask==mask,"World source fixture did not use a compiled original pass");
         return draw;

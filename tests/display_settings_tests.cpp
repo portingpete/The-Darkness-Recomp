@@ -1,5 +1,6 @@
 #include "app/windows/display_settings.h"
 #include "runtime/native/fov_settings.h"
+#include "runtime/native/draw_distance.h"
 #include "runtime/native/display_mode.h"
 #include "app/windows/display_options.h"
 #include <cmath>
@@ -348,7 +349,41 @@ int main() {
         check(relativeGuestFovDegrees(35, 0, 90) == 35, "unproven baseline cannot alter camera");
         setFieldOfViewSetting(0);
         setGraphicsSettings({});
-        std::puts("Display settings: persistence, validation, bloom, motion blur and FOV passed; no game or renderer used.");
+        // Draw distance: Near when nothing is saved, persisted beside the other
+        // display settings and preserved when those are saved again.
+        check(kDefaultDrawDistance == 1500 && loadDrawDistance(path) == kDefaultDrawDistance &&
+              drawDistanceSetting() == 0, "draw distance defaults to Near; the runtime starts at Original until set");
+        check(saveDrawDistance(path, 1500) && loadDrawDistance(path) == 1500, "draw distance round trip");
+        check(saveDisplaySettings(path, 0, GraphicsSettings{}) && loadDrawDistance(path) == 1500,
+              "saving display settings preserves draw distance");
+        check(!saveDrawDistance(path, kMaximumDrawDistance + 1) && loadDrawDistance(path) == 1500,
+              "out-of-range draw distance is rejected");
+        for (const auto text : {L"-5", L"1e3", L"65536", L"abc"}) {
+            WritePrivateProfileStringW(L"Display", L"DrawDistance", text, path.c_str());
+            check(loadDrawDistance(path) == kDefaultDrawDistance, "invalid saved draw distance falls back to the default");
+        }
+        check(saveDrawDistance(path, 0) && loadDrawDistance(path) == 0, "Original saves as zero");
+        check(setDrawDistanceSetting(2000) && drawDistanceSetting() == 2000 &&
+              !setDrawDistanceSetting(kMaximumDrawDistance + 1) && drawDistanceSetting() == 2000,
+              "draw distance setting validates");
+        setDrawDistanceSetting(0);
+        {
+            // Unlimited generic/object ranges become the configured distance.
+            uint32_t flags = 0x40000000u; float generic = 0, object = 0;
+            applyDrawDistance(flags, generic, object, 1000);
+            check(flags == (0x40000000u | kClientRangeGeneric | kClientRangeObject | kClientRangeAny) &&
+                  generic == 1000000.f && object == 1000000.f, "draw distance enables generic and object ranges");
+            // A level's shorter range stays; a longer one is shortened.
+            flags = kClientRangeGeneric | kClientRangeObject | kClientRangeAny;
+            generic = 500.f * 500.f; object = 4000.f * 4000.f;
+            applyDrawDistance(flags, generic, object, 1000);
+            check(generic == 250000.f && object == 1000000.f, "draw distance keeps shorter level ranges");
+            // Original leaves the context untouched, including character bits.
+            flags = 0x08; generic = 7; object = 9;
+            applyDrawDistance(flags, generic, object, 0);
+            check(flags == 0x08 && generic == 7 && object == 9, "Original draw distance changes nothing");
+        }
+        std::puts("Display settings: persistence, validation, bloom, motion blur, FOV and draw distance passed; no game or renderer used.");
         return 0;
     } catch (const std::exception& e) { std::fprintf(stderr, "%s\n", e.what()); return 1; }
 }

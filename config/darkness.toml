@@ -1,20 +1,117 @@
-# Correctness profile: preserve the full guest register state across calls.
-# Host compilation is still optimized; guest ABI shortcuts are disabled.
+# Register profile. Host compilation is optimized; guest state is kept in
+# PPCContext except where no native code or guest code can observe it:
+# - CTR, XER, the reservation and the condition registers never carry values
+#   across a call under the Xbox ABI (CR2-CR4 are callee-saved, which
+#   per-function locals preserve by construction), so every function keeps
+#   them in C++ locals.
+# - Non-volatile r14-r31, f14-f31, v14-v31 and v64-v127 are C++ locals in the
+#   game and Xbox runtime code below 0x82890000, so those functions no longer
+#   spill them to PPCContext or call the save/restore helpers. Code from
+#   0x82890000 on (C runtime, SDK libraries with SEH funclets, setjmp, the
+#   hand-written vector codecs that pass values in v64+) keeps them in the
+#   context, as do the listed setjmp callers. A local function never writes
+#   these context fields, so context-mode callers still see them preserved.
+#   Native overrides that read a caller's non-volatile register get it
+#   published at that call site with [[register_sync]] below.
+# - r0, r2, r11, r12, f0 and v32-v63 are C++ locals in the same functions.
+#   Their only cross-call uses are the elided save/restore helpers and the
+#   stack probe at 829B8B64, which gets r12 published by [[register_sync]].
+# - Loads and stores addressed from r1 are guest stack accesses and skip the
+#   null-page and MMIO checks (unchecked_stack_accesses).
 [main]
 file_path = "../Darkness/default.xex"
 switch_table_file_path = "../Darkness/darkness_switch_tables.toml"
 skip_lr = false
 skip_msr = false
-ctr_as_local = false
-xer_as_local = false
-reserved_as_local = false
-cr_as_local = false
+ctr_as_local = true
+xer_as_local = true
+reserved_as_local = true
+cr_as_local = true
+unchecked_stack_accesses = true
 non_argument_as_local = false
 non_volatile_as_local = false
 savegprlr_14_address = 0x828999F0
 restgprlr_14_address = 0x82899A40
 savefpr_14_address = 0x8289A190
 restfpr_14_address = 0x8289A1DC
+savevmx_14_address = 0x829B8C70
+savevmx_64_address = 0x829B8D04
+restvmx_14_address = 0x829B8F08
+restvmx_64_address = 0x829B8F9C
+non_volatile_local_ranges = [[0x820C0000, 0x82890000]]
+# libpng setjmp callers: setjmp (829B93E0) stores the caller's context registers.
+# 82133DD8: player control handler; DeveloperToolsContract reads its movement
+# vector registers at the original collision boundary.
+non_volatile_context_functions = [0x827CC6B8, 0x827CC910, 0x827CCBE8, 0x827FF8C8, 0x828037A0,
+                                  0x82133DD8]
+# 824CD220 branches to 824CD2A4 with r11 still live.
+non_argument_local_ranges = [[0x820C0000, 0x82890000]]
+non_argument_context_functions = [0x824CD220, 0x824CD2A4]
+
+# Stack probe: reads the requested frame size in r12 from every caller.
+[[register_sync]]
+target = 0x829B8B64
+registers = ["r12"]
+
+# Native overrides that read the calling function's non-volatile registers
+# (see renderer/engine/render_trace.cpp and runtime/native/kernel.cpp). The
+# generator copies these caller locals into PPCContext for the bl and then
+# restores the previous context values.
+# Resource-job dependency wait (828AC000 via 828A7CF0): r30 record, r31 queue.
+[[register_sync]]
+address = 0x8222CD2C
+registers = ["r30", "r31"]
+
+# Stored geometry uploads: r22 is the resource for vertices and indices.
+[[register_sync]]
+address = 0x82252C80
+registers = ["r22"]
+
+[[register_sync]]
+address = 0x82252DD0
+registers = ["r22"]
+
+[[register_sync]]
+address = 0x82253428
+registers = ["r22"]
+
+# Immediate world draw (82868FE8): r30 holds the index data.
+[[register_sync]]
+address = 0x8225DD34
+registers = ["r30"]
+
+# Texture image preparation (828AE188): r29 image, r14 level data.
+[[register_sync]]
+address = 0x82257C14
+registers = ["r29"]
+
+[[register_sync]]
+address = 0x82258F14
+registers = ["r29", "r14"]
+
+# Frame-queue trace (render trace mode): r31 owner, r26 context.
+[[register_sync]]
+address = 0x820E2830
+registers = ["r31", "r26"]
+
+# Flashback layout (82347838): r27 mode.
+[[register_sync]]
+address = 0x8216DC14
+registers = ["r27"]
+
+# Subtitle metrics (8234A0C8): r19 scope context.
+[[register_sync]]
+address = 0x8234CD88
+registers = ["r19"]
+
+# Menu label fit (8234C7E0): r14 icon scale, r26 alignment, f29 width.
+[[register_sync]]
+address = 0x8236E06C
+registers = ["r14", "r26", "f29"]
+
+[[register_sync]]
+address = 0x8236E0C0
+registers = ["r14", "r26", "f29"]
 
 # Optional DARK_XMA_ORIGIN_PROBE=1 diagnostic: copy original source-opener
 # registers within the retained streamed-load scope. No guest reads or writes

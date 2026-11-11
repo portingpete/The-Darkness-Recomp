@@ -8,6 +8,7 @@ rem   performance    - record an engine profile log for analysis
 rem   render-profile - record a render-thread profile log for analysis
 rem   steady-60      - one run with a 60 FPS ceiling plus a smoothness log
 rem   stutter        - play with sound while recording slow-frame timings
+rem   frame-drops    - short run recording every frame's timings for frame-drop analysis
 rem Extra arguments are forwarded to the game, e.g. Launch.cmd play --fps 120
 setlocal DisableDelayedExpansion
 cd /d "%~dp0"
@@ -15,7 +16,7 @@ set "GAME_DIR=%~dp0Darkness"
 
 set "MODE=play"
 if not "%~1"=="" (
-    for %%M in (play mute preview performance render-profile steady-60 stutter check) do (
+    for %%M in (play mute preview performance render-profile steady-60 stutter frame-drops check) do (
         if /i "%~1"=="%%M" set "MODE=%~1"
     )
     if /i "%~1"=="help" goto usage
@@ -50,6 +51,7 @@ if /i "%MODE%"=="performance" goto performance
 if /i "%MODE%"=="render-profile" goto render_profile
 if /i "%MODE%"=="steady-60" goto steady_60
 if /i "%MODE%"=="stutter" goto stutter
+if /i "%MODE%"=="frame-drops" goto frame_drops
 goto usage
 
 :play
@@ -153,6 +155,40 @@ echo If the game stuttered, send "%~dp0%STUTTER_LOG%" for analysis.
 pause
 exit /b %STUTTER_EXIT%
 
+:frame_drops
+if not exist "build_native\Release\DarkRecomp.exe" goto missing
+if not exist "build_native\run" mkdir "build_native\run"
+:choose_drop_dir
+set "DROP_DIR=build_native\run\frame-drops-%RANDOM%-%RANDOM%"
+if exist "%DROP_DIR%" goto choose_drop_dir
+mkdir "%DROP_DIR%"
+rem Per-frame CSV plus runtime stall attribution, for this run only.
+set "DARKRECOMP_STALL_PROFILE=1"
+echo Frame-drop capture: plays WITH sound using your saved graphics settings.
+echo Every frame's timings are recorded; the overhead is small.
+echo.
+echo 1. Resume your game and go to the area where frames drop.
+echo 2. Play normally for 1-2 minutes. Press F9 right after each drop you notice.
+echo 3. Close the game normally when finished.
+echo.
+echo Intro videos are skipped automatically until gameplay starts.
+echo Recording to "%DROP_DIR%"
+"build_native\Release\DarkRecomp.exe" --game-dir "%~dp0Darkness" --engine-preview --timeout-ms 0 --trace-frame-hitches --test-skip-intros --frame-timeline "%DROP_DIR%\frames.csv" %REST% > "%DROP_DIR%\game.log" 2>&1
+set "DROP_EXIT=%ERRORLEVEL%"
+echo.
+echo Recording finished. Game exit code: %DROP_EXIT%
+findstr /l /c:"[FrameDropSummary]" "%DROP_DIR%\game.log"
+set "DROP_PYTHON="
+where python >nul 2>nul && set "DROP_PYTHON=python"
+if not defined DROP_PYTHON where py >nul 2>nul && set "DROP_PYTHON=py -3"
+if exist "%~dp0tools\analyze_frame_drops.py" if defined DROP_PYTHON (
+    %DROP_PYTHON% "%~dp0tools\analyze_frame_drops.py" "%DROP_DIR%" > "%DROP_DIR%\report.txt" 2>&1
+    if exist "%DROP_DIR%\report.txt" echo Analysis saved: "%~dp0%DROP_DIR%\report.txt"
+)
+echo Send the whole folder "%~dp0%DROP_DIR%" for analysis.
+pause
+exit /b %DROP_EXIT%
+
 :missing
 echo The game program is missing from this folder.
 echo Extract the ENTIRE Windows release ZIP, then run Launch.cmd again.
@@ -194,6 +230,7 @@ echo   performance     Record an engine profile log for analysis.
 echo   render-profile  Record a render-thread profile log for analysis.
 echo   steady-60       One run with a 60 FPS ceiling plus a smoothness log.
 echo   stutter         Play with sound while recording slow-frame timings.
+echo   frame-drops     Short run that records every frame for frame-drop analysis; F9 marks a drop.
 echo   check           Check that the program and game files are present.
 echo.
 echo Examples:
@@ -201,4 +238,5 @@ echo   Launch.cmd
 echo   Launch.cmd mute
 echo   Launch.cmd play --fps 120
 echo   Launch.cmd stutter
+echo   Launch.cmd frame-drops
 exit /b 0

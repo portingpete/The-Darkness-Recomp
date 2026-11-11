@@ -46,13 +46,40 @@ NativeLayerResult currentEngineVertexBindingFast(uint8_t* base, EngineVertexBind
 std::shared_ptr<WorldDraw> captureWorldDrawFast(uint8_t* base, const EngineVertexBindingState& binding,
                                                 StoredDraw& geometry) noexcept;
 // Field-by-field (bitwise for floats) comparison for the check mode.
-bool sameCapturedWorldDraw(const WorldDraw& a, const WorldDraw& b, const char*& field) noexcept;
+// stateOnly leaves out the geometry and the images attached when a draw is queued.
+bool sameCapturedWorldDraw(const WorldDraw& a, const WorldDraw& b, const char*& field, bool stateOnly = false) noexcept;
 // Queue an already captured draw through the unchanged budget/queue code.
 void previewQueueCapturedWorld(uint8_t* base, std::shared_ptr<WorldDraw> draw);
 // The complete stored-draw observation: native layer with exact fallback.
 void nativeLayerObserveStoredDraw(uint8_t* base, const StoredDrawRequest& request, uint32_t returnAddress,
                                   uint32_t primitive, uint32_t baseVertex, uint32_t first, uint32_t count,
                                   uint32_t boundVertexId, uint32_t boundIndexBuffer) noexcept;
+// Screen-space depth fog (screen_fog.h): true when the fog draw about to be
+// issued belongs to the held run, so neither it nor the original indexed draw
+// needs to be observed.
+bool screenFogAbsorb(uint8_t* base, uint32_t vertices, uint32_t indices, uint32_t first, uint32_t count) noexcept;
+// The game queues most fog draws as records of many elements that share one
+// set of attributes and one transform (82299EA0 called from 825A2E18, one
+// 8225E2F0 per element). Once the indexed draw of one element has been
+// absorbed, the device state and the fog mapping that decision compared are
+// those of every later element of the record: preparing another element only
+// rebinds geometry. Such an element is therefore decided before the game
+// prepares it, by its geometry alone (screen_fog.h: late twins are executed).
+// screenFogEmitterBegin: nonzero when the caller executes the record's
+// elements itself; elements and count describe them. For each element with a
+// vertex resource the caller asks screenFogEmitterSkip (true: do not execute
+// it), executes it through 8225E2F0 otherwise and then calls
+// screenFogEmitterExecuted. The indexed draw reports its own decision in
+// between (screenFogEmitterObserved).
+struct ScreenFogQueuedElement;
+bool screenFogEmitterBegin(uint8_t* base, uint32_t record, const ScreenFogQueuedElement*& elements, size_t& count) noexcept;
+bool screenFogEmitterSkip(const ScreenFogQueuedElement& element) noexcept;
+void screenFogEmitterObserved(bool absorbed) noexcept;
+void screenFogEmitterExecuted() noexcept;
+void screenFogEmitterEnd() noexcept; // After the record's last element.
+// How often this thread has run the game's vertex program preparation
+// (82248C80), which rewrites the retained vertex binding and its constants.
+uint64_t engineVertexProgramPrepares() noexcept;
 void printNativeLayerCounters();
 // v1b: retained vertex binding after 82248C80 with direct loads (exact fallback), the immediate
 // world path through the fast binding/snapshot, and check-mode reporting for both.

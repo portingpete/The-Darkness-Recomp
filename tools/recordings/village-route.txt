@@ -1,0 +1,38 @@
+# The Darkness Recomp recording. It plays by itself from launch to exit:
+#   DarkRecomp.exe --test-skip-intros --test-input <a copy of this file> ...
+# (build_native\claude-play.cmd does this when BENCH_RECORDING names the file).
+# Chapter 2 village: the spawn view, a climb above the roofs, five aerial views.
+wait world
+wait 2500
+dev open
+wait menu
+dev mission OW1_Village:ow1+layer1
+# The mission closes the panel; reopen it so the player state keeps updating.
+dev open
+wait player
+wait 3000
+dev noclip on
+dev invincible on
+dev close
+wait 5000
+capture
+mouse 0 -20
+87 4000
+wait 7000
+capture
+mouse 0 30
+wait 9000
+capture
+74 300
+wait 9500
+capture
+74 300
+wait 9500
+capture
+74 300
+wait 9500
+capture
+74 300
+wait 9500
+capture
+quit

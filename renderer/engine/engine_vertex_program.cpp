@@ -419,9 +419,14 @@ void printEngineVertexProgramCounters() {
         bindings[2],bindings[0],bindings[1]);
 }
 }
+namespace DarkRecomp::Native {
+namespace { thread_local uint64_t vertexProgramPrepares = 0; }
+uint64_t engineVertexProgramPrepares() noexcept { return vertexProgramPrepares; }
+}
 extern "C" PPC_FUNC(__imp__sub_82248C80);
 PPC_FUNC(sub_82248C80) {
-    DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::Section::Guest, "sub_82248C80", 0x82248C80, uint32_t(ctx.lr));
+    ++DarkRecomp::Native::vertexProgramPrepares;
+    DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::hot, DarkRecomp::Native::StallProfiler::Section::Guest, "sub_82248C80", 0x82248C80, uint32_t(ctx.lr));
     DarkRecomp::Native::EngineCpuScope profile(DarkRecomp::Native::EnginePhase::vertexProgram);
     using namespace DarkRecomp::Native;
     if(enginePreviewEnabled() && !renderTraceEnabled()) {

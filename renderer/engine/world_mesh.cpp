@@ -1,5 +1,6 @@
 #include "world_mesh.h"
 #include "native_layer.h"
+#include "screen_fog.h"
 #include "engine_performance.h"
 #include "scene_work.h"
 #include "thread_counters.h"
@@ -232,11 +233,15 @@ void recycleWorldDraw(WorldDraw* raw) noexcept {
     if(!raw) return;
     auto* pooled = static_cast<PooledWorldDraw*>(raw);
     try {
+        pooled->screenFog = 0;
+        pooled->fogVerifyStay = 0;
+        pooled->fogDepthSnapshot = false;
         // Release shared ownership promptly so textures/geometry can evict.
         // String clear retains capacity for the next fragment name.
         pooled->fragmentName.clear();
         pooled->geometry.vertices.reset();
         pooled->geometry.indices.reset();
+        pooled->geometry.pinEpoch = 0;
         if (pooled->fastTracked) {
             for (uint32_t m = pooled->dirtyTextureMask; m != 0; m &= m - 1) {
                 const unsigned s = std::countr_zero(m);
@@ -957,7 +962,7 @@ bool snapshotImmediateWorldGeometry(uint8_t* base,uint32_t descriptor,uint32_t i
         if(!retainedIndices)return fail(Stage::retainIndices);
         // Commit only after retention succeeds; avoid a large StoredDraw temporary.
         output.vertices=std::move(stored);output.indices=std::move(retainedIndices);
-        output.firstIndex=0;output.indexCount=count;
+        output.firstIndex=0;output.indexCount=count;output.pinEpoch=0; // Both references own their snapshot.
         output.transforms.reset();output.vertexBindings.reset();
         if(usedRecovery) {
             ++immediateCanonicalRecovered;
@@ -1621,14 +1626,14 @@ static bool snapshotWorldDrawInto(uint8_t* base,const StoredDraw& geometry,World
 bool snapshotWorldDraw(uint8_t* base,const StoredDraw& geometry,WorldDraw& output) noexcept {
     WorldDraw result;
     if(!snapshotWorldDrawInto(base,geometry,result))return false;
-    result.geometry={geometry.vertices,geometry.indices,geometry.firstIndex,geometry.indexCount};
+    result.geometry={geometry.vertices,geometry.indices,geometry.firstIndex,geometry.indexCount,geometry.pinEpoch};
     output=std::move(result);return true;
 }
 std::shared_ptr<WorldDraw> captureWorldDraw(uint8_t* base,const StoredDraw& geometry) noexcept {
     try {
         auto result=acquireWorldDraw();
         if(snapshotWorldDrawInto(base,geometry,*result)) {
-            result->geometry={geometry.vertices,geometry.indices,geometry.firstIndex,geometry.indexCount};
+            result->geometry={geometry.vertices,geometry.indices,geometry.firstIndex,geometry.indexCount,geometry.pinEpoch};
             return result;
         }
     }catch(...){}
@@ -1641,7 +1646,7 @@ std::shared_ptr<WorldDraw> captureWorldDraw(uint8_t* base,StoredDraw&& geometry)
             // Guest validation is complete. Failed captures retain the caller's
             // references; successful captures transfer their ownership once.
             result->geometry={std::move(geometry.vertices),std::move(geometry.indices),
-                              geometry.firstIndex,geometry.indexCount};
+                              geometry.firstIndex,geometry.indexCount,geometry.pinEpoch};
             return result;
         }
     }catch(...){}
@@ -1840,12 +1845,146 @@ __attribute__((hot)) std::shared_ptr<WorldDraw> captureWorldDrawFast(uint8_t* ba
         else if (scratch.fixedName) pooled->fragmentName = scratch.fixedName;
         incrementWorldCounter(0);
         incrementWorldCounter(1);
-        pooled->geometry = {std::move(geometry.vertices), std::move(geometry.indices), geometry.firstIndex, geometry.indexCount};
+        pooled->geometry = {std::move(geometry.vertices), std::move(geometry.indices), geometry.firstIndex, geometry.indexCount,
+                            geometry.pinEpoch};
         return result;
     } catch (...) {}
     return {};
 }
-bool sameCapturedWorldDraw(const WorldDraw& a, const WorldDraw& b, const char*& field) noexcept {
+// NATIVE_LAYER: screen-space depth fog (screen_fog.h), engine side.
+namespace {
+__declspec(noinline) bool guardedScreenFogRaw(const uint8_t* base, uint32_t device, uint32_t textureMask,
+                                              ScreenFogRawState& out) noexcept {
+#ifdef _WIN32
+    __try {
+        std::memcpy(out.attributes.data(), base + context + 16896, 160);
+        std::memset(out.attributes.data() + 76, 0, 4);
+        std::memcpy(out.viewport.data(), base + context + 17152, 24);
+        std::memcpy(out.objects.data(), base + device + 12432, 20);
+        std::memcpy(out.state.data(), base + device + 10368, 24);
+        const uint32_t program = word(out.attributes.data());
+        if (!program || !nativeGuestRange(program, 20)) return false;
+        const uint32_t vectors = gword(base, program + 16) & 255u;
+        out.fragmentBytes = (vectors < 4 ? vectors : 4u) * 16;
+        std::memcpy(out.fragment.data(), base + device + 6016, out.fragmentBytes);
+        out.textureMask = textureMask & 3u;
+        for (unsigned s = 0; s < 2; ++s) if (out.textureMask & (1u << s)) {
+            std::memcpy(out.samplers.data() + s * 24, base + device + 1152 + s * 24, 24);
+            std::memcpy(out.bound.data() + s * 4, base + device + 12536 + s * 4, 4);
+        }
+        out.clipControl = gword(base, device + 10564);
+        return true;
+    } __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION || GetExceptionCode() == EXCEPTION_IN_PAGE_ERROR
+                ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+        return false;
+    }
+#else
+    return false;
+#endif
+}
+__declspec(noinline) bool guardedScreenFogProgram(const uint8_t* base, const EngineVertexBindingState& binding,
+                                                  WorldVertexOptions& options, WorldVertexConstants& constants) noexcept {
+#ifdef _WIN32
+    __try { return prepareWorldVertexProgramInto(binding, base + binding.deviceAddress + 1920, true, options, constants); }
+    __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION || GetExceptionCode() == EXCEPTION_IN_PAGE_ERROR
+              ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+        return false;
+    }
+#else
+    return false;
+#endif
+}
+bool screenFogSameState(const WorldDraw& a, const WorldDraw& b) noexcept {
+    if (a.targets != b.targets || a.viewport != b.viewport || a.material != b.material || a.fragmentFlags != b.fragmentFlags ||
+        a.fragmentName != b.fragmentName || a.textureMask != b.textureMask || a.clipPlanes.control != b.clipPlanes.control ||
+        std::memcmp(&a.depthRange, &b.depthRange, sizeof(a.depthRange)) ||
+        std::memcmp(a.attributes.data(), b.attributes.data(), 76) ||
+        std::memcmp(a.attributes.data() + 80, b.attributes.data() + 80, 80) ||
+        std::memcmp(a.fragmentConstants.data(), b.fragmentConstants.data(), 4 * sizeof(EngineVector))) return false;
+    for (unsigned i = 0; i < a.surfaceBindings.size(); ++i)
+        if (a.surfaceBindings[i].layout != b.surfaceBindings[i].layout || a.surfaceBindings[i].info != b.surfaceBindings[i].info ||
+            a.surfaceBindings[i].completed != b.surfaceBindings[i].completed) return false;
+    for (unsigned s = 0; s < 2; ++s) {
+        const auto& x = a.textureObjects[s]; const auto& y = b.textureObjects[s];
+        const auto& p = a.samplers[s]; const auto& q = b.samplers[s];
+        if (a.textureIds[s] != b.textureIds[s] || a.textures[s].get() != b.textures[s].get() ||
+            x.object != y.object || x.storage != y.storage || x.width != y.width || x.height != y.height || x.format != y.format ||
+            x.exponent != y.exponent || x.faces != y.faces || x.mipLevels != y.mipLevels || x.firstMip != y.firstMip ||
+            p.valid != q.valid || p.minLinear != q.minLinear || p.magLinear != q.magLinear || p.mipLinear != q.mipLinear ||
+            p.baseOnly != q.baseOnly || p.lodValid != q.lodValid || p.address != q.address || p.anisotropy != q.anisotropy ||
+            p.minLevel != q.minLevel || p.maxLevel != q.maxLevel || p.border != q.border ||
+            std::memcmp(&p.bias, &q.bias, sizeof(p.bias))) return false;
+    }
+    return true;
+}
+}
+int screenFogReferenceFrom(const uint8_t* base, const EngineVertexBindingState& binding, const WorldDraw& draw,
+                           ScreenFogReference& out) noexcept {
+    const uint32_t device = binding.deviceAddress;
+    if (!device || uint64_t(device) + 12600 > 0x100000000ull) return 1;
+    if (draw.material != WorldMaterial::post || draw.fragmentName != "XREngine_DepthFog" || draw.fragmentFlags > 3) return 2;
+    const auto* a = draw.attributes.data();
+    const uint32_t flags = word(a + 92);
+    // Depth EQUAL without writes; no alpha-to-coverage, scissor or alpha test.
+    if ((flags & 0x27u) != 2u || a[96] != 3 || a[97] != 8) return 3;
+    // One-sided stencil: EQUAL, keep on either failure, saturating increment
+    // on pass, full masks. The increment keeps the pass off pixels that a
+    // per-object fog draw of the same run already covered.
+    if (!(flags & 0x4000u) || (flags & 0x80u) || a[120] != 0x30 || (a[121] & 0x77) != 0x03 || a[125] != 0xFF || a[126] != 0xFF) return 4;
+    if (!draw.viewport[2] || !draw.viewport[3] || !(std::abs(draw.depthRange[1] - draw.depthRange[0]) > 0)) return 6;
+    if (!screenFogMappingFrom(draw.options, draw.constants, out.mapping)) return 7;
+    out.raw = {};
+    if (!guardedScreenFogRaw(base, device, draw.textureMask, out.raw)) return 8;
+    out.device = device;
+    return 0;
+}
+bool screenFogQueuedElements(const uint8_t* base, uint32_t record, ScreenFogQueuedElement* out, size_t limit,
+                             size_t& count) noexcept {
+#ifdef _WIN32
+    __try {
+        count = 0;
+        if (!nativeGuestRange(record, 8) || !(nativeGuest16(base, record) & 8)) return false;
+        for (uint32_t element = gword(base, record + 4); element; element = gword(base, element)) {
+            if (count == limit || !nativeGuestRange(element, 20)) return false;
+            auto& item = out[count++];
+            item.vertices = nativeGuest16(base, element + 8);
+            if (!item.vertices) continue;
+            if (int16_t(nativeGuest16(base, element + 12)) != -4) return false;
+            item.triangles = nativeGuest16(base, element + 10);
+            item.indices = nativeGuest16(base, element + 16);
+            item.first = nativeGuest16(base, element + 18);
+        }
+        return count != 0;
+    } __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION || GetExceptionCode() == EXCEPTION_IN_PAGE_ERROR
+                ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+        return false;
+    }
+#else
+    return false;
+#endif
+}
+bool screenFogRawMatches(const uint8_t* base, const ScreenFogReference& reference) noexcept {
+    ScreenFogRawState raw{};
+    return reference.device && guardedScreenFogRaw(base, reference.device, reference.raw.textureMask, raw) &&
+           std::memcmp(&raw, &reference.raw, sizeof(raw)) == 0;
+}
+bool screenFogMatches(const uint8_t* base, const EngineVertexBindingState& binding, const ScreenFogReference& reference) noexcept {
+    if (binding.deviceAddress != reference.device) return false;
+    thread_local WorldVertexOptions options;
+    thread_local WorldVertexConstants constants;
+    return guardedScreenFogProgram(base, binding, options, constants) && !screenFogConstantDepth(constants) &&
+           screenFogConsistent(options, constants, reference.mapping, screenFogTolerance);
+}
+bool screenFogRebase(const uint8_t* base, const EngineVertexBindingState& binding, const WorldDraw& held,
+                     const WorldDraw& draw, ScreenFogReference& reference) noexcept {
+    if (binding.deviceAddress != reference.device || !screenFogSameState(held, draw) || screenFogConstantDepth(draw.constants) ||
+        !screenFogConsistent(draw.options, draw.constants, reference.mapping, screenFogTolerance)) return false;
+    ScreenFogRawState raw{};
+    if (!guardedScreenFogRaw(base, reference.device, draw.textureMask, raw)) return false;
+    reference.raw = raw;
+    return true;
+}
+bool sameCapturedWorldDraw(const WorldDraw& a, const WorldDraw& b, const char*& field, bool stateOnly) noexcept {
     auto bytes = [](const auto& x, const auto& y) { return std::memcmp(&x, &y, sizeof(x)) == 0; };
     auto check = [&](bool equal, const char* name) { if (!equal && !field) field = name; return equal; };
     field = nullptr;
@@ -1854,7 +1993,7 @@ bool sameCapturedWorldDraw(const WorldDraw& a, const WorldDraw& b, const char*& 
     for (unsigned i = 0; i < a.surfaceBindings.size(); ++i)
         same &= check(a.surfaceBindings[i].layout == b.surfaceBindings[i].layout && a.surfaceBindings[i].info == b.surfaceBindings[i].info &&
                       a.surfaceBindings[i].completed == b.surfaceBindings[i].completed, "surfaceBindings");
-    same &= check(a.geometry.vertices.get() == b.geometry.vertices.get() && a.geometry.indices.get() == b.geometry.indices.get() &&
+    if (!stateOnly) same &= check(a.geometry.vertices.get() == b.geometry.vertices.get() && a.geometry.indices.get() == b.geometry.indices.get() &&
                   a.geometry.firstIndex == b.geometry.firstIndex && a.geometry.indexCount == b.geometry.indexCount, "geometry");
     same &= check(a.options == b.options, "options");
     same &= check(bytes(a.constants.vectors, b.constants.vectors), "constants.vectors");
@@ -1878,7 +2017,7 @@ bool sameCapturedWorldDraw(const WorldDraw& a, const WorldDraw& b, const char*& 
         same &= check(p.valid == q.valid && p.minLinear == q.minLinear && p.magLinear == q.magLinear && p.mipLinear == q.mipLinear &&
                       p.baseOnly == q.baseOnly && p.lodValid == q.lodValid && p.address == q.address && p.anisotropy == q.anisotropy &&
                       p.minLevel == q.minLevel && p.maxLevel == q.maxLevel && p.border == q.border && bytes(p.bias, q.bias), "samplers");
-        same &= check(a.textures[s].get() == b.textures[s].get(), "textures");
+        if (!stateOnly) same &= check(a.textures[s].get() == b.textures[s].get(), "textures");
     }
     same &= check(a.promptContext == b.promptContext, "promptContext");
     same &= check(a.subtitle == b.subtitle, "subtitle");

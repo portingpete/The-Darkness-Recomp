@@ -270,6 +270,30 @@ class RecompileTests(unittest.TestCase):
         self.assertEqual(chunk.stat().st_mtime_ns, saved_time)
         self.assertEqual(unrelated.read_text(), 'keep this file\n')
 
+    def test_register_options_and_tables_reach_the_generator(self):
+        (self.root / 'config/darkness.toml').write_text(
+            '[main]\nfile_path = "../Darkness/default.xex"\n'
+            'switch_table_file_path = "../Darkness/darkness_switch_tables.toml"\n'
+            'non_volatile_local_ranges = [[0x820C0000, 0x82890000]]\n'
+            'non_volatile_context_functions = [0x827CC6B8]\n'
+            'non_argument_local_ranges = [[0x820C0000, 0x82890000]]\n'
+            'non_argument_context_functions = [0x824CD220]\n'
+            'unchecked_stack_accesses = true\n'
+            '\n[[midasm_hook]]\nname = "Hook"\naddress = 0x82000010\nregisters = ["r31"]\n'
+            '\n[[register_sync]]\naddress = 0x82000020\nregisters = ["r30", "f29"]\n'
+            '\n[[register_sync]]\ntarget = 0x829B8B64\nregisters = ["r12"]\n'
+        )
+        self.assertEqual(self.regenerate(), 0)
+        generated = tomllib.loads((self.out / 'generation.toml').read_text())
+        self.assertEqual(generated['main']['non_volatile_local_ranges'], [[0x820C0000, 0x82890000]])
+        self.assertEqual(generated['main']['non_volatile_context_functions'], [0x827CC6B8])
+        self.assertEqual(generated['main']['non_argument_local_ranges'], [[0x820C0000, 0x82890000]])
+        self.assertEqual(generated['main']['non_argument_context_functions'], [0x824CD220])
+        self.assertIs(generated['main']['unchecked_stack_accesses'], True)
+        self.assertEqual(generated['midasm_hook'], [{'name': 'Hook', 'address': 0x82000010, 'registers': ['r31']}])
+        self.assertEqual(generated['register_sync'], [{'address': 0x82000020, 'registers': ['r30', 'f29']},
+                                                      {'target': 0x829B8B64, 'registers': ['r12']}])
+
     def test_semantic_diagnostics_still_require_explicit_opt_in(self):
         self.diagnostics = 2
         with self.assertRaisesRegex(RuntimeError, '2 unresolved semantic diagnostics'):

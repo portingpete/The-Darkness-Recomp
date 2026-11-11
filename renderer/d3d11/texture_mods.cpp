@@ -239,8 +239,11 @@ struct Worker::Impl {
         if(counters.pending>=config.queueEntries || bytes>config.sourceQueueBytes ||
             counters.queuedSourceBytes>config.sourceQueueBytes-bytes || ticket==(std::numeric_limits<uint64_t>::max)())return {};
         const auto next=++ticket;
-        entries.emplace(source.get(),Entry{source,next,++use,Phase::pending,{}});
-        try { jobs.push_back({source,next,bytes}); }
+        // A draw's reference may own nothing (unowned_reference.h); the entry's
+        // weak reference and the worker's job need the image's owner.
+        const auto owner=ownerOf(source);
+        entries.emplace(source.get(),Entry{owner,next,++use,Phase::pending,{}});
+        try { jobs.push_back({owner,next,bytes}); }
         catch(...) {entries.erase(source.get()); throw;}
         ++counters.pending; counters.queuedSourceBytes+=bytes; wake.notify_one();
         return {};

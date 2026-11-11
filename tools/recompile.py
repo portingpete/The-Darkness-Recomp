@@ -75,15 +75,17 @@ def main() -> int:
     config_path = ROOT / "config/darkness.toml"
     config_source = tomllib.loads(config_path.read_text())
     config = config_source["main"]
-    midasm_hooks = config_source.get("midasm_hook", [])
+    # Per-instruction tables the generator reads: hooks and register syncs.
+    table_arrays = {name: config_source.get(name, []) for name in ("midasm_hook", "register_sync")}
     for key in ("file_path", "switch_table_file_path"):
         config[key] = os.path.relpath((config_path.parent / config[key]).resolve(), out).replace("\\", "/")
     config["out_directory_path"] = "."
     config_text = "[main]\n" + "\n".join(
         f"{key} = {json.dumps(value)}" for key, value in config.items()) + "\n"
-    for hook in midasm_hooks:
-        config_text += "\n[[midasm_hook]]\n"
-        config_text += "\n".join(f"{key} = {json.dumps(value)}" for key, value in hook.items()) + "\n"
+    for name, tables in table_arrays.items():
+        for table in tables:
+            config_text += f"\n[[{name}]]\n"
+            config_text += "\n".join(f"{key} = {json.dumps(value)}" for key, value in table.items()) + "\n"
     run_config = out / "generation.toml"
     run_config.write_text(config_text)
     executable = args.generator.resolve()

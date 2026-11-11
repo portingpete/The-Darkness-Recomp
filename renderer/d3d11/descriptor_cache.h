@@ -60,5 +60,12 @@ public:
     }
     size_t size() const noexcept {return entries_.size();}
     void clear() noexcept {last_=nullptr;entries_.clear();}
+    // clear(), but hand every value to a caller that must keep them alive a
+    // little longer (objects already chosen for the draw in progress).
+    template<class Out> void retire(Out& out) {
+        last_=nullptr;
+        for(auto& entry:entries_)out.push_back(std::move(entry.second));
+        entries_.clear();
+    }
 };
 }

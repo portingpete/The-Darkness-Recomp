@@ -19,6 +19,29 @@ static void requireReject(const std::string& line) {
         throw std::runtime_error("invalid line accepted: " + line);
     require(key == 0xBE && hold == 0xEF, "rejection mutated outputs");
 }
+static void requireWait(const std::string& line, TestInputWait wantKind, ULONGLONG wantMs) {
+    TestInputWait kind = TestInputWait::Player;
+    ULONGLONG waitMs = 0xDEAD;
+    if (!parseTestInputWaitLine(line, kind, waitMs) || kind != wantKind || waitMs != wantMs)
+        throw std::runtime_error("wait line parsed wrong: " + line);
+}
+static void requireNoWait(const std::string& line) {
+    TestInputWait kind = TestInputWait::Menu;
+    ULONGLONG waitMs = 0xBEEF;
+    if (parseTestInputWaitLine(line, kind, waitMs))
+        throw std::runtime_error("invalid wait line accepted: " + line);
+    require(kind == TestInputWait::Menu && waitMs == 0xBEEF, "wait rejection mutated outputs");
+}
+static void testWaitLines() {
+    requireWait("wait 1", TestInputWait::Milliseconds, 1);
+    requireWait("wait 600000", TestInputWait::Milliseconds, 600000);
+    requireWait("wait world", TestInputWait::World, 0);
+    requireWait("wait menu", TestInputWait::Menu, 0);
+    requireWait("wait player", TestInputWait::Player, 0);
+    for (const char* line : {"wait", "wait 0", "wait 600001", "wait -5", "wait 5 5", "wait 12x", "wait level",
+                             "waits 5", "wait 1000000", ""})
+        requireNoWait(line);
+}
 namespace {
 struct TestEvent {
     HANDLE value = CreateEventW(nullptr, TRUE, FALSE, nullptr);
@@ -259,6 +282,7 @@ int main() {
                 "allowlist lost a mapped key");
         testScriptReader();
         testQuitFileReader();
+        testWaitLines();
         puts("Test input parser contract: historical holds, explicit 1/10000, "
              "rejected bad/trailing/sign/overflow, unchanged outputs, and "
              "gameplay keys plus F5/F6; asynchronous script snapshots preserve "

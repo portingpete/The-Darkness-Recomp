@@ -1,0 +1,187 @@
+--- a/XenonRecomp/recompiler.cpp
++++ b/XenonRecomp/recompiler.cpp
+@@ -417,6 +417,22 @@ bool Recompiler::Recompile(
+             return *(data + 1) == c_eieio;
+         };
+ 
++    // r1-based displacement accesses address the guest stack.
++    auto stackAccess = [&](size_t baseRegister) -> bool
++        {
++            return config.uncheckedStackAccesses && baseRegister == 1;
++        };
++    auto loadName = [&](size_t baseRegister, int bits) -> std::string
++        {
++            return fmt::format("{}{}", stackAccess(baseRegister) ? "PPC_STACK_LOAD_U" : "PPC_LOAD_U", bits);
++        };
++    auto storeName = [&](size_t baseRegister, int bits) -> std::string
++        {
++            if (mmioStore())
++                return fmt::format("PPC_MM_STORE_U{}", bits);
++            return fmt::format("{}{}", stackAccess(baseRegister) ? "PPC_STACK_STORE_U" : "PPC_STORE_U", bits);
++        };
++
+     auto printFunctionCall = [&](uint32_t address)
+         {
+             if (address == config.longJmpAddress)
+@@ -445,11 +461,11 @@ bool Recompiler::Recompile(
+                         const auto& helper = targetSymbol->name;
+                         if (helper.starts_with("__savegprlr_"))
+                         {
+-                            println("\tPPC_STORE_U32({}.u32 + -8, {}.u32);", r(1), r(12));
++                            println("\t{}({}.u32 + -8, {}.u32);", stackAccess(1) ? "PPC_STACK_STORE_U32" : "PPC_STORE_U32", r(1), r(12));
+                         }
+                         else if (helper.starts_with("__restgprlr_"))
+                         {
+-                            println("\t{}.u64 = PPC_LOAD_U32({}.u32 + -8);", r(12), r(1));
++                            println("\t{}.u64 = {}({}.u32 + -8);", r(12), loadName(1, 32), r(1));
+                             if (!config.skipLr)
+                                 println("\tctx.lr = {}.u64;", r(12));
+                         }
+@@ -1165,7 +1181,7 @@ bool Recompiler::Recompile(
+         break;
+ 
+     case PPC_INST_LBZ:
+-        print("\t{}.u64 = PPC_LOAD_U8(", r(insn.operands[0]));
++        print("\t{}.u64 = {}(", r(insn.operands[0]), loadName(insn.operands[2], 8));
+         if (insn.operands[2] != 0)
+             print("{}.u32 + ", r(insn.operands[2]));
+         println("{});", int32_t(insn.operands[1]));
+@@ -1185,7 +1201,7 @@ bool Recompiler::Recompile(
+         break;
+ 
+     case PPC_INST_LD:
+-        print("\t{}.u64 = PPC_LOAD_U64(", r(insn.operands[0]));
++        print("\t{}.u64 = {}(", r(insn.operands[0]), loadName(insn.operands[2], 64));
+         if (insn.operands[2] != 0)
+             print("{}.u32 + ", r(insn.operands[2]));
+         println("{});", int32_t(insn.operands[1]));
+@@ -1214,7 +1230,7 @@ bool Recompiler::Recompile(
+ 
+     case PPC_INST_LFD:
+         printSetFlushMode(false);
+-        print("\t{}.u64 = PPC_LOAD_U64(", f(insn.operands[0]));
++        print("\t{}.u64 = {}(", f(insn.operands[0]), loadName(insn.operands[2], 64));
+         if (insn.operands[2] != 0)
+             print("{}.u32 + ", r(insn.operands[2]));
+         println("{});", int32_t(insn.operands[1]));
+@@ -1230,7 +1246,7 @@ bool Recompiler::Recompile(
+ 
+     case PPC_INST_LFS:
+         printSetFlushMode(false);
+-        print("\t{}.u32 = PPC_LOAD_U32(", temp());
++        print("\t{}.u32 = {}(", temp(), loadName(insn.operands[2], 32));
+         if (insn.operands[2] != 0)
+             print("{}.u32 + ", r(insn.operands[2]));
+         println("{});", int32_t(insn.operands[1]));
+@@ -1247,7 +1263,7 @@ bool Recompiler::Recompile(
+         break;
+ 
+     case PPC_INST_LHA:
+-        print("\t{}.s64 = int16_t(PPC_LOAD_U16(", r(insn.operands[0]));
++        print("\t{}.s64 = int16_t({}(", r(insn.operands[0]), loadName(insn.operands[2], 16));
+         if (insn.operands[2] != 0)
+             print("{}.u32 + ", r(insn.operands[2]));
+         println("{}));", int32_t(insn.operands[1]));
+@@ -1261,7 +1277,7 @@ bool Recompiler::Recompile(
+         break;
+ 
+     case PPC_INST_LHZ:
+-        print("\t{}.u64 = PPC_LOAD_U16(", r(insn.operands[0]));
++        print("\t{}.u64 = {}(", r(insn.operands[0]), loadName(insn.operands[2], 16));
+         if (insn.operands[2] != 0)
+             print("{}.u32 + ", r(insn.operands[2]));
+         println("{});", int32_t(insn.operands[1]));
+@@ -1329,7 +1345,7 @@ bool Recompiler::Recompile(
+         break;
+ 
+     case PPC_INST_LWA:
+-        print("\t{}.s64 = int32_t(PPC_LOAD_U32(", r(insn.operands[0]));
++        print("\t{}.s64 = int32_t({}(", r(insn.operands[0]), loadName(insn.operands[2], 32));
+         if (insn.operands[2] != 0)
+             print("{}.u32 + ", r(insn.operands[2]));
+         println("{}));", int32_t(insn.operands[1]));
+@@ -1362,7 +1378,7 @@ bool Recompiler::Recompile(
+         break;
+ 
+     case PPC_INST_LWZ:
+-        print("\t{}.u64 = PPC_LOAD_U32(", r(insn.operands[0]));
++        print("\t{}.u64 = {}(", r(insn.operands[0]), loadName(insn.operands[2], 32));
+         if (insn.operands[2] != 0)
+             print("{}.u32 + ", r(insn.operands[2]));
+         println("{});", int32_t(insn.operands[1]));
+@@ -1635,7 +1651,7 @@ bool Recompiler::Recompile(
+         break;
+ 
+     case PPC_INST_STB:
+-        print("{}", mmioStore() ? "\tPPC_MM_STORE_U8(" : "\tPPC_STORE_U8(");
++        print("\t{}(", storeName(insn.operands[2], 8));
+         if (insn.operands[2] != 0)
+             print("{}.u32 + ", r(insn.operands[2]));
+         println("{}, {}.u8);", int32_t(insn.operands[1]), r(insn.operands[0]));
+@@ -1655,7 +1671,7 @@ bool Recompiler::Recompile(
+         break;
+ 
+     case PPC_INST_STD:
+-        print("{}", mmioStore() ? "\tPPC_MM_STORE_U64(" : "\tPPC_STORE_U64(");
++        print("\t{}(", storeName(insn.operands[2], 64));
+         if (insn.operands[2] != 0)
+             print("{}.u32 + ", r(insn.operands[2]));
+         println("{}, {}.u64);", int32_t(insn.operands[1]), r(insn.operands[0]));
+@@ -1686,7 +1702,7 @@ bool Recompiler::Recompile(
+ 
+     case PPC_INST_STFD:
+         printSetFlushMode(false);
+-        print("{}", mmioStore() ? "\tPPC_MM_STORE_U64(" : "\tPPC_STORE_U64(");
++        print("\t{}(", storeName(insn.operands[2], 64));
+         if (insn.operands[2] != 0)
+             print("{}.u32 + ", r(insn.operands[2]));
+         println("{}, {}.u64);", int32_t(insn.operands[1]), f(insn.operands[0]));
+@@ -1711,7 +1727,7 @@ bool Recompiler::Recompile(
+     case PPC_INST_STFS:
+         printSetFlushMode(false);
+         println("\t{}.f32 = float({}.f64);", temp(), f(insn.operands[0]));
+-        print("{}", mmioStore() ? "\tPPC_MM_STORE_U32(" : "\tPPC_STORE_U32(");
++        print("\t{}(", storeName(insn.operands[2], 32));
+         if (insn.operands[2] != 0)
+             print("{}.u32 + ", r(insn.operands[2]));
+         println("{}, {}.u32);", int32_t(insn.operands[1]), temp());
+@@ -1727,7 +1743,7 @@ bool Recompiler::Recompile(
+         break;
+ 
+     case PPC_INST_STH:
+-        print("{}", mmioStore() ? "\tPPC_MM_STORE_U16(" : "\tPPC_STORE_U16(");
++        print("\t{}(", storeName(insn.operands[2], 16));
+         if (insn.operands[2] != 0)
+             print("{}.u32 + ", r(insn.operands[2]));
+         println("{}, {}.u16);", int32_t(insn.operands[1]), r(insn.operands[0]));
+@@ -1803,7 +1819,7 @@ bool Recompiler::Recompile(
+         break;
+ 
+     case PPC_INST_STW:
+-        print("{}", mmioStore() ? "\tPPC_MM_STORE_U32(" : "\tPPC_STORE_U32(");
++        print("\t{}(", storeName(insn.operands[2], 32));
+         if (insn.operands[2] != 0)
+             print("{}.u32 + ", r(insn.operands[2]));
+         println("{}, {}.u32);", int32_t(insn.operands[1]), r(insn.operands[0]));
+--- a/XenonRecomp/recompiler_config.cpp
++++ b/XenonRecomp/recompiler_config.cpp
+@@ -26,6 +26,7 @@ void RecompilerConfig::Load(const std::string_view& configFilePath)
+         crRegistersAsLocalVariables = main["cr_as_local"].value_or(false);
+         nonArgumentRegistersAsLocalVariables = main["non_argument_as_local"].value_or(false);
+         nonVolatileRegistersAsLocalVariables = main["non_volatile_as_local"].value_or(false);
++        uncheckedStackAccesses = main["unchecked_stack_accesses"].value_or(false);
+ 
+         restGpr14Address = main["restgprlr_14_address"].value_or(0u);
+         saveGpr14Address = main["savegprlr_14_address"].value_or(0u);
+--- a/XenonRecomp/recompiler_config.h
++++ b/XenonRecomp/recompiler_config.h
+@@ -61,6 +61,9 @@ struct RecompilerConfig
+     bool crRegistersAsLocalVariables = false;
+     bool nonArgumentRegistersAsLocalVariables = false;
+     bool nonVolatileRegistersAsLocalVariables = false;
++    // Displacement loads and stores based on r1 address the guest stack, never
++    // the null page or MMIO: emit PPC_STACK_LOAD/STORE without address checks.
++    bool uncheckedStackAccesses = false;
+     // Per-function non-volatile locals: functions whose base lies in one of
+     // these [start, end) ranges keep r14-r31, f14-f31, v14-v31 and v64-v127 in
+     // C++ locals unless listed in nonVolatileContextFunctions.

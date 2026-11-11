@@ -455,7 +455,9 @@ void ensureSubtitleFontRegistered(uint8_t* base,uint32_t font) noexcept {
 }
 std::shared_ptr<const ColorImage> subtitleFontReplacementFor(uint32_t textureId,const std::shared_ptr<const ColorImage>& source,unsigned factor) noexcept {
     if(factor==1)return {};
-    try {std::lock_guard lock(registryMutex);return replacementLocked(textureId,source,factor);}catch(...) {return {};}
+    // The registry keeps weak and owning references to the source image; a
+    // draw's reference may own nothing (unowned_reference.h).
+    try {const auto owner=ownerOf(source);std::lock_guard lock(registryMutex);return replacementLocked(textureId,owner,factor);}catch(...) {return {};}
 }
 std::shared_ptr<const ColorImage> subtitleFontReplacementFor(uint32_t textureId,const std::shared_ptr<const AlphaImage>& source,unsigned factor) noexcept {
     if(!source || factor==1 || !source->width || !source->height || source->width>512 || source->height>256 ||

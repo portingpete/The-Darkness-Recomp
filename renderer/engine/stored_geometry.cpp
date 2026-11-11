@@ -6,6 +6,7 @@
 #include <bit>
 #include <cmath>
 #include <cstdio>
+#include <iterator>
 #include <utility>
 #include <vector>
 
@@ -373,6 +374,20 @@ std::shared_ptr<const StoredGeometry> StoredGeometryCache::vertexStream(uint8_t*
         found->used=++clock_;return found->geometry;
     } catch (...) {return {};}
 }
+uint32_t StoredGeometryCache::takePins(std::vector<std::shared_ptr<const StoredGeometry>>& out) {
+    std::lock_guard lock(mutex_);
+    if (out.empty()) out.swap(pins_); // Also hands this cache the caller's reserved storage.
+    else {
+        out.insert(out.end(), std::make_move_iterator(pins_.begin()), std::make_move_iterator(pins_.end()));
+        pins_.clear();
+    }
+    if (!++pinEpoch_) ++pinEpoch_;
+    return pinEpoch_;
+}
+void StoredGeometryCache::pinnedNow(std::vector<const StoredGeometry*>& out) const {
+    std::lock_guard lock(mutex_);
+    for (const auto& pin : pins_) out.push_back(pin.get());
+}
 StoredGeometryStats StoredGeometryCache::stats() const {
     std::lock_guard lock(mutex_);
     auto result = stats_; result.cachedResources = entries_.size(); return result;
@@ -446,10 +461,20 @@ __attribute__((hot)) int StoredGeometryCache::drawFast(uint8_t* base, uint32_t v
         }
         if (missing) { ++stats_.missingDraws; return 1; }
         if (invalid) { ++stats_.invalidDraws; return 1; }
+        if (drawReferencesOwned) [[unlikely]] {
+            output.vertices = vertices;
+            output.indices = indices;
+            output.pinEpoch = 0;
+        } else {
+            // One owner per entry and epoch instead of two reference counts per draw.
+            if (v->pinEpoch != pinEpoch_) { pins_.push_back(vertices); v->pinEpoch = pinEpoch_; }
+            if (i->pinEpoch != pinEpoch_) { pins_.push_back(indices); i->pinEpoch = pinEpoch_; }
+            output.vertices = unownedReference(vertices.get());
+            output.indices = unownedReference(indices.get());
+            output.pinEpoch = pinEpoch_;
+        }
         v->used = i->used = ++clock_;
         ++stats_.matchedDraws;
-        output.vertices = vertices;
-        output.indices = indices;
         output.firstIndex = firstIndex;
         output.indexCount = indexCount;
         output.transforms.reset();

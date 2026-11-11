@@ -1,5 +1,6 @@
 #include "display_settings.h"
 #include "runtime/native/fov_settings.h"
+#include "runtime/native/draw_distance.h"
 #include <cmath>
 #include <cstdio>
 #include <cwchar>
@@ -86,6 +87,14 @@ GraphicsSettings loadGraphicsSettings(const std::filesystem::path& path) noexcep
                          kMinimumSubtitleScalePercent, kMaximumSubtitleScalePercent),
             DisplayAspectMode(readUnsigned(path, L"AspectMode", unsigned(defaults.aspectMode),
                                            0, unsigned(DisplayAspectMode::Stretch4x3)))};
+}
+
+unsigned loadDrawDistance(const std::filesystem::path& path) noexcept {
+    return readUnsigned(path, L"DrawDistance", kDefaultDrawDistance, 0, kMaximumDrawDistance);
+}
+
+bool saveDrawDistance(const std::filesystem::path& path, unsigned units) noexcept {
+    return validDrawDistance(units) && writeUnsigned(path, L"DrawDistance", units);
 }
 
 namespace {
