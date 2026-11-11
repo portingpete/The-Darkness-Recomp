@@ -1,6 +1,53 @@
 #pragma once
+#include "renderer/d3d11/screen_fog_sample_positions.h"
+#include <d3dcompiler.h>
+
+// Compare the production lookup with D3D's independent native intrinsic for
+// every sample index. Run on Windows hardware and WARP; the Wine-compatible
+// compiler preflight separately checks the production shaders without this
+// deliberately native-only oracle.
+static void screenFogSamplePositionContract(ID3D11Device* device,ID3D11DeviceContext* context) {
+    const std::string source=std::string("#define SCREEN_FOG_MULTISAMPLE 1\n")+screenFogSamplePositionSource+R"(
+Texture2DMS<float> depth : register(t0);
+RWStructuredBuffer<float4> result : register(u0);
+[numthreads(8,1,1)] void main(uint3 id : SV_DispatchThreadID) {
+    uint width,height,count;depth.GetDimensions(width,height,count);
+    if(id.x<count)result[id.x]=float4(screenFogSamplePosition(count,id.x),depth.GetSamplePosition(id.x));
+}
+)";
+    ComPtr<ID3DBlob> code,errors;
+    const auto status=D3DCompile(source.data(),source.size(),"ScreenFogSamplePositionOracle",nullptr,nullptr,
+        "main","cs_5_0",D3DCOMPILE_ENABLE_STRICTNESS|D3DCOMPILE_WARNINGS_ARE_ERRORS,0,&code,&errors);
+    if(FAILED(status))throw std::runtime_error(errors?static_cast<const char*>(errors->GetBufferPointer()):"Sample position oracle compile failed");
+    ComPtr<ID3D11ComputeShader> shader;
+    check(device->CreateComputeShader(code->GetBufferPointer(),code->GetBufferSize(),nullptr,&shader),"Sample position oracle shader");
+    D3D11_BUFFER_DESC buffer{};buffer.ByteWidth=8*4*sizeof(float);buffer.StructureByteStride=4*sizeof(float);
+    buffer.Usage=D3D11_USAGE_DEFAULT;buffer.BindFlags=D3D11_BIND_UNORDERED_ACCESS;buffer.MiscFlags=D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+    ComPtr<ID3D11Buffer> output,staging;check(device->CreateBuffer(&buffer,nullptr,&output),"Sample position output");
+    ComPtr<ID3D11UnorderedAccessView> uav;check(device->CreateUnorderedAccessView(output.Get(),nullptr,&uav),"Sample position UAV");
+    buffer.Usage=D3D11_USAGE_STAGING;buffer.BindFlags=buffer.MiscFlags=buffer.StructureByteStride=0;buffer.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+    check(device->CreateBuffer(&buffer,nullptr,&staging),"Sample position staging");
+    for(unsigned samples:{2u,4u,8u}) {
+        D3D11_TEXTURE2D_DESC desc{};desc.Width=desc.Height=1;desc.MipLevels=desc.ArraySize=1;
+        desc.Format=DXGI_FORMAT_R32_FLOAT;desc.SampleDesc.Count=samples;desc.SampleDesc.Quality=D3D11_STANDARD_MULTISAMPLE_PATTERN;
+        desc.Usage=D3D11_USAGE_DEFAULT;desc.BindFlags=D3D11_BIND_SHADER_RESOURCE|D3D11_BIND_RENDER_TARGET;
+        ComPtr<ID3D11Texture2D> depth;check(device->CreateTexture2D(&desc,nullptr,&depth),"Sample position standard texture");
+        ComPtr<ID3D11ShaderResourceView> view;check(device->CreateShaderResourceView(depth.Get(),nullptr,&view),"Sample position texture view");
+        context->ClearState();context->CSSetShader(shader.Get(),nullptr,0);
+        ID3D11ShaderResourceView* srv=view.Get();context->CSSetShaderResources(0,1,&srv);
+        ID3D11UnorderedAccessView* target=uav.Get();context->CSSetUnorderedAccessViews(0,1,&target,nullptr);
+        context->Dispatch(1,1,1);context->ClearState();context->CopyResource(staging.Get(),output.Get());
+        D3D11_MAPPED_SUBRESOURCE mapped{};check(context->Map(staging.Get(),0,D3D11_MAP_READ,0,&mapped),"Sample position readback");
+        std::array<std::array<float,4>,8> positions{};std::memcpy(positions.data(),mapped.pData,sizeof(positions));context->Unmap(staging.Get(),0);
+        for(unsigned i=0;i<samples;++i)require((positions[i][2]!=0 || positions[i][3]!=0) &&
+            positions[i][0]==positions[i][2] && positions[i][1]==positions[i][3],
+            "Screen fog sample position differs from D3D standard pattern");
+        std::printf("[ScreenFogSamplePosition] samples=%u all positions exactly match native D3D\n",samples);
+    }
+}
 
 static void worldMsaaContract(ID3D11Device* device,ID3D11DeviceContext* context) {
+    screenFogSamplePositionContract(device,context);
     context->ClearState();WorldRendererD3D11 renderer(device,context);
     auto geometry=std::make_shared<StoredGeometry>();geometry->vertexCount=3;geometry->stride=16;
     geometry->formats[0]=4;geometry->vertices.resize(48);geometry->indices={0,1,2};

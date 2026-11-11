@@ -321,6 +321,9 @@ ctest --test-dir build_native -C Release --output-on-failure
 
 **Release packaging**
 
+Before publishing, complete the [release validation gates](https://github.com/portingpete/The-Darkness-Recomp/blob/main/docs/RELEASING.md),
+including a cold-cache Proton/DXVK game run for Linux/Steam Deck artifacts.
+
 Maintainers can build, test, and package a Windows ZIP with:
 
 ```powershell

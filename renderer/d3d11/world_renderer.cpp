@@ -3,6 +3,7 @@
 #include "world_render_state.h"
 #include "world_darkness_bloom.h"
 #include "shader_bytecode_cache.h"
+#include "screen_fog_sample_positions.h"
 #include "texture_budget_policy.h"
 #include "runtime/native/graphics_settings.h"
 #include "runtime/native/startup_trace.h"
@@ -458,7 +459,9 @@ float4 pixelMain(float4 position : SV_Position, uint sampleIndex : SV_SampleInde
     int2 pixel=int2(position.xy);
     float depth=fogStoredDepth.Load(pixel,sampleIndex);
     float prepass=fogPrepassDepth.Load(pixel,sampleIndex);
-    float2 at=float2(pixel)+0.5+fogStoredDepth.GetSamplePosition(sampleIndex);
+    uint width,height,samples;
+    fogStoredDepth.GetDimensions(width,height,samples);
+    float2 at=float2(pixel)+0.5+screenFogSamplePosition(samples,sampleIndex);
 #else
 Texture2D<float> fogStoredDepth : register(t14);
 Texture2D<float> fogPrepassDepth : register(t15);
@@ -493,6 +496,41 @@ float4 pixelMain(float4 position : SV_Position) : SV_Target {
     return color;
 }
 )";
+}
+namespace {
+std::string screenFogShaderSource(const char* original,bool multisample) {
+    std::string source=multisample?"#define SCREEN_FOG_MULTISAMPLE 1\n":"#define SCREEN_FOG_MULTISAMPLE 0\n";
+    source+=screenFogSamplePositionSource;
+    source+="#define pixelMain originalPixelMain\n";source+=original;source+=screenFogPixelSource;
+    return source;
+}
+}
+void WorldRendererD3D11::validateScreenFogShaderCompiler() {
+    // Deliberately bypass the bytecode cache and do not create a D3D device.
+    // A Windows-warmed cache can hide missing Wine/Proton compiler features.
+    wchar_t compilerPath[32768]{};
+    if(const auto compiler=GetModuleHandleW(L"d3dcompiler_47.dll");
+       compiler && GetModuleFileNameW(compiler,compilerPath,DWORD(std::size(compilerPath))))
+        std::fprintf(stderr,"[ShaderCompiler] module=%ls\n",compilerPath);
+    unsigned compiled=0;
+    for(const auto& source:worldFragmentSources) {
+        if(std::string_view(source.name)!="XREngine_DepthFog")continue;
+        for(unsigned multisample=0;multisample<2;++multisample) {
+            const auto text=screenFogShaderSource(source.source,multisample!=0);
+            const auto* name=multisample?"XREngine_DepthFog.screen.multisample":"XREngine_DepthFog.screen";
+            Ptr<ID3DBlob> code,errors;
+            constexpr UINT flags=D3DCOMPILE_ENABLE_STRICTNESS|D3DCOMPILE_WARNINGS_ARE_ERRORS|D3DCOMPILE_IEEE_STRICTNESS;
+            const auto result=D3DCompile(text.data(),text.size(),name,nullptr,nullptr,"pixelMain","ps_5_0",flags,0,&code,&errors);
+            if(FAILED(result)) {
+                std::fprintf(stderr,"[ShaderCompiler] FAILED program=%s flags=%u\n",name,source.flags);
+                throw std::runtime_error(errors?std::string(static_cast<const char*>(errors->GetBufferPointer()),errors->GetBufferSize()):"Screen fog shader compiler preflight failed");
+            }
+            if(!code || !code->GetBufferSize())throw std::runtime_error("Screen fog compiler returned no bytecode");
+            ++compiled;
+        }
+    }
+    if(!compiled)throw std::runtime_error("No screen fog shader variants were checked");
+    std::printf("ScreenFogShaderCompilerContract passed: %u variants, single-sample and MSAA; bytecode cache bypassed.\n",compiled);
 }
 WorldRendererD3D11::WorldRendererD3D11(ID3D11Device* d,ID3D11DeviceContext* c,uint32_t scale,
                                    const std::function<void()>& startup):device_(d),context_(c),scale_(scale),transientBuffers_(d,c) {
@@ -663,8 +701,7 @@ float4 pixelMain(Fragment input) : SV_Target {
             // Screen-space depth fog: the same original fragment, fed from
             // the stored depth instead of interpolated vertex outputs.
             for(unsigned multisample=0;multisample<2;++multisample) {
-                std::string fogSource=multisample?"#define SCREEN_FOG_MULTISAMPLE 1\n":"#define SCREEN_FOG_MULTISAMPLE 0\n";
-                fogSource+="#define pixelMain originalPixelMain\n";fogSource+=source.source;fogSource+=screenFogPixelSource;
+                const auto fogSource=screenFogShaderSource(source.source,multisample!=0);
                 compile(fogSource.c_str(),multisample?"XREngine_DepthFog.screen.multisample":"XREngine_DepthFog.screen",
                     screenFogPixel_[source.flags][multisample],false);
             }

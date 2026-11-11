@@ -1,0 +1,23 @@
+---
+description: Required validation before publishing DarkRecomp releases
+alwaysApply: true
+---
+
+# Release validation
+
+When building, packaging or publishing a release, follow
+`docs/RELEASING.md` and record evidence for each shipped target.
+
+- Test the final extracted binaries after compiler, PGO and packaging changes.
+- Linux/Steam Deck assets require cold and warm packaged-game startup and a
+  short gameplay run through the supported Proton/UMU + DXVK stack.
+- Exercise the target shader compiler, including prepared MSAA variants when
+  AA is off. Run `WorldRendererTests.exe --screen-fog-compiler-only` as preflight.
+- Windows tests, WARP, AppImage help and checksum checks are separate coverage.
+- Shader/startup failures or unavailable required runtime tests block that
+  target's publication; report missing coverage instead of claiming a pass.
+- Keep precise runtime/GPU/settings identities, logs, images and hashes.
+- Verify fresh installation and the previous release's update path.
+- Require physical Deck evidence for claims of Deck hardware compatibility.
+- Preserve user data, old artifacts and recovery evidence. Follow the existing
+  Windows reparse-point safeguard before any worktree cleanup.
