@@ -1,0 +1,25 @@
+# The Darkness Recomp recording. It plays by itself from launch to exit.
+# Village, then the pause menu (Enter) over it: three captures of the menu scene.
+wait world
+wait 2500
+dev open
+wait menu
+dev mission OW1_Village:ow1+layer1
+dev open
+wait player
+wait 3000
+dev close
+wait 3000
+capture
+13 250
+wait 4000
+capture
+wait 2000
+capture
+0
+wait 1000
+wait 2000
+capture
+13 250
+wait 2000
+quit
