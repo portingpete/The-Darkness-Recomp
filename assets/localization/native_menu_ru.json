@@ -17,6 +17,7 @@
     "LANGUAGE": {"text": "ЯЗЫК", "max_glyphs": 20},
     "TEXTURE FILTERING": {"text": "ФИЛЬТРАЦИЯ ТЕКСТУР", "max_glyphs": 20},
     "SUBTITLE SIZE": {"text": "РАЗМЕР СУБТИТРОВ", "max_glyphs": 20},
+    "REDUCE FLICKER": {"text": "УБРАТЬ МЕРЦАНИЕ", "max_glyphs": 20},
     "RES/ASPECT/LANG: RESTART TO APPLY": {"text": "РЕЖИМ/ФОРМАТ/ЯЗЫК: ПЕРЕЗАПУСК", "max_glyphs": 40},
     "LEFT/RIGHT: CHANGE; CONFIRM: NEXT": {"text": "ВЛЕВО/ВПРАВО: СМЕНА; ВЫБОР: ДАЛЕЕ", "max_glyphs": 40},
     "EXIT GAME": {"text": "ВЫЙТИ ИЗ ИГРЫ", "max_glyphs": 20},

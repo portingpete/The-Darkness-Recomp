@@ -54,6 +54,7 @@ static void check(bool success, const char* message) { if (!success) throw std::
 #include "achievement_guest_tests.h"
 #include "fov_camera_tests.h"
 #include "video_settings_tests.h"
+#include "light_flicker_tests.h"
 #include "developer_tools_tests.h"
 #include "developer_invincibility_tests.h"
 #include "developer_noclip_tests.h"
@@ -1666,8 +1667,10 @@ int main(int argc, char** argv) {
     try {
         check(argc >= 2, "Game directory required");
         const bool videoFileTest = argc == 4 && strcmp(argv[2], "--video-mod-files") == 0;
+        const bool graphicsTest = argc == 3 && (strcmp(argv[2], "--light-flicker") == 0 ||
+                                                strcmp(argv[2], "--video-settings") == 0);
         std::filesystem::path videoTestUserData;
-        if (videoFileTest) {
+        if (videoFileTest || graphicsTest) {
             wchar_t temporary[MAX_PATH]{};
             check(GetTempPathW(MAX_PATH, temporary) != 0, "Video test temp directory unavailable");
             videoTestUserData = std::filesystem::path(temporary) /
@@ -1730,6 +1733,10 @@ int main(int argc, char** argv) {
         }
         if (argc == 3 && strcmp(argv[2], "--video-settings") == 0) {
             testVideoSettings(ctx);
+            return 0;
+        }
+        if (argc == 3 && strcmp(argv[2], "--light-flicker") == 0) {
+            testLightFlicker(ctx);
             return 0;
         }
         if (argc == 3 && strcmp(argv[2], "--texture-upload") == 0) {

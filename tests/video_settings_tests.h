@@ -65,6 +65,7 @@ static void testVideoSettings(PPCContext& ctx) {
     initializeNativeMenuText(false, 1);
     initializeVideoSettingsMenu();
     check(!graphicsSettings().motionBlur, "motion blur must default to Off");
+    check(!graphicsSettings().reduceLightFlicker, "light flicker reduction must default to Off");
     check(graphicsSettings().antialiasing == AntialiasingMode::Off, "antialiasing must default to Off");
     check(graphicsSettings().brightnessPercent == 100, "brightness must default to neutral");
     check(graphicsSettings().subtitleScalePercent == 100, "subtitles must default to the original size");
@@ -459,6 +460,21 @@ static void testVideoSettings(PPCContext& ctx) {
           "invalid language direction changed settings");
     check(!changeVideoSetting("cg_prevmenu()", 1) && graphicsSettings() == before,
           "non-PC script was consumed by native settings");
+    auto flickerSettings = graphicsSettings(); flickerSettings.reduceLightFlicker = false;
+    check(setGraphicsSettings(flickerSettings), "seed original flicker setting");
+    (void)takeDisplaySettingsSaveRequest();
+    for (int direction : {1, -1}) {
+        check(changeVideoSetting("darkrecomp.reduce_light_flicker", direction) &&
+              graphicsSettings().reduceLightFlicker && takeDisplaySettingsSaveRequest() &&
+              videoSettingLabel("darkrecomp.reduce_light_flicker").find("ON") != std::string::npos,
+              "light flicker reduction did not enable immediately and request persistence");
+        check(changeVideoSetting("darkrecomp.reduce_light_flicker", direction) &&
+              graphicsSettings() == flickerSettings && takeDisplaySettingsSaveRequest() &&
+              videoSettingLabel("darkrecomp.reduce_light_flicker").find("OFF") != std::string::npos,
+              "light flicker reduction did not restore original settings");
+    }
+    check(!changeVideoSetting("darkrecomp.reduce_light_flicker", 0) && graphicsSettings() == flickerSettings &&
+          !takeDisplaySettingsSaveRequest(), "invalid flicker setting direction changed state");
     for (const auto action : {"darkrecomp.vsync", "darkrecomp.mode", "darkrecomp.fps", "darkrecomp.resolution", "darkrecomp.aspect"}) {
         check(changeVideoSetting(action, 1) && validGraphicsSettings(graphicsSettings()), "native option change failed");
         check(!videoSettingLabel(action).empty(), "native option has no label");
@@ -497,7 +513,7 @@ static void testVideoSettings(PPCContext& ctx) {
     reportDisplaySettingsSave(true);
     // The engine gives small text two glyphs per cell. Dynamic values must
     // fit the authored eight-cell column without a font change or word wrap.
-    for (const auto action : {"darkrecomp.fov", "darkrecomp.bloom", "darkrecomp.vsync",
+    for (const auto action : {"darkrecomp.fov", "darkrecomp.bloom", "darkrecomp.reduce_light_flicker", "darkrecomp.vsync",
                               "darkrecomp.fps", "darkrecomp.resolution", "darkrecomp.mode", "darkrecomp.aspect", "darkrecomp.motionblur", "darkrecomp.antialiasing", "darkrecomp.brightness", "darkrecomp.language", "darkrecomp.subtitle_scale"}) {
         for (int i = 0; i < 128; ++i) {
             for (bool saved : {true, false}) {

@@ -42,6 +42,8 @@ the expected folder layout and help with startup problems.
   draw distance for props in large open views (Near by default; Original restores
   the unlimited original).
 - Remappable keys and mouse buttons, clickable menus, and adjustable subtitle size.
+- Optional light flicker reduction, applied live from Video Settings or selected
+  in the settings launcher; original light animation remains the default.
 - Language selection and support for the original disc revision and the
   [Russian localization identified in issue #37](https://github.com/portingpete/The-Darkness-Recomp/issues/37).
 

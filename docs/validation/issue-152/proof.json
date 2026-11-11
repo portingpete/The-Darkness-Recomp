@@ -1,0 +1,131 @@
+{
+  "result": "Verified actual authored room lighting: periodic variation Off, suppressed On, restored Off in the same session",
+  "test_model": "gpt-6.1-terra",
+  "reasoning_effort": "ultra",
+  "candidate_sha256": "5DC431B1E7E205DA1E8645035C138B7CAC59A1494E30FE5891046E75C23B9185",
+  "mission": "NY1_Consite:ny1+layer1",
+  "room": "Construction interior after crash tutorial; stacked crates beside overhead fluorescent, brick wall and duct",
+  "player_position": [
+    -2184.3115234375,
+    -1423.2237548828125,
+    -255.64892578125
+  ],
+  "player_position_change_world_units": 0.0001220703125,
+  "nearby_original_periodic_sources": [
+    {
+      "server_object_id": 49,
+      "class": "Light2",
+      "position": [
+        -2224,
+        -1424,
+        -176
+      ],
+      "enabled": true,
+      "modulation_type": 1,
+      "frequency_scaled": 16,
+      "depth_scaled": 0.25,
+      "distance_to_player": 88.99286
+    },
+    {
+      "server_object_id": 197,
+      "class": "Light2",
+      "position": [
+        -2089.9609375,
+        -1201.1080322265625,
+        -215.5
+      ],
+      "enabled": true,
+      "modulation_type": 5,
+      "frequency_scaled": 35,
+      "depth_scaled": 0.390625
+    },
+    {
+      "server_object_id": 52,
+      "class": "Light2",
+      "position": [
+        -1410.5,
+        -1068,
+        -168
+      ],
+      "enabled": true,
+      "modulation_type": 1,
+      "frequency_scaled": 8,
+      "depth_scaled": 0.046875
+    }
+  ],
+  "source_scope": "Authored Light2 objects verified loaded/enabled by read-only enumeration; shared option affects all periodic evaluators. Individual contributions were not isolated. Specific metadata-string name association is not claimed.",
+  "primary_roi_pixels": [
+    590,
+    430,
+    160,
+    180
+  ],
+  "std_off_on_off": [
+    7.295138748393363,
+    0.08222328926351878,
+    7.29996606658572
+  ],
+  "std_reduction_percent": 98.87290300980736,
+  "capture_seconds": [
+    11.983,
+    11.75,
+    10.883333333333333
+  ],
+  "comparison_video_sha256": "be90608962989d5bc5afb274661b8096771f7587830d25aeb5af851697255b1a",
+  "comparison_format": "H.264, 1920x360, 30fps, 10sec, three simultaneously displayed source excerpts with state labels",
+  "framing_check": {
+    "on": {
+      "reference": "off1 first captured frame",
+      "matched_features": 3053,
+      "ransac_inliers": 2839,
+      "affine_partial": [
+        [
+          0.9998860643161741,
+          0.00020571921055250093,
+          -0.048642245194034504
+        ],
+        [
+          -0.00020571921055250093,
+          0.9998860643161741,
+          0.05972979161128545
+        ]
+      ],
+      "translation_pixels": [
+        -0.048642245194034504,
+        0.05972979161128545
+      ],
+      "rotation_degrees": -0.011788185458080188,
+      "scale": 0.9998860854787819
+    },
+    "off2": {
+      "reference": "off1 first captured frame",
+      "matched_features": 2483,
+      "ransac_inliers": 2244,
+      "affine_partial": [
+        [
+          1.0001481201006817,
+          -0.0020240712296070006,
+          0.620250013079667
+        ],
+        [
+          0.0020240712296070006,
+          1.0001481201006817,
+          -0.1415000070291002
+        ]
+      ],
+      "translation_pixels": [
+        0.620250013079667,
+        -0.1415000070291002
+      ],
+      "rotation_degrees": 0.11595340553540037,
+      "scale": 1.0001501682273868
+    }
+  },
+  "limits": "Minor framing/idle differences; source clips have variable delivered frame density. Tested this room on native Windows only. No claim that all flashing effects are suppressed.",
+  "state_changes": "Only isolated profile setting toggles and existing player navigation/developer noclip; no source edits, no memory writes, no authored light data or flags artificially changed",
+  "cleanup": "All owned game and ffmpeg processes exited; final game closed by scripted quit with code0",
+  "comparison_video": "off-on-off-comparison.mp4",
+  "measurement": "Per-frame mean encoded RGB Rec.709 luma of the fixed ROI, scale 0-255; standard deviation across each source capture; no smoothing.",
+  "source_media": "Original lossless FFV1 game-window captures retained privately; the H.264 comparison is the only video committed.",
+  "isolation": "Dedicated user-data directory for settings, saves, guest cache and shader cache; real user data untouched."
+}

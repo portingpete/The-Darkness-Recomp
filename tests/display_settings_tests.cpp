@@ -36,6 +36,24 @@ int main() {
         cleanup.owned = true;
         check(fieldOfViewSetting() == 0 && loadFieldOfView(path) == 0, "Original default");
         check(loadGraphicsSettings(path) == GraphicsSettings{}, "graphics defaults on missing file");
+        check(!GraphicsSettings{}.reduceLightFlicker, "light flicker reduction must be opt-in");
+        for (bool enabled : {true, false}) {
+            auto selected = GraphicsSettings{};
+            selected.reduceLightFlicker = enabled;
+            selected.aspectMode = DisplayAspectMode::Stretch4x3;
+            selected.subtitleScalePercent = 200;
+            check(setGraphicsSettings(selected) && graphicsSettings() == selected &&
+                  saveDisplaySettings(path, 0, selected) && loadGraphicsSettings(path) == selected,
+                  "light flicker setting changed adjacent packed preferences or did not persist");
+        }
+        for (const auto bad : {L"-1", L"2", L"true", L"1.0", L"42949672960", static_cast<const wchar_t*>(nullptr)}) {
+            WritePrivateProfileStringW(L"Display", L"ReduceLightFlicker", bad, path.c_str());
+            auto expected = GraphicsSettings{};
+            expected.aspectMode = DisplayAspectMode::Stretch4x3;
+            expected.subtitleScalePercent = 200;
+            check(loadGraphicsSettings(path) == expected,
+                  "invalid or missing light flicker setting did not recover independently to Off");
+        }
         check(GraphicsSettings{}.aspectMode == DisplayAspectMode::Auto,
               "new installs must preserve automatic display aspect");
         // Unsupported saved heights recover independently. Higher resolutions

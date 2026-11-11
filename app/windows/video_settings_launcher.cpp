@@ -41,13 +41,14 @@ enum Row : size_t {
     TextureFiltering,
     SubtitleSize,
     DrawDistance,
+    ReduceLightFlicker,
     RowCount,
 };
 
 constexpr std::array<const wchar_t*, RowCount> kRowNames{
     L"Brightness", L"Field of view", L"Bloom", L"Vertical sync",
     L"Frame limit", L"Resolution", L"Display", L"Motion blur", L"Antialiasing", L"Language", L"Texture filtering", L"Subtitle size",
-    L"Draw distance",
+    L"Draw distance", L"Reduce light flicker",
 };
 
 struct Choice {
@@ -176,6 +177,8 @@ void populateChoices(Launcher& launcher) {
         addChoice(rows[FieldOfView], std::to_wstring(value), value);
     addChoice(rows[Bloom], L"Off", 0);
     addChoice(rows[Bloom], L"On", 1);
+    addChoice(rows[ReduceLightFlicker], L"Off", 0);
+    addChoice(rows[ReduceLightFlicker], L"On", 1);
     addChoice(rows[VerticalSync], L"Off", 0);
     addChoice(rows[VerticalSync], L"On", 1);
     addChoice(rows[FrameLimit], L"Unlimited", 0);
@@ -211,6 +214,7 @@ void populateChoices(Launcher& launcher) {
     selectValue(launcher, Brightness, settings.brightnessPercent);
     selectValue(launcher, FieldOfView, launcher.fieldOfView);
     selectValue(launcher, Bloom, settings.bloom);
+    selectValue(launcher, ReduceLightFlicker, settings.reduceLightFlicker);
     selectValue(launcher, VerticalSync, settings.verticalSync);
     selectValue(launcher, FrameLimit, settings.frameRateLimit);
     selectValue(launcher, Resolution, settings.renderHeight);
@@ -229,7 +233,7 @@ void createControls(HWND window, Launcher& launcher) {
     control(window, L"STATIC", L"Your current settings are loaded automatically.", 0,
             26, 40, 565, 20);
     for (size_t index = 0; index < RowCount; ++index) {
-        const int y = 76 + int(index) * 36;
+        const int y = 76 + int(index) * 34;
         control(window, L"STATIC", kRowNames[index], 0, 26, y + 4, 164, 22);
         launcher.rows[index].combo = control(window, L"COMBOBOX", L"",
             CBS_DROPDOWNLIST | CBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP,
@@ -260,6 +264,7 @@ void saveAndLaunch(HWND window, Launcher& launcher) {
     settings.brightnessPercent = unsigned(chosenValue(launcher, Brightness));
     const float fov = float(chosenValue(launcher, FieldOfView));
     settings.bloom = chosenValue(launcher, Bloom) != 0;
+    settings.reduceLightFlicker = chosenValue(launcher, ReduceLightFlicker) != 0;
     settings.verticalSync = chosenValue(launcher, VerticalSync) != 0;
     settings.frameRateLimit = unsigned(chosenValue(launcher, FrameLimit));
     settings.renderHeight = unsigned(chosenValue(launcher, Resolution));
