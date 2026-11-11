@@ -8,10 +8,18 @@ inline bool takeNativeMessage(MSG& message) noexcept {
     return PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE) && message.message != WM_QUIT;
 }
 
+#if defined(DARK_PGO_GENERATE)
+// Profile-instrumented builds (CMake DARK_PGO=generate) write their counters
+// at exit, which TerminateProcess skips.
+extern "C" int __llvm_profile_write_file(void);
+#endif
 // Original game workers still run at launcher shutdown. ExitProcess kills
 // them before DLL_PROCESS_DETACH, which can deadlock if a worker held a lock
 // needed by a DLL. Call only after explicit cleanup and log persistence.
 [[noreturn]] inline void terminateNativeProcess(UINT status) noexcept {
+#if defined(DARK_PGO_GENERATE)
+    __llvm_profile_write_file();
+#endif
     TerminateProcess(GetCurrentProcess(), status);
     // Self-termination never returns on success. Keep the function noreturn
     // even if the operating system rejects the process termination request.

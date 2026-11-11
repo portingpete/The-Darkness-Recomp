@@ -1,0 +1,267 @@
+--- a/XenonRecomp/recompiler.cpp
++++ b/XenonRecomp/recompiler.cpp
+@@ -1,6 +1,7 @@
+ #include "pch.h"
+ #include "recompiler.h"
+ #include <xex_patcher.h>
++#include <cctype>
+ 
+ static uint64_t ComputeMask(uint32_t mstart, uint32_t mstop)
+ {
+@@ -316,7 +317,7 @@ bool Recompiler::Recompile(
+     auto r = [&](size_t index)
+         {
+             if ((config.nonArgumentRegistersAsLocalVariables && (index == 0 || index == 2 || index == 11 || index == 12)) || 
+-                (config.nonVolatileRegistersAsLocalVariables && index >= 14))
++                (nonVolatileLocal && index >= 14))
+             {
+                 localVariables.r[index] = true;
+                 return fmt::format("r{}", index);
+@@ -327,7 +328,7 @@ bool Recompiler::Recompile(
+     auto f = [&](size_t index)
+         {
+             if ((config.nonArgumentRegistersAsLocalVariables && index == 0) ||
+-                (config.nonVolatileRegistersAsLocalVariables && index >= 14))
++                (nonVolatileLocal && index >= 14))
+             {
+                 localVariables.f[index] = true;
+                 return fmt::format("f{}", index);
+@@ -338,7 +339,7 @@ bool Recompiler::Recompile(
+     auto v = [&](size_t index)
+         {
+             if ((config.nonArgumentRegistersAsLocalVariables && (index >= 32 && index <= 63)) ||
+-                (config.nonVolatileRegistersAsLocalVariables && ((index >= 14 && index <= 31) || (index >= 64 && index <= 127))))
++                (nonVolatileLocal && ((index >= 14 && index <= 31) || (index >= 64 && index <= 127))))
+             {
+                 localVariables.v[index] = true;
+                 return fmt::format("v{}", index);
+@@ -435,9 +436,23 @@ bool Recompiler::Recompile(
+ 
+                 if (targetSymbol != image.symbols.end() && targetSymbol->address == address && targetSymbol->type == Symbol_Function)
+                 {
+-                    if (config.nonVolatileRegistersAsLocalVariables && (targetSymbol->name.find("__rest") == 0 || targetSymbol->name.find("__save") == 0))
++                    if (nonVolatileLocal && (targetSymbol->name.find("__rest") == 0 || targetSymbol->name.find("__save") == 0))
+                     {
+-                        // print nothing
++                        // The register saves and restores are elided, but the GPR
++                        // helpers also store and reload the return address at
++                        // -8(r1). Keep that slot, r12 and LR exact for stack
++                        // walkers, native hooks and callers that observe LR.
++                        const auto& helper = targetSymbol->name;
++                        if (helper.starts_with("__savegprlr_"))
++                        {
++                            println("\tPPC_STORE_U32({}.u32 + -8, {}.u32);", r(1), r(12));
++                        }
++                        else if (helper.starts_with("__restgprlr_"))
++                        {
++                            println("\t{}.u64 = PPC_LOAD_U32({}.u32 + -8);", r(12), r(1));
++                            if (!config.skipLr)
++                                println("\tctx.lr = {}.u64;", r(12));
++                        }
+                     }
+                     else
+                     {
+@@ -753,11 +768,55 @@ bool Recompiler::Recompile(
+         break;
+ 
+     case PPC_INST_BL:
++    {
++        // Publish caller locals that a native override of the callee reads
++        // from the context, then restore the context: functions that keep
++        // their registers in ctx rely on callees preserving them.
++        std::vector<std::string> synced;
++        if (auto sync = config.registerSyncs.find(base); sync != config.registerSyncs.end())
++        {
++            usedRegisterSyncs.emplace(base);
++            for (auto& reg : sync->second.registers)
++            {
++                std::string local;
++                if (reg.size() >= 2 && reg[0] == 'r' && std::isdigit(reg[1]))
++                    local = r(std::atoi(reg.c_str() + 1));
++                else if (reg.size() >= 2 && reg[0] == 'f' && std::isdigit(reg[1]))
++                    local = f(std::atoi(reg.c_str() + 1));
++                else if (reg.size() >= 2 && reg[0] == 'v' && std::isdigit(reg[1]))
++                    local = v(std::atoi(reg.c_str() + 1));
++                else
++                {
++                    fmt::println("ERROR: register_sync at {:X} names unsupported register {}", base, reg);
++                    ++diagnosticCount;
++                    continue;
++                }
++                if (local.starts_with("ctx."))
++                    continue; // already in the context for this function
++                synced.push_back(local);
++            }
++        }
++        if (!synced.empty())
++        {
++            println("\t{{");
++            for (auto& local : synced)
++            {
++                println("\tconst auto sync_{0} = ctx.{0};", local);
++                println("\tctx.{0} = {0};", local);
++            }
++        }
+         if (!config.skipLr)
+             println("\tctx.lr = 0x{:X};", base + 4);
+         printFunctionCall(insn.operands[0]);
++        if (!synced.empty())
++        {
++            for (auto& local : synced)
++                println("\tctx.{0} = sync_{0};", local);
++            println("\t}}");
++        }
+         csrState = CSRState::Unknown; // the call could change it
+         break;
++    }
+ 
+     case PPC_INST_BLE:
+         printConditionalBranch(true, "gt");
+@@ -2645,6 +2704,7 @@ void Recompiler::FindReachableInstructions(const Function& fn)
+ 
+ bool Recompiler::Recompile(const Function& fn)
+ {
++    nonVolatileLocal = config.NonVolatileAsLocal(fn.base);
+     FindReachableInstructions(fn);
+     auto base = fn.base;
+     auto end = base + fn.size;
+@@ -2989,6 +3049,15 @@ bool Recompiler::Recompile(const std::filesystem::path& headerFilePath)
+         Recompile(functions[i]);
+     }
+ 
++    for (auto& [address, sync] : config.registerSyncs)
++    {
++        if (!usedRegisterSyncs.contains(address))
++        {
++            fmt::println("ERROR: register_sync at {:X} is not a recompiled bl instruction", address);
++            ++diagnosticCount;
++        }
++    }
++
+     SaveCurrentOutData();
+     fmt::println("Translation units: {}", cppFileIndex);
+     fmt::println("Semantic diagnostics: {}", diagnosticCount);
+--- a/XenonRecomp/recompiler.h
++++ b/XenonRecomp/recompiler.h
+@@ -36,6 +36,10 @@ struct Recompiler
+     RecompilerConfig config;
+     std::set<size_t> instructionAddresses;
+     size_t diagnosticCount = 0;
++    // Whether the function being recompiled keeps non-volatile registers in
++    // locals (see RecompilerConfig::NonVolatileAsLocal).
++    bool nonVolatileLocal = false;
++    std::unordered_set<uint32_t> usedRegisterSyncs;
+ 
+     void FindReachableInstructions(const Function& fn);
+ 
+--- a/XenonRecomp/recompiler_config.cpp
++++ b/XenonRecomp/recompiler_config.cpp
+@@ -47,6 +47,36 @@ void RecompilerConfig::Load(const std::string_view& configFilePath)
+         if (restVmx64Address == 0) fmt::println("ERROR: __restvmx_64 address is unspecified");
+         if (saveVmx64Address == 0) fmt::println("ERROR: __savevmx_64 address is unspecified");
+ 
++        if (auto rangeArray = main["non_volatile_local_ranges"].as_array())
++        {
++            for (auto& range : *rangeArray)
++            {
++                auto* pair = range.as_array();
++                if (pair == nullptr || pair->size() != 2 || !(*pair)[0].value<uint32_t>() || !(*pair)[1].value<uint32_t>())
++                {
++                    fmt::println("ERROR: non_volatile_local_ranges entries must be [start, end] pairs");
++                    continue;
++                }
++                uint32_t start = *(*pair)[0].value<uint32_t>();
++                uint32_t end = *(*pair)[1].value<uint32_t>();
++                if (end <= start)
++                    fmt::println("ERROR: empty non_volatile_local_ranges entry {:X}-{:X}", start, end);
++                else
++                    nonVolatileLocalRanges.emplace_back(start, end);
++            }
++        }
++
++        if (auto contextArray = main["non_volatile_context_functions"].as_array())
++        {
++            for (auto& entry : *contextArray)
++            {
++                if (auto address = entry.value<uint32_t>())
++                    nonVolatileContextFunctions.emplace(*address);
++                else
++                    fmt::println("ERROR: non_volatile_context_functions entries must be addresses");
++            }
++        }
++
+         if (auto functionsArray = main["functions"].as_array())
+         {
+             for (auto& func : *functionsArray)
+@@ -93,6 +123,28 @@ void RecompilerConfig::Load(const std::string_view& configFilePath)
+         }
+     }
+ 
++    if (auto syncArray = toml["register_sync"].as_array())
++    {
++        for (auto& entry : *syncArray)
++        {
++            auto& table = *entry.as_table();
++            auto address = table["address"].value<uint32_t>();
++            if (!address)
++            {
++                fmt::println("ERROR: register_sync entry without an address");
++                continue;
++            }
++            RecompilerRegisterSync sync;
++            if (auto registerArray = table["registers"].as_array())
++            {
++                for (auto& reg : *registerArray)
++                    sync.registers.push_back(*reg.value<std::string>());
++            }
++            if (!registerSyncs.emplace(*address, std::move(sync)).second)
++                fmt::println("ERROR: duplicate register_sync at {:X}", *address);
++        }
++    }
++
+     if (auto midAsmHookArray = toml["midasm_hook"].as_array())
+     {
+         for (auto& entry : *midAsmHookArray)
+--- a/XenonRecomp/recompiler_config.h
++++ b/XenonRecomp/recompiler_config.h
+@@ -22,6 +22,11 @@ struct RecompilerMidAsmHook
+     bool afterInstruction = false;
+ };
+ 
++struct RecompilerRegisterSync
++{
++    std::vector<std::string> registers;
++};
++
+ struct RecompilerConfig
+ {
+     std::string directoryPath;
+@@ -39,6 +44,28 @@ struct RecompilerConfig
+     bool crRegistersAsLocalVariables = false;
+     bool nonArgumentRegistersAsLocalVariables = false;
+     bool nonVolatileRegistersAsLocalVariables = false;
++    // Per-function non-volatile locals: functions whose base lies in one of
++    // these [start, end) ranges keep r14-r31, f14-f31, v14-v31 and v64-v127 in
++    // C++ locals unless listed in nonVolatileContextFunctions.
++    std::vector<std::pair<uint32_t, uint32_t>> nonVolatileLocalRanges;
++    std::unordered_set<uint32_t> nonVolatileContextFunctions;
++    // Call sites whose callee (or a native override of it) reads the caller's
++    // non-volatile registers from PPCContext. The listed locals are published
++    // to the context for the call and the previous context values restored.
++    std::unordered_map<uint32_t, RecompilerRegisterSync> registerSyncs;
++    bool NonVolatileAsLocal(uint32_t function) const
++    {
++        if (nonVolatileRegistersAsLocalVariables)
++            return true;
++        if (nonVolatileContextFunctions.contains(function))
++            return false;
++        for (auto& [start, end] : nonVolatileLocalRanges)
++        {
++            if (function >= start && function < end)
++                return true;
++        }
++        return false;
++    }
+     uint32_t restGpr14Address = 0;
+     uint32_t saveGpr14Address = 0;
+     uint32_t restFpr14Address = 0;

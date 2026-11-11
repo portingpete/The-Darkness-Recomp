@@ -86,6 +86,7 @@ public:
     void inspectNextWorldFrame() {inspectionPending_=true;}
     void setDiagnostics(bool enabled) {if(world_)world_->setDiagnostics(enabled);}
     void printPerformance() const {if(world_)world_->printPerformance();}
+    WorldRendererD3D11::WorkCounters workCounters() const {return world_?world_->workCounters():WorldRendererD3D11::WorkCounters{};}
     size_t textureBudget() const {return world_->textureBudget();}
     // Between complete frames only; optional preloading cannot change bindings.
     bool preloadImage(const std::shared_ptr<const ColorImage>& image);

@@ -13,12 +13,24 @@ enum class Section : uint8_t { Guest, Rendering, Audio, FileIO, Wait, Present, O
 
 #if DARK_STALL_PROFILER
 extern std::atomic<bool> enabledFlag;
+extern std::atomic<bool> hotFlag;
 inline bool enabled() noexcept { return enabledFlag.load(std::memory_order_acquire); }
+// Call sites passing `hot` run once or more per world draw and never block on
+// their own (any wait inside them has its own scope). Timing them made the
+// engine thread about 20% slower in busy views, so they are profiled only
+// with DARKRECOMP_STALL_PROFILE=2.
+inline bool hotEnabled() noexcept { return hotFlag.load(std::memory_order_relaxed); }
+struct Hot {};
+inline constexpr Hot hot{};
 class Scope {
 public:
     Scope(Section section, const char* function, uint32_t guestPc = 0,
           uint32_t caller = 0, uint64_t object = 0, const char* objectKind = nullptr) noexcept {
         if (enabled()) begin(section, function, guestPc, caller, object, objectKind);
+    }
+    Scope(Hot, Section section, const char* function, uint32_t guestPc = 0,
+          uint32_t caller = 0, uint64_t object = 0, const char* objectKind = nullptr) noexcept {
+        if (hotEnabled()) begin(section, function, guestPc, caller, object, objectKind);
     }
     ~Scope() noexcept { if (buffer_) end(); }
     Scope(const Scope&) = delete;
@@ -38,17 +50,27 @@ void initializeFromEnvironment() noexcept;
 // One stream per calling thread. First boundary starts an interval; subsequent
 // boundaries measure start-to-start wall time, including original pacing.
 void frameBoundary(const char* name = "display") noexcept;
+// Optional, after initialization and before the guest thread starts: report
+// only frames slower than thresholdMs (default 16.67) and, when logCalls is
+// false, omit standalone [STALL] call / [WAIT] lines. Slow-frame reports keep
+// their ranked contributors either way.
+void configureFrameReports(double thresholdMs, bool logCalls) noexcept;
 void shutdown() noexcept;
 #else
 inline bool enabled() noexcept { return false; }
+struct Hot {};
+inline constexpr Hot hot{};
 class Scope {
 public:
     constexpr Scope(Section, const char*, uint32_t = 0, uint32_t = 0,
+                    uint64_t = 0, const char* = nullptr) noexcept {}
+    constexpr Scope(Hot, Section, const char*, uint32_t = 0, uint32_t = 0,
                     uint64_t = 0, const char* = nullptr) noexcept {}
     constexpr ~Scope() noexcept {}
 };
 inline void initializeFromEnvironment() noexcept {}
 inline void frameBoundary(const char* = "display") noexcept {}
+inline void configureFrameReports(double, bool) noexcept {}
 inline void shutdown() noexcept {}
 #endif
 }

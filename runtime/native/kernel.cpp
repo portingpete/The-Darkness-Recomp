@@ -2647,7 +2647,34 @@ PPC_FUNC(__imp__RtlFillMemoryUlong) {
 }
 PPC_FUNC(__imp__VdPersistDisplay) { StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, ctx.lastFunction, uint32_t(ctx.lr)); if (ctx.r4.u32) memory->write32(ctx.r4.u32, 0); ctx.r3.u64 = 0; }
 PPC_FUNC(__imp__VdSetDisplayMode) { StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = 0; }
-PPC_FUNC(__imp__VdGetCurrentDisplayInformation) { StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = 0; }
+// X_DISPLAY_INFO (0x58 bytes), filled for the mode VdQueryVideoMode reports.
+// D3D's swap copies display_width/height (+0x48/+0x4A) and actual_display_width
+// (+0x56) into the device and divides by them when it rebuilds the scaler, so
+// the structure must never be left as uninitialized guest stack.
+PPC_FUNC(__imp__VdGetCurrentDisplayInformation) {
+    StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, ctx.lastFunction, uint32_t(ctx.lr));
+    const uint32_t info = ctx.r3.u32;
+    if (info && guestBufferWritable(info, 0x58)) {
+        const auto mode = DarkRecomp::Native::nativeVideoMode();
+        memset(base + info, 0, 0x58);
+        auto put16 = [&](uint32_t offset, uint32_t value) { PPC_STORE_U16(info + offset, uint16_t(value)); };
+        put16(0x00, mode.width);                      // front_buffer_width
+        put16(0x02, mode.height);                     // front_buffer_height
+        memory->write32(info + 0x08 + 0x08, mode.width);  // scaler source rect x2
+        memory->write32(info + 0x08 + 0x0C, mode.height); // scaler source rect y2
+        memory->write32(info + 0x08 + 0x10, mode.width);  // scaled output width
+        memory->write32(info + 0x08 + 0x14, mode.height); // scaled output height
+        memory->write32(info + 0x08 + 0x18, 1);           // vertical filter type
+        memory->write32(info + 0x08 + 0x28, 1);           // horizontal filter type
+        put16(0x40, 320); put16(0x42, 180);               // display window overscan
+        put16(0x44, 320); put16(0x46, 180);
+        put16(0x48, mode.width);                      // display_width
+        put16(0x4A, mode.height);                     // display_height
+        memory->write32(info + 0x4C, 0x42700000);     // display_refresh_rate 60.0f
+        put16(0x56, mode.width);                      // actual_display_width
+    }
+    ctx.r3.u64 = 0;
+}
 PPC_FUNC(__imp__VdInitializeEngines) { StallProfiler::Scope stallProfile(StallProfiler::Section::Rendering, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = 0; }
 PPC_FUNC(__imp__ExRegisterTitleTerminateNotification) { StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr)); ctx.r3.u64 = 0; }
 PPC_FUNC(__imp__VdSetGraphicsInterruptCallback) {
@@ -2845,7 +2872,7 @@ PPC_FUNC(__imp__KeTlsFree) {
     ctx.r3.u64 = 1;
 }
 PPC_FUNC(__imp__KeTlsGetValue) {
-    StallProfiler::Scope stallProfile(StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
+    StallProfiler::Scope stallProfile(StallProfiler::hot, StallProfiler::Section::Other, __func__, ctx.lastFunction, uint32_t(ctx.lr));
     uint32_t index = ctx.r3.u32;
     ctx.r3.u64 = index < 64 ? memory->read32(memory->dynamicTls(ctx) + index * 4) : 0;
 }

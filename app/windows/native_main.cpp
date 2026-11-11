@@ -20,6 +20,7 @@
 #include "display_settings.h"
 #include "runtime/native/display_mode.h"
 #include "runtime/native/fov_settings.h"
+#include "runtime/native/draw_distance.h"
 #include "runtime/native/language_settings.h"
 #include "runtime/native/video_settings_menu.h"
 #include "runtime/native/menu_pointer.h"
@@ -28,6 +29,9 @@
 #include "runtime/native/developer_tools.h"
 #include "test_input_parser.h"
 #include "frame_metrics.h"
+#include "frame_timeline.h"
+#include "renderer/d3d11/gpu_frame_timer.h"
+#include "runtime/native/frame_io_counters.h"
 #include "renderer/engine/engine_performance.h"
 #include "frame_pacer.h"
 #include "display_reuse.h"
@@ -164,12 +168,15 @@ int wmain(int argc, wchar_t** argv) {
     bool sampleEngine=false,sampleWorkers=false;
     unsigned sceneWorkers=0;
     bool traceFrameHitches=false;
+    std::filesystem::path frameTimelinePath;
     std::filesystem::path previewFrame,testInputPath,testQuitPath,texturePackPath,textureDumpPath;
     bool testStart=false,testSkipIntros=false;
     bool fullscreen = false;
     uint32_t windowWidth = 0, windowHeight = 0, renderHeight = 720;
     float commandLineFov = 0;
     bool overrideFov = false;
+    unsigned commandLineDrawDistance = 0;
+    bool overrideDrawDistance = false;
     float commandLineMouseSensitivity = kDefaultMouseSensitivity;
     bool overrideMouseSensitivity = false;
     GameLanguage commandLineLanguage = GameLanguage::System;
@@ -197,6 +204,10 @@ int wmain(int argc, wchar_t** argv) {
         else if (arg == L"--renderer-smoke") rendererSmoke = true;
         else if (arg == L"--profile-engine") profileEngineCpu=true;
         else if (arg == L"--trace-frame-hitches") traceFrameHitches=true;
+        else if (arg == L"--frame-timeline") {
+            if (i + 1 >= argc || !*argv[i + 1]) { fputs("--frame-timeline requires a new CSV path.\n", stderr); return 1; }
+            frameTimelinePath = argv[++i];
+        }
         else if (arg == L"--sample-engine") sampleEngine=true;
         else if (arg == L"--sample-renderer") sampleRendererCpu=true;
         else if (arg == L"--sample-workers") sampleWorkers=true;
@@ -239,6 +250,20 @@ int wmain(int argc, wchar_t** argv) {
             }
             overrideFov = true;
         }
+        else if (arg == L"--draw-distance" && i + 1 < argc) {
+            const std::wstring_view text = argv[++i];
+            unsigned value = 0;
+            bool valid = !text.empty() && text.size() <= 5;
+            for (const wchar_t c : text) {
+                if (c < L'0' || c > L'9') { valid = false; break; }
+                value = value * 10 + unsigned(c - L'0');
+            }
+            if (!valid || !validDrawDistance(value)) {
+                fputs("Draw distance must be 0 (Original) or 1 through 65535 world units.\n", stderr); return 1;
+            }
+            commandLineDrawDistance = value;
+            overrideDrawDistance = true;
+        }
         else if ((arg == L"--width" || arg == L"--height" || arg == L"--render-height") && i + 1 < argc) {
             uint32_t value = 0;
             if (!parseDisplayDimension(argv[++i], value)) { fputs("Invalid display dimension.\n", stderr); return 1; }
@@ -262,13 +287,16 @@ int wmain(int argc, wchar_t** argv) {
             fputs("  --user-data-dir <directory> isolates settings, saves and application caches; omitted preserves installed paths.\n", stderr);
             fputs("  Starts with gameplay rendering and sound. Without --game-dir, finds Darkness beside the installed EXE or its parent folders.\n", stderr);
             fputs("  --test-input file lines (max 64, own-process diagnostics only): numeric '<key> [<holdMs 1..10000>]' (bare menu keys hold 250ms, I/J/K/L hold 2000ms; gameplay keys WASD/E/R/F/X/Z/C/Q/G/1-4/Tab/Back/Shift/Ctrl plus arrows/Space/Return/Esc/IJKL; 116=F5 panel,117=gated F6); 'mouse <dx> <dy>' (+/-10000, held 2000ms); 'capture' game screenshots; '0' inspects; 'dev open|close|status|defaults', 'dev mission <ID>', 'dev speed <preset>', 'dev invincible|noclip|resolution on|off', 'dev darkness unlock|max', 'dev capture <absolute BMP path>'; an invalid line blocks later commands until that line is fixed.\n", stderr);
+            fputs("  A recording is such a file written in advance: 'wait <ms 1..600000>', 'wait world|menu|player' ('menu' and 'player' need the developer panel open), '#' comment lines and 'quit' (normal shutdown) let it play unattended; waits ahead of the first command keep --test-skip-intros active.\n", stderr);
             fputs("  Complete each --test-input command with a newline; an owned worker reads at 250ms intervals and publishes after two matching reads. Dispatch checks every 250ms (normally about 750ms total latency). Maximum file size: 256KiB.\n", stderr);
             fputs("  --test-quit-file: the path must not exist at startup. Create it with exactly quit followed by LF or CRLF to request normal window shutdown after two matching background reads. This works independently of --test-input.\n", stderr);
             fputs("  --texture-pack <directory> opts into content-keyed RGBA8 DDS world texture replacements. --dump-textures <new directory> exports eligible originals for authoring (bounded to256 files/128MiB). Omitted leaves original textures.\n",stderr);
             fputs("  Display: --fullscreen or --windowed; --width W --height H selects window/aspect size; --render-height H controls internal resolution (180..2160, default 720). Alt+Enter toggles borderless fullscreen; enable the F6 resolution shortcut in the F5 developer panel to switch live 720p/1440p when started with a 720-high guest mode (disabled by default).\n", stderr);
             fputs("  Options > Video Settings contains native PC graphics controls. Saved settings apply unless explicitly overridden. --vsync / --no-vsync overrides vertical sync; --fov 0 (Original) or 60..120 overrides horizontal FOV at 16:9 for this run.\n", stderr);
+            fputs("  --draw-distance N skips generic and physics objects beyond N world units for this run (0 = Original; default 1500; saved as [Display] DrawDistance).\n", stderr);
             fputs("  --trace-frame-hitches records bounded slow-frame stage timings without enabling per-draw profiling or instruction sampling.\n", stderr);
             fputs("  --sample-renderer samples only active rendering on this game's display thread; opt-in diagnostics add overhead.\n", stderr);
+            fputs("  --frame-timeline <new CSV path> records one row per presented frame (display stages, engine frame timing, GPU time, uploads, file reads); F9 adds a marker. See Launch.cmd frame-drops.\n", stderr);
             fputs("  --shadow-capture <new directory> enables two F8 captures of complete rendered frames, shadow resources and matching screenshots.\n",stderr);
             fputs("  --scene-workers N opts into experimental parallel geometry/texture jobs (up to N helpers); default 0, serial.\n",stderr);
             return 1;
@@ -281,6 +309,12 @@ int wmain(int argc, wchar_t** argv) {
     }
     if((rendererSmoke || !enginePreview) && (!texturePackPath.empty() || !textureDumpPath.empty())) {
         fputs("Texture packs/dumps require the gameplay renderer.\n",stderr); return 1;
+    }
+    if (!frameTimelinePath.empty() && (rendererSmoke || !enginePreview)) {
+        fputs("The frame timeline requires the gameplay renderer.\n", stderr); return 1;
+    }
+    if (!frameTimelinePath.empty() && std::filesystem::exists(frameTimelinePath)) {
+        fputs("The frame timeline CSV path must not exist yet.\n", stderr); return 1;
     }
     puts("DarkRecomp native Windows AOT runtime - development build, gameplay incomplete");
     try {
@@ -303,6 +337,10 @@ int wmain(int argc, wchar_t** argv) {
         initializeGameLanguageSetting(loadGameLanguage(settingsPath));
         if (overrideLanguage) overrideGameLanguageForRun(commandLineLanguage);
         setFieldOfViewSetting(overrideFov ? commandLineFov : DarkRecomp::loadFieldOfView(settingsPath));
+        setDrawDistanceSetting(overrideDrawDistance ? commandLineDrawDistance : DarkRecomp::loadDrawDistance(settingsPath));
+        if (drawDistanceSetting())
+            std::printf("[DrawDistance] objects beyond %u world units are not drawn (characters, pickups and engine paths unchanged)\n",
+                        drawDistanceSetting());
         auto activeGraphics = DarkRecomp::loadGraphicsSettings(settingsPath);
         if (overrideFps) activeGraphics.frameRateLimit = targetFps;
         if (overrideFullscreen) activeGraphics.fullscreen = fullscreen;
@@ -492,7 +530,8 @@ int wmain(int argc, wchar_t** argv) {
         ULONGLONG testKeyHoldMs=kTestInputMenuHoldMs;
         InputCounters testKeyBase{};
         unsigned testInputInvalidLogs=0;
-        size_t liveInputCount=0,captureInputCount=0;
+        size_t liveInputCount=0,captureInputCount=0,testWaitLine=0;
+        ULONGLONG testWaitUntil=0;
         ULONGLONG inputCaptureAt=0,nextInputRead=0;bool liveKey=false;
         NativeTestInputFileReader testInputReader(testInputPath,
             [](const std::filesystem::path& path, HANDLE stop) {
@@ -522,7 +561,7 @@ int wmain(int argc, wchar_t** argv) {
         NativeFramePacer framePacer(targetFps);
         // Present/input thread above normal: level loads saturate cores with
         // engine workers and previously starved presentation for seconds.
-        configureGameThread("display",1,THREAD_PRIORITY_ABOVE_NORMAL);
+        configureGameThread("display",THREAD_PRIORITY_ABOVE_NORMAL);
         struct StartupSceneWorkers {
             SceneWorkPool* pool = nullptr;
             ~StartupSceneWorkers() { if (pool) pool->stopForStartupCancellation(); }
@@ -535,10 +574,40 @@ int wmain(int argc, wchar_t** argv) {
         // focus. Inputs ignored during loading cannot replay into the guest.
         nativeInput().attachWindow(window);
         nativeInput().windowMessage(window, WM_ACTIVATEAPP, GetForegroundWindow() == window, 0);
+        // Opt-in frame timeline. Producer timing, file-read counters and the
+        // stall-report threshold must all be configured before guest entry.
+        std::unique_ptr<DarkRecomp::FrameTimeline::Recorder> frameTimeline;
+        DarkRecomp::GpuFrameTimer gpuTimer;
+        if (!frameTimelinePath.empty()) {
+            frameTimeline = std::make_unique<DarkRecomp::FrameTimeline::Recorder>(frameTimelinePath);
+            setPreviewFrameTimelineEnabled(true);
+            FrameIoCounters::enabled = true;
+            const bool gpuTiming = gpuTimer.init(display.GetDevice(), display.GetContext());
+            const double slowMs = DarkRecomp::FrameTimeline::slowThresholdMs(targetFps);
+            // Report only frames that are actually late; ranked contributors
+            // of each slow frame replace the per-call wait lines.
+            StallProfiler::configureFrameReports(slowMs, false);
+            char text[512];
+            std::snprintf(text, sizeof(text), "darkrecomp_frame_timeline=1 target_fps=%u vsync=%u budget_ms=%.3f slow_threshold_ms=%.3f",
+                targetFps, unsigned(activeGraphics.verticalSync), DarkRecomp::FrameTimeline::budgetMs(targetFps), slowMs);
+            frameTimeline->comment(text);
+            std::snprintf(text, sizeof(text), "output=%ldx%ld render=%ux%u scale=%u fullscreen=%u antialiasing=%u",
+                actualClient.right, actualClient.bottom, renderSize.width, renderSize.height, resolutionScale,
+                unsigned(fullscreen), unsigned(activeGraphics.antialiasing));
+            frameTimeline->comment(text);
+            std::snprintf(text, sizeof(text), "origin_qpc=%llu qpc_frequency=%llu origin_steady_ns=%lld stall_profiler=%u gpu_timing=%u",
+                frameTimeline->originQpc(), frameTimeline->qpcFrequency(), (long long)frameTimeline->originSteadyNs(),
+                unsigned(StallProfiler::enabled()), unsigned(gpuTiming));
+            frameTimeline->comment(text);
+            std::printf("[FrameTimeline] enabled csv=%s targetFps=%u slowThresholdMs=%.3f gpuTiming=%u stallProfiler=%u markerKey=F9\n",
+                reinterpret_cast<const char*>(frameTimelinePath.u8string().c_str()), targetFps, slowMs,
+                unsigned(gpuTiming), unsigned(StallProfiler::enabled()));
+        }
         StartupTrace::mark("guest-thread-create.begin");
         std::thread guest([&] {
             StartupTrace::mark("guest-thread.enter");
-            configureGameThread("engine",0);
+            configureGameThread("engine");
+            FrameIoCounters::engineThreadId.store(GetCurrentThreadId(), std::memory_order_relaxed);
             // The guest context is thread-local for diagnostics and APC delivery.
             currentContext = &ctx;
             guestStatus = runGuest(ctx, addressSpace.base());
@@ -560,9 +629,19 @@ int wmain(int argc, wchar_t** argv) {
         FrameOutlierTrace outlier;
         // Stage-boundary clocks work independently of per-draw profiling and
         // instruction sampling, so normal launches can diagnose slow frames.
-        const bool outlierOn = traceFrameHitches || profileEngineCpu;
+        const bool outlierOn = traceFrameHitches || profileEngineCpu || frameTimeline;
         outlier.reset(outlierOn ? FrameMetrics::now() : FrameMetrics::Clock::time_point{});
         outlier.setEnabled(outlierOn);
+        // Frame-timeline state: display-thread only. Cumulative samples are
+        // differenced at each accepted frame, so every row covers one interval.
+        uint64_t timelineGpuSerial = 0, timelineGpuId = 0, timelineStallSerial = 1;
+        unsigned timelineMarkers = 0;
+        bool timelineReportPending = false, timelineHaveBaseline = false;
+        std::optional<PreviewFrameDiagnostics> timelineProducer;
+        DarkRecomp::FrameTimeline::HostSample timelineHost;
+        FrameIoCounters::Totals timelineIo;
+        DarkRecomp::WorldRendererD3D11::WorkCounters timelineWork;
+        auto closeFrameTimeline = [&]() noexcept { if (frameTimeline) frameTimeline->close(); };
         std::printf("[FrameHitchTrace] enabled=%u thresholdMs=%.1f minLogGapMs=%.0f maxLines=%u profileEngine=%u sampleEngine=%u sampleWorkers=%u sampleRenderer=%u automaticCaptures=%u\n",
             unsigned(outlierOn), FrameOutlierTrace::kThresholdMs, FrameOutlierTrace::kMinEmitGapMs,
             FrameOutlierTrace::kMaxLines, unsigned(profileEngineCpu), unsigned(sampleEngine),
@@ -586,6 +665,14 @@ int wmain(int argc, wchar_t** argv) {
             while (takeProfiledNativeMessage(message)) {
                 StallProfiler::Scope dispatch(StallProfiler::Section::Other, "native message handling",
                     0, 0, message.message, "win32-message");
+                // F9 marks "I just saw a drop" in the timeline. The key is
+                // still dispatched normally, so a user binding keeps working.
+                if (frameTimeline && message.message == WM_KEYDOWN && message.wParam == VK_F9 &&
+                    !(message.lParam & (LPARAM(1) << 30))) {
+                    ++timelineMarkers;
+                    std::fprintf(stderr, "[FrameTimeline] marker=%u tMs=%.3f\n", timelineMarkers,
+                        FrameMetrics::ms(frameTimeline->origin(), FrameMetrics::now()));
+                }
                 if (keyboardMenuInputBlocked() && message.hwnd == window &&
                     (message.message == WM_KEYDOWN || message.message == WM_KEYUP ||
                      message.message == WM_SYSKEYDOWN || message.message == WM_SYSKEYUP)) {
@@ -743,6 +830,7 @@ int wmain(int argc, wchar_t** argv) {
                 }
             } catch (const std::exception& resizeError) {
                 std::                fprintf(stderr, "[Display] Resize failed: %s\n", resizeError.what());
+                closeFrameTimeline();
                 StallProfiler::shutdown();
                 fflush(nullptr);
                 terminateNativeProcess(6); // Guest threads still own the address space.
@@ -779,8 +867,36 @@ int wmain(int argc, wchar_t** argv) {
                     // Explicit diagnostic commands take over from automatic
                     // intro skipping, so synthetic Space cannot activate a
                     // menu while a live test is navigating it.
-                    if (!command.empty()) testSkipIntros = false;
+                    // A recording's waits and comments leave that skipping
+                    // on: they sit ahead of its first real command.
+                    const bool waiting = command.starts_with("wait ");
+                    if (!command.empty() && !waiting && command.front() != '#') testSkipIntros = false;
                     std::istringstream fields(command);
+                    if(!command.empty() && command.front()=='#') {liveInputCount=count;continue;}
+                    if(waiting) {
+                        TestInputWait waitKind=TestInputWait::Milliseconds;ULONGLONG waitMs=0;
+                        if(parseTestInputWaitLine(command,waitKind,waitMs)) {
+                            bool elapsed=false;
+                            if(waitKind==TestInputWait::Milliseconds) {
+                                if(testWaitLine!=count) {testWaitLine=count;testWaitUntil=inputNow+waitMs;}
+                                elapsed=inputNow>=testWaitUntil;
+                            } else if(waitKind==TestInputWait::World) elapsed=worldInputStart!=0;
+                            else {
+                                const auto developer=developerSnapshot();
+                                elapsed=waitKind==TestInputWait::Menu?developer.canLoadMission:developer.hasActivePlayer;
+                            }
+                            if(!elapsed)break;
+                            liveInputCount=count;
+                            std::printf("[InputTest] wait %zu done elapsed=%llu\n",count,inputNow-inputTestEpoch);
+                            continue;
+                        }
+                    }
+                    if(command=="quit") {
+                        liveInputCount=count;
+                        std::puts("[InputTest] script quit; closing native display normally.");
+                        PostMessageW(window, WM_CLOSE, 0, 0);
+                        break;
+                    }
                     if(command.starts_with("mouse ")) {
                         std::string token,extra;LONG dx=0,dy=0;
                         if(!(fields>>token>>dx>>dy) || (fields>>extra) || dx< -10000 || dx>10000 || dy< -10000 || dy>10000)break;
@@ -903,6 +1019,13 @@ int wmain(int argc, wchar_t** argv) {
                             pendingFrameColor=false;pendingFirstColor=0;pendingFrameVideo.reset();
                         }
                         if (outlierOn) takeEnd = FrameMetrics::now();
+                        if (frameTimeline) {
+                            if (part.first && !gpuTimer.open()) {
+                                gpuTimer.begin(++timelineGpuSerial);
+                                timelineGpuId = gpuTimer.open() ? timelineGpuSerial : 0;
+                            }
+                            if (part.last) timelineProducer = part.diagnostics;
+                        }
                         const auto renderStart = FrameMetrics::now();
                         setRenderSamplePhase(RenderSamplePhase::other);sampler.beginRender();
                         preview->render(previewMeshes,part);
@@ -978,9 +1101,13 @@ int wmain(int argc, wchar_t** argv) {
                     if(displayReuse.shouldCopy(preview->frameInProgress())) {
                         preview->copyToDisplay();displayCopied=true;
                     }
+                    // End GPU timing before pacing: a timestamp issued after
+                    // the frame-limiter sleep would count GPU idle time.
+                    if (frameTimeline && gpuTimer.open() && !preview->frameInProgress()) gpuTimer.end();
                     if (outlierOn) postEnd = FrameMetrics::now();
                 } catch (const std::exception& error) {
                     fprintf(stderr, "[EnginePreview] %s\n", error.what());
+                    closeFrameTimeline();
                     StallProfiler::shutdown();
                     fflush(nullptr);
                     terminateNativeProcess(6);
@@ -994,6 +1121,7 @@ int wmain(int argc, wchar_t** argv) {
                     framePacer.wait();
                 } catch (const std::exception& timerError) {
                     fprintf(stderr, "[Frame] Native frame timer failed: %s\n", timerError.what());
+                    closeFrameTimeline();
                     StallProfiler::shutdown();
                     fflush(nullptr);
                     terminateNativeProcess(6);
@@ -1011,7 +1139,7 @@ int wmain(int argc, wchar_t** argv) {
             const auto presentEnd = FrameMetrics::now();
             // A logical frame may span multiple queue polls and streamed parts.
             // Include all of that time, pacing and the existing Present call.
-            if (frameRendered || !preview) StallProfiler::frameBoundary("display");
+            if (frameRendered || !preview) { StallProfiler::frameBoundary("display"); ++timelineStallSerial; }
             if(shouldPresent)
                 performance.present(presentStatus, std::chrono::duration<double,std::milli>(presentEnd-presentStart).count());
             const bool isAccepted = shouldPresent && frameRendered && presentStatus == S_OK;
@@ -1041,10 +1169,80 @@ int wmain(int argc, wchar_t** argv) {
                         outlierReport.sum[FrameOutlierTrace::Tail], outlierReport.max[FrameOutlierTrace::Tail],
                         outlierReport.residualMs, outlierReport.emitted, outlierReport.suppressed);
                 }
+                if (frameTimeline && isAccepted && preview) {
+                    const auto host = DarkRecomp::FrameTimeline::HostSample::take();
+                    const auto io = FrameIoCounters::snapshot();
+                    const auto work = preview->workCounters();
+                    if (timelineHaveBaseline && outlierReport.serial > 1) {
+                        using O = FrameOutlierTrace;
+                        DarkRecomp::FrameTimeline::Row row;
+                        row.frame = outlierReport.serial;
+                        row.gpuId = timelineGpuId;
+                        row.stallSerial = StallProfiler::enabled() ? timelineStallSerial : 0;
+                        row.tMs = FrameMetrics::ms(frameTimeline->origin(), presentEnd);
+                        row.intervalMs = outlierReport.intervalMs;
+                        row.targetFps = activeGraphics.frameRateLimit;
+                        row.vsync = activeGraphics.verticalSync;
+                        row.world = frameWorld;
+                        row.report = timelineReportPending;
+                        row.loops = outlierReport.loops;
+                        row.presentNotOk = outlierReport.presentOccluded + outlierReport.presentFailed + outlierReport.presentOther;
+                        row.markers = timelineMarkers;
+                        row.pumpMs = outlierReport.sum[O::Pump]; row.takeMs = outlierReport.sum[O::Take];
+                        row.takeMaxMs = outlierReport.max[O::Take];
+                        row.renderMs = outlierReport.sum[O::Render]; row.postMs = outlierReport.sum[O::Post];
+                        row.pacerMs = outlierReport.sum[O::Pacer]; row.presentMs = outlierReport.sum[O::Present];
+                        row.tailMs = outlierReport.sum[O::Tail]; row.residualMs = outlierReport.residualMs;
+                        if (host.valid && timelineHost.valid) {
+                            row.displayCpuMs = double(host.displayCpu100ns - timelineHost.displayCpu100ns) / 1e4;
+                            row.processCpuMs = double(host.processCpu100ns - timelineHost.processCpu100ns) / 1e4;
+                            row.pageFaults = uint32_t(uint32_t(host.pageFaults) - uint32_t(timelineHost.pageFaults));
+                        }
+                        if (timelineProducer) {
+                            const auto& p = *timelineProducer;
+                            const int64_t presentNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                presentEnd.time_since_epoch()).count();
+                            row.engineFrame = int64_t(p.logicalFrame);
+                            row.engineWallMs = p.producerWallNs >= 0 ? double(p.producerWallNs) / 1e6 : -1;
+                            row.engineCpuMs = p.producerCpuNs >= 0 ? double(p.producerCpuNs) / 1e6 : -1;
+                            row.enginePublishWaitMs = double(p.publishWaitNs) / 1e6;
+                            row.engineBoundaryMs = double(p.producerBoundaryNs - frameTimeline->originSteadyNs()) / 1e6;
+                            row.engineLatencyMs = double(presentNs - p.producerBoundaryNs) / 1e6;
+                            row.engineParts = p.parts; row.engineCommands = p.commands; row.engineWorldDraws = p.worldCommands();
+                        }
+                        row.ioReads = io.reads - timelineIo.reads; row.ioBytes = io.bytes - timelineIo.bytes;
+                        row.ioMs = double(io.nanoseconds - timelineIo.nanoseconds) / 1e6;
+                        row.engineIoMs = double(io.engineNanoseconds - timelineIo.engineNanoseconds) / 1e6;
+                        row.draws = work.draws - timelineWork.draws;
+                        row.imageUploads = work.imageUploads - timelineWork.imageUploads;
+                        row.imageUploadBytes = work.imageUploadBytes - timelineWork.imageUploadBytes;
+                        row.imageUploadMs = work.imageUploadMs - timelineWork.imageUploadMs;
+                        row.geometryUploads = work.geometryUploads - timelineWork.geometryUploads;
+                        row.geometryUploadBytes = work.geometryUploadBytes - timelineWork.geometryUploadBytes;
+                        row.geometryUploadMs = work.geometryUploadMs - timelineWork.geometryUploadMs;
+                        row.transientUploadBytes = work.transientUploadBytes - timelineWork.transientUploadBytes;
+                        row.transientUploadMs = work.transientUploadMs - timelineWork.transientUploadMs;
+                        row.surfaceCreates = work.surfaceCreates - timelineWork.surfaceCreates;
+                        row.surfaceMs = work.surfaceMs - timelineWork.surfaceMs;
+                        row.decodeMs = work.decodeMs - timelineWork.decodeMs;
+                        row.newVertexShaders = work.vertexShaders - timelineWork.vertexShaders;
+                        row.vertexShaderCompiles = work.vertexShaderCompiles - timelineWork.vertexShaderCompiles;
+                        row.uploadDeferred = work.uploadDeferred - timelineWork.uploadDeferred;
+                        frameTimeline->append(std::move(row));
+                        timelineMarkers = 0; timelineReportPending = false;
+                    }
+                    timelineHost = host; timelineIo = io; timelineWork = work; timelineHaveBaseline = true;
+                    timelineProducer.reset(); timelineGpuId = 0;
+                }
             }
+            if (frameTimeline)
+                gpuTimer.poll([&](const DarkRecomp::GpuFrameTimer::Result& result) {
+                    frameTimeline->gpuResult(result.id, result.gpuMs, result.idleBeforeMs);
+                });
             double measuredFps = 0;
             if (performance.report(measuredFps)) {
                 StallProfiler::Scope stallReport(StallProfiler::Section::Other, "native performance report");
+                timelineReportPending = true;
                 // A live 150s run showed a metronomic ~73ms tail hitch on the
                 // first accepted frame after each 5s report. Time each step
                 // and log only hitch-sized totals; steady runs stay quiet.
@@ -1088,6 +1286,7 @@ int wmain(int argc, wchar_t** argv) {
                 fprintf(stderr, "[Frame] Native Present failed: 0x%08X\n", unsigned(presentStatus));
                 // The guest still owns live threads. Match the diagnostic
                 // deadline's process teardown rather than unwinding past them.
+                closeFrameTimeline();
                 StallProfiler::shutdown();
                 fflush(nullptr);
                 terminateNativeProcess(6);
@@ -1138,6 +1337,7 @@ int wmain(int argc, wchar_t** argv) {
         mouse.release();
         nativeInput().attachWindow(nullptr);
         printAudioHealth();
+        closeFrameTimeline();
         // The original game workers still own the address space. Closing the
         // native window must also end an interactive run with no deadline,
         // without waiting forever for the original main loop to return.

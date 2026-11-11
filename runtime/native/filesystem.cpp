@@ -3,6 +3,7 @@
 #include "objects.h"
 #include "storage.h"
 #include "file_query_compat.h"
+#include "frame_io_counters.h"
 #include "renderer/engine/engine_performance.h"
 #include <winternl.h>
 #include <algorithm>
@@ -348,6 +349,7 @@ PPC_FUNC(__imp__NtReadFile) {
         destination = aligned.get();
     }
     using Read = NTSTATUS (NTAPI*)(HANDLE, HANDLE, PIO_APC_ROUTINE, PVOID, PIO_STATUS_BLOCK, PVOID, ULONG, PLARGE_INTEGER, PULONG);
+    const int64_t ioStart = FrameIoCounters::enabled ? FrameIoCounters::nowNs() : 0;
     uint32_t status = uint32_t(nt<Read>(ctx, "NtReadFile")(file->handle, completion, nullptr, nullptr, &result,
         destination, ctx.r9.u32, ctx.r10.u32 ? &offset : nullptr, nullptr));
     if (status == pending) {
@@ -356,6 +358,9 @@ PPC_FUNC(__imp__NtReadFile) {
         WaitForSingleObject(completion, INFINITE);
         status = uint32_t(result.Status);
     }
+    if (FrameIoCounters::enabled)
+        FrameIoCounters::record(GetCurrentThreadId(), uint64_t(result.Information),
+            uint64_t((std::max)(int64_t(0), FrameIoCounters::nowNs() - ioStart)));
     // A validation failure can return before Windows submits the request.
     // Notify only actual completions, including completed errors such as EOF.
     const bool completed = WaitForSingleObject(completion, 0) == WAIT_OBJECT_0;

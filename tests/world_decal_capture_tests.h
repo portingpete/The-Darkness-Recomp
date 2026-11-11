@@ -147,7 +147,7 @@ static void testWorldDecalCapture(Memory& memory,const PPCContext& initial,uint3
         std::memset(base+env,0xFF,36*16);
         previewObserveWorld(base,world);const auto commands=finish();
         require(commands.size()==1 && commands[0].world,"Original lit/projector decal capture was omitted or duplicated");
-        retained[generation]=commands[0].world;const auto& draw=*retained[generation];
+        retained[generation]=keepWorldDraw(commands,0);const auto& draw=*retained[generation];
         require(draw.fragmentName=="XRShader_FP20_Decal" && draw.fragmentFlags==flags && draw.textureMask==0x3f &&
                 draw.fragmentConstants==expectedConstants[generation],"Decal flags or uploaded lighting/projector constants were lost");
         require(draw.options.modes[1]==10 && draw.constants.references[2][2]==12 &&

@@ -160,6 +160,29 @@ private:
     Snapshot snapshot_;
 };
 
+// A recording is a complete script written in advance: it plays unattended
+// from launch to exit. "wait <ms 1..600000>" holds the commands after it for
+// that long; "wait world" until the game renders its world, "wait menu"
+// until a mission can be loaded and "wait player" until a player is active
+// (the last two are published while the developer panel is open).
+inline constexpr ULONGLONG kTestInputMaxWaitMs = 600000;
+enum class TestInputWait { Milliseconds, World, Menu, Player };
+inline bool parseTestInputWaitLine(const std::string& command, TestInputWait& kind, ULONGLONG& waitMs) {
+    if (command.empty() || command.size() > 256) return false;
+    std::istringstream fields(command);
+    std::string first, second, extra;
+    if (!(fields >> first >> second) || (fields >> extra) || first != "wait") return false;
+    if (second == "world") { kind = TestInputWait::World; waitMs = 0; return true; }
+    if (second == "menu") { kind = TestInputWait::Menu; waitMs = 0; return true; }
+    if (second == "player") { kind = TestInputWait::Player; waitMs = 0; return true; }
+    if (second.size() > 6) return false;
+    for (char c : second) if (c < '0' || c > '9') return false;
+    const ULONGLONG parsed = ULONGLONG(std::strtoull(second.c_str(), nullptr, 10));
+    if (!parsed || parsed > kTestInputMaxWaitMs) return false;
+    kind = TestInputWait::Milliseconds; waitMs = parsed;
+    return true;
+}
+
 inline constexpr ULONGLONG kTestInputMaxHoldMs = 10000;
 inline constexpr ULONGLONG kTestInputMenuHoldMs = 250;
 inline constexpr ULONGLONG kTestInputCameraHoldMs = 2000;

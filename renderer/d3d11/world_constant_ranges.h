@@ -9,7 +9,8 @@ namespace DarkRecomp {
 // A conservative union of the original world's constant reads. Range creation
 // follows prepareWorldVertexProgramInto and the generated VP.xrg template;
 // unknown options or a range outside the bank retain the complete comparison.
-// This is only an equality plan. Uploads always retain the complete 256 rows.
+// While the references stay the same, a changed bank uploads only these rows;
+// any reference change, unproven palette or full plan uploads all 256 rows.
 struct WorldConstantRanges {
     struct Range {uint16_t first=0,count=0;};
     std::array<Range,32> ranges{};

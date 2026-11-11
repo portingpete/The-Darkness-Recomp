@@ -93,7 +93,7 @@ static void testWorldVideoCapture(Memory& memory,const PPCContext& threadContext
         require(commands.size()==1 && commands[0].world && commands[0].world->textureMask==3 &&
                 commands[0].world->fragmentName=="CMWnd_ModTexture_PaintVideo_YUV2RGB",
                 "Original world/TV video pass or two-plane mask was lost");
-        const auto draw=commands[0].world;
+        const auto draw=keepWorldDraw(commands,0); // Returned beyond its frame.
         for(unsigned slot=0;slot<2;++slot)
             require(draw->textureObjects[slot].object==objects[slot] && draw->textures[slot] &&
                     draw->textures[slot]->valid(),"World video lost a completed binding or owned plane");

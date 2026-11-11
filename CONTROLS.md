@@ -49,6 +49,14 @@ It plays with sound under your saved graphics settings (no captures, no profilin
 auto-skips intro videos, and writes lightweight slow-frame timings to
 `build_native/run/stutter-*.log` plus a slow-frame count at the end.
 
+To find out what is causing frame drops, use `LaunchFrameDrops.cmd` (the same as
+`Launch.cmd frame-drops`). Play for a minute or two where frames drop and press
+**F9** right after each drop you notice. Each run writes a folder
+`build_native/run/frame-drops-*` containing `frames.csv` (one row per presented
+frame), `game.log` (runtime log with slow-frame stall reports) and, when Python is
+installed, `report.txt` from `tools/analyze_frame_drops.py`. See RENDERING.md,
+"Frame-drop timeline", for the columns.
+
 Both launchers default to borderless fullscreen using your monitor's aspect ratio,
 including ultrawide and 32:9 displays. **Alt+Enter** switches between fullscreen
 and a resizable window. Gameplay expands horizontally; movies keep their
@@ -101,6 +109,16 @@ and A work through the same original menu controls. Escape/Backspace or B goes
 back. PC graphics changes save automatically to `DarkRecomp.settings.ini` beside
 `Darkness` and apply immediately except resolution and language. Gamma uses the
 original game profile and save confirmation. A failed PC settings save is shown in the row text.
+
+**Draw distance** is in the settings launcher opened by `LaunchWithSettings.cmd`
+(the in-game Video Settings page has no free row): Original, Far (3000 units),
+Medium (2000), **Near (1500, default)** or Very near (1000). Original keeps the
+game's own ranges, which most levels leave unlimited; choose it to restore the
+original look. A shorter distance stops
+drawing props and physics objects beyond it, which lowers the draw-call count in
+large open views at the cost of distant objects disappearing; characters, pickups
+and moving engine paths are always drawn. It is saved as `DrawDistance` in
+`[Display]`; `--draw-distance N` overrides it for one run.
 
 All play modes use saved settings. Direct-launch options `--fov 100`, `--fps 120`,
 `--render-height 720`, `--fullscreen` / `--windowed`, and `--vsync` / `--no-vsync`

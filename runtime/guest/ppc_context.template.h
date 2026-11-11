@@ -91,26 +91,43 @@ inline bool PPCIsDynamicMmio(uint32_t address) {
 inline bool PPCIsInvalidGuestAddress(uint32_t address) {
     return address < 0x10000u;
 }
+// Guest accesses below 64 KiB or in the MMIO windows take a separate cold
+// path, so ordinary loads and stores are a straight-line check and access.
+inline bool PPCIsSpecialGuestAddress(uint32_t address) {
+    return PPCIsInvalidGuestAddress(address) || PPCIsDynamicMmio(address);
+}
+#if defined(_MSC_VER) && !defined(__clang__)
+#define PPC_UNLIKELY(x) (x)
+#define PPC_COLD __declspec(noinline)
+#else
+#define PPC_UNLIKELY(x) __builtin_expect(!!(x), 0)
+#define PPC_COLD __attribute__((noinline, cold))
+#endif
 inline void PPCTraceInvalidGuestLoad(uint32_t address, unsigned width) {
     static std::atomic<uint32_t> count{};
     if (count.fetch_add(1, std::memory_order_relaxed) < 32)
         fprintf(stderr, "[MEM] low guest load width=%u address=0x%08X\n", width, address);
 }
+// Low addresses are traced and read as zero; MMIO reads return reset values.
+PPC_COLD inline uint64_t PPCLoadSpecial(uint32_t address, unsigned width) {
+    if (PPCIsInvalidGuestAddress(address)) PPCTraceInvalidGuestLoad(address, width);
+    return 0;
+}
 inline uint8_t PPCLoadU8(uint8_t* base, uint32_t address) {
-    if (PPCIsInvalidGuestAddress(address)) { PPCTraceInvalidGuestLoad(address, 1); return 0; }
-    return PPCIsDynamicMmio(address) ? uint8_t(0) : *(volatile uint8_t*)(base + address);
+    if (PPC_UNLIKELY(PPCIsSpecialGuestAddress(address))) return uint8_t(PPCLoadSpecial(address, 1));
+    return *(volatile uint8_t*)(base + address);
 }
 inline uint16_t PPCLoadU16(uint8_t* base, uint32_t address) {
-    if (PPCIsInvalidGuestAddress(address)) { PPCTraceInvalidGuestLoad(address, 2); return 0; }
-    return PPCIsDynamicMmio(address) ? uint16_t(0) : __builtin_bswap16(*(volatile uint16_t*)(base + address));
+    if (PPC_UNLIKELY(PPCIsSpecialGuestAddress(address))) return uint16_t(PPCLoadSpecial(address, 2));
+    return __builtin_bswap16(*(volatile uint16_t*)(base + address));
 }
 inline uint32_t PPCLoadU32(uint8_t* base, uint32_t address) {
-    if (PPCIsInvalidGuestAddress(address)) { PPCTraceInvalidGuestLoad(address, 4); return 0; }
-    return PPCIsDynamicMmio(address) ? 0u : __builtin_bswap32(*(volatile uint32_t*)(base + address));
+    if (PPC_UNLIKELY(PPCIsSpecialGuestAddress(address))) return uint32_t(PPCLoadSpecial(address, 4));
+    return __builtin_bswap32(*(volatile uint32_t*)(base + address));
 }
 inline uint64_t PPCLoadU64(uint8_t* base, uint32_t address) {
-    if (PPCIsInvalidGuestAddress(address)) { PPCTraceInvalidGuestLoad(address, 8); return 0; }
-    return PPCIsDynamicMmio(address) ? 0ull : __builtin_bswap64(*(volatile uint64_t*)(base + address));
+    if (PPC_UNLIKELY(PPCIsSpecialGuestAddress(address))) return PPCLoadSpecial(address, 8);
+    return __builtin_bswap64(*(volatile uint64_t*)(base + address));
 }
 #ifndef PPC_LOAD_U8
 #define PPC_LOAD_U8(x) PPCLoadU8(base, uint32_t(x))
@@ -126,11 +143,11 @@ inline uint64_t PPCLoadU64(uint8_t* base, uint32_t address) {
 #endif
 
 inline void PPCStoreU32(uint8_t* base, uint32_t address, uint32_t value) {
-    if (!PPCIsInvalidGuestAddress(address) && !PPCIsDynamicMmio(address))
+    if (!PPC_UNLIKELY(PPCIsSpecialGuestAddress(address)))
         *(volatile uint32_t*)(base + address) = __builtin_bswap32(value);
 }
 inline void PPCStoreU64(uint8_t* base, uint32_t address, uint64_t value) {
-    if (!PPCIsInvalidGuestAddress(address) && !PPCIsDynamicMmio(address))
+    if (!PPC_UNLIKELY(PPCIsSpecialGuestAddress(address)))
         *(volatile uint64_t*)(base + address) = __builtin_bswap64(value);
 }
 #ifndef PPC_STORE_U32
@@ -138,6 +155,32 @@ inline void PPCStoreU64(uint8_t* base, uint32_t address, uint64_t value) {
 #endif
 #ifndef PPC_STORE_U64
 #define PPC_STORE_U64(x, y) PPCStoreU64(base, uint32_t(x), uint64_t(y))
+#endif
+// Guest stack accesses (r1 displacement, see unchecked_stack_accesses): the
+// stack is ordinary guest RAM, never the null page or an MMIO window.
+#ifndef PPC_STACK_LOAD_U8
+#define PPC_STACK_LOAD_U8(x) (*(volatile uint8_t*)(base + uint32_t(x)))
+#endif
+#ifndef PPC_STACK_LOAD_U16
+#define PPC_STACK_LOAD_U16(x) __builtin_bswap16(*(volatile uint16_t*)(base + uint32_t(x)))
+#endif
+#ifndef PPC_STACK_LOAD_U32
+#define PPC_STACK_LOAD_U32(x) __builtin_bswap32(*(volatile uint32_t*)(base + uint32_t(x)))
+#endif
+#ifndef PPC_STACK_LOAD_U64
+#define PPC_STACK_LOAD_U64(x) __builtin_bswap64(*(volatile uint64_t*)(base + uint32_t(x)))
+#endif
+#ifndef PPC_STACK_STORE_U8
+#define PPC_STACK_STORE_U8(x, y) (*(volatile uint8_t*)(base + uint32_t(x)) = uint8_t(y))
+#endif
+#ifndef PPC_STACK_STORE_U16
+#define PPC_STACK_STORE_U16(x, y) (*(volatile uint16_t*)(base + uint32_t(x)) = __builtin_bswap16(uint16_t(y)))
+#endif
+#ifndef PPC_STACK_STORE_U32
+#define PPC_STACK_STORE_U32(x, y) (*(volatile uint32_t*)(base + uint32_t(x)) = __builtin_bswap32(uint32_t(y)))
+#endif
+#ifndef PPC_STACK_STORE_U64
+#define PPC_STACK_STORE_U64(x, y) (*(volatile uint64_t*)(base + uint32_t(x)) = __builtin_bswap64(uint64_t(y)))
 #endif
 // Xenon MMIO is not guest RAM. Until a renderer owns these registers,
 // return reset values for reads and discard writes so translated hardware
@@ -159,11 +202,11 @@ inline void PPCStoreU64(uint8_t* base, uint32_t address, uint64_t value) {
 #endif
 
 #ifndef PPC_STORE_U8
-#define PPC_STORE_U8(x, y) do { if (!PPCIsDynamicMmio(uint32_t(x))) *(volatile uint8_t*)(base + (x)) = (y); } while (0)
+#define PPC_STORE_U8(x, y) do { if (!PPC_UNLIKELY(PPCIsDynamicMmio(uint32_t(x)))) *(volatile uint8_t*)(base + (x)) = (y); } while (0)
 #endif
 
 #ifndef PPC_STORE_U16
-#define PPC_STORE_U16(x, y) do { if (!PPCIsDynamicMmio(uint32_t(x))) *(volatile uint16_t*)(base + (x)) = __builtin_bswap16(y); } while (0)
+#define PPC_STORE_U16(x, y) do { if (!PPC_UNLIKELY(PPCIsDynamicMmio(uint32_t(x)))) *(volatile uint16_t*)(base + (x)) = __builtin_bswap16(y); } while (0)
 #endif
 
 #ifndef PPC_STORE_U32

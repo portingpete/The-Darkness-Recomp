@@ -10,6 +10,7 @@
 #include "renderer/engine/video_layout.h"
 #include "runtime/native/input.h"
 #include <d3dcompiler.h>
+#include <xmmintrin.h>
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -417,7 +418,29 @@ void EnginePreviewD3D11::render(const std::vector<SimpleMesh>& meshes,Native::Pr
     ID3D11SamplerState* sampler = sampler_.Get(); context_->PSSetSamplers(0,1,&sampler);
     };
     bool simpleStateDirty = true;
+    // Each captured draw is its own block last written by the engine thread.
+    // Ask for the lines draw() reads one command ahead, while the current
+    // draw is being submitted.
+    const auto prefetchWorld=[](const Native::WorldDraw& draw) noexcept {
+        const auto line=[](const void* address,size_t offset=0) noexcept {
+            _mm_prefetch(static_cast<const char*>(address)+offset,_MM_HINT_T0);
+        };
+        line(&draw);line(&draw,64);line(&draw,128);
+        line(draw.constants.vectors.data());line(draw.constants.vectors.data(),64);line(draw.constants.vectors.data(),128);
+        line(draw.constants.references.data());line(draw.constants.references.data(),64);line(draw.constants.references.data(),128);
+        line(draw.attributes.data());line(draw.attributes.data(),64);line(draw.attributes.data(),128);
+        line(&draw.viewport);line(&draw.depthRange);line(&draw.clipPlanes,64);
+        line(draw.fragmentConstants.data());line(draw.fragmentConstants.data(),64);
+        line(draw.textureIds.data());line(draw.textureObjects.data());line(draw.textureObjects.data(),64);line(draw.textureObjects.data(),128);
+        line(draw.samplers.data());line(draw.textures.data());line(&draw.fogClearDepth);
+    };
+    const auto* const lastMesh=meshes.data()+meshes.size();
+    // The previous command, if it was a world draw that was drawn: a repeat
+    // of the same WorldDraw right after it continues its bindings.
+    const Native::WorldDraw* drawnWorld=nullptr;
     for (const auto& mesh : meshes) {
+        const auto* const previousWorld=drawnWorld;drawnWorld=nullptr;
+        if(const auto* next=&mesh+1;next!=lastMesh && next->world)prefetchWorld(*next->world);
         const auto promptContext = mesh.promptContext;
         auto projection = mesh.projection;
         Native::setRenderSamplePhase(Native::RenderSamplePhase::other);
@@ -436,7 +459,9 @@ void EnginePreviewD3D11::render(const std::vector<SimpleMesh>& meshes,Native::Pr
         }
         if (mesh.worldPresent) {worldPresented_=world_->present(*mesh.worldPresent,target_.Get());simpleStateDirty = true;continue;}
         if (mesh.world) {
-            if(!world_->draw(*mesh.world)) {static unsigned failures=0;if(failures++<20)std::fprintf(stderr,"[EngineWorldDrawRejected] material=%u program=%s flags=%u\n",unsigned(mesh.world->material),mesh.world->fragmentName.c_str(),mesh.world->fragmentFlags);}
+            if(world_->draw(*mesh.world,mesh.repeat?&mesh.repeat:nullptr,mesh.repeat && previousWorld==mesh.world.get()))
+                drawnWorld=mesh.world.get();
+            else {static unsigned failures=0;if(failures++<20)std::fprintf(stderr,"[EngineWorldDrawRejected] material=%u program=%s flags=%u\n",unsigned(mesh.world->material),mesh.world->fragmentName.c_str(),mesh.world->fragmentFlags);}
             simpleStateDirty = true;continue;
         }
         if (mesh.vertices.empty() || mesh.indices.empty() || int(bool(mesh.texture)) + int(bool(mesh.video)) + int(bool(mesh.colorTexture)) != 1 ||

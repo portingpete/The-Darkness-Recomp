@@ -74,6 +74,20 @@ static void testSubtitleContextLifetime() {
     retireQueuedPromptContexts(base, manager);
     require(!queuedSubtitleContext(base, manager, 0x4004, next), "Retired manager retained subtitle ownership");
 }
+// Repeats (SimpleMesh::repeat): elements of one record differ in geometry
+// and image references only; the state comparison ignores exactly those.
+static void testRepeatComparison() {
+    auto stored=[](uint32_t id) {auto geometry=std::make_shared<StoredGeometry>();geometry->id=id;return geometry;};
+    WorldDraw a,b;
+    a.geometry={stored(1),stored(2),0,6,0};b.geometry={stored(3),stored(4),6,3,0};
+    a.textures[0]=std::make_shared<ColorImage>();
+    const char* field=nullptr;
+    require(sameCapturedWorldDraw(a,b,field,true) && !field,"Geometry or image references were compared as state");
+    require(!sameCapturedWorldDraw(a,b,field) && field && std::string_view(field)=="geometry","The full comparison ignored geometry");
+    b.constants.vectors[3]={0,1,0,0};
+    require(!sameCapturedWorldDraw(a,b,field,true) && field && std::string_view(field)=="constants.vectors",
+            "The state comparison missed a vertex constant");
+}
 static void testDecodedDrawRequest() {
     DecodedDrawRequest request;
     constexpr uint32_t caller = 0x8225E200;
@@ -639,9 +653,12 @@ static void testPreviewBridge(Memory& memory, PPCContext& threadContext, EngineP
     std::vector<SimpleMesh> latest;
     require(takePreviewFrame(latest) && latest.empty(),"Empty latest frame replayed an older draw");
     // The live renderer retains ordered frames because a resolve from frame N
-    // may be sampled in N+1. Exercise a producer that outruns its consumer.
+    // may be sampled in N+1. Exercise a producer that outruns its consumer:
+    // the frame with a draw and empty frames fill every ready part, and the
+    // next publication waits for the consumer.
     setPreviewFrameBackpressure(true);
     draw();previewEndFrame();
+    for(size_t i=1;i<previewReadyPartDepth;++i)previewEndFrame();
     auto producer=std::async(std::launch::async,[]{previewEndFrame();});
     const bool waited=producer.wait_for(std::chrono::milliseconds(30))==std::future_status::timeout;
     const bool retained=takePreviewFrame(latest) && latest.size()==1;
@@ -649,12 +666,18 @@ static void testPreviewBridge(Memory& memory, PPCContext& threadContext, EngineP
     // Always release the worker before reporting a failure.
     setPreviewFrameBackpressure(false);producer.get();
     require(waited && retained && delivered,"Live frame delivery discarded an unconsumed frame or stalled its producer");
-    require(takePreviewFrame(latest) && latest.empty(),"Live frame order changed");
-    setPreviewFrameBackpressure(true);previewEndFrame();
+    bool emptyFrames=true;
+    for(size_t i=0;i<previewReadyPartDepth;++i)emptyFrames=emptyFrames && takePreviewFrame(latest) && latest.empty();
+    require(emptyFrames && !takePreviewFrame(latest),"Live frame order changed");
+    setPreviewFrameBackpressure(true);
+    for(size_t i=0;i<previewReadyPartDepth;++i)previewEndFrame();
     auto stopping=std::async(std::launch::async,[]{previewEndFrame();});
+    const bool stoppingWaited=stopping.wait_for(std::chrono::milliseconds(30))==std::future_status::timeout;
     setPreviewFrameBackpressure(false);
     require(stopping.wait_for(std::chrono::seconds(2))==std::future_status::ready,"Stopping the consumer stranded its producer");
-    stopping.get();takePreviewFrame(latest);
+    stopping.get();
+    require(stoppingWaited,"Live frame delivery overwrote unconsumed parts with backpressure");
+    while(takePreviewFrame(latest)) {}
     auto waitingConsumer=std::async(std::launch::async,[]{
         std::vector<SimpleMesh> delivered;return takePreviewFrame(delivered,2000) && delivered.empty();
     });
@@ -958,7 +981,7 @@ static void testPreviewBridge(Memory& memory, PPCContext& threadContext, EngineP
                         "Cache recovery read unavailable leading mips instead of the resident tail");
                 require(sparse[0].world->textureObjects[0].mipLevels==4 && sparse[0].world->textureObjects[0].firstMip==2,
                         "Captured resource lost declared levels or original pending-prefix state");
-                tail=sparse[0].world->textures[0];
+                tail=ownerOf(sparse[0].world->textures[0]); // Kept beyond its frame.
                 require(tail->valid() && tail->width==8 && tail->height==8 && tail->firstMip==2 &&
                         tail->pixels.empty() && tail->mips[0].empty() && tail->mips[1].size()==16 && tail->mips[2].size()==4,
                         "Cache recovery used sampler restriction as residency or rebased mip indices");
@@ -1059,7 +1082,7 @@ static void testPreviewBridge(Memory& memory, PPCContext& threadContext, EngineP
             require(commands.size()==1 && commands[0].world &&
                     commands[0].world->fragmentName==fragment && commands[0].world->fragmentFlags==flags &&
                     commands[0].world->textureMask==textureMask,"Darkness noise capture lost its original pass");
-            const auto& captured=commands[0].world;
+            const auto captured=keepWorldDraw(commands,0); // Returned beyond its frame.
             for(unsigned slot=0;slot<6;++slot) {
                 if(textureMask&(1u<<slot))
                     require(captured->textureObjects[slot].object==objects[slot] && captured->textureIds[slot]==ids[slot],
@@ -1339,12 +1362,23 @@ static void testPreviewBridge(Memory& memory, PPCContext& threadContext, EngineP
             }
             require(!retiredImage.expired(),"Upload replacement invalidated a consumed image generation");
             takeLivePreviewPart(commands,2,false,true);
-            require(retiredImage.expired() && commands[0].world && commands[1].world &&
+            // The parts of a frame share one set of image owners, so a
+            // replaced generation stays while any of them is in use.
+            require(!retiredImage.expired() && commands[0].world && commands[1].world &&
                     commands[0].world->textures[0]->pixels.front()==17 &&
                     commands[0].world->textures[0]==commands[1].world->textures[0],
-                    "Image-budget split lost the next draw or retained a retired generation");
+                    "Image-budget split lost the next draw or released a generation its frame still uses");
             requireNoPreviewPart(commands);
         });
+        // The producer lets go of the set once two further sets have been closed.
+        for(unsigned i=0;i<2*previewPinEpochFrames;++i) {
+            require(i+1<previewPinEpochFrames ? !retiredImage.expired() : true,
+                    "A set of owners was released before its pin epoch had ended");
+            previewEndFrame();
+            std::vector<SimpleMesh> following;
+            require(takePreviewFrame(following) && following.empty(),"Empty following frame was not delivered");
+        }
+        require(retiredImage.expired(),"A retired pin epoch kept a replaced image generation");
         previewPrepareTexture(1);put16(base,attributes+10,0);
         std::puts("PreviewStreamingImages: 17 unique generations, shared slots/passes, 256 MiB part bound and owned retirement passed.");
     }
@@ -1512,8 +1546,8 @@ static void testPreviewBridge(Memory& memory, PPCContext& threadContext, EngineP
         takeLivePreviewPart(commands,1,false,true);
         require(commands[0].world->geometry.indices->id==103,"Raw geometry-byte split discarded the next draw");
     });
-    // Stop a producer that has filled the ready slot and is waiting to hand
-    // over a second part. Disabling backpressure must unblock clean teardown.
+    // Stop a producer that has filled every ready part and is waiting to hand
+    // over another. Disabling backpressure must unblock clean teardown.
     withLivePreviewProducer([&] {
         for(unsigned i=0;i<1537;++i)previewObserveWorld(base,world);
         previewEndFrame();
@@ -1537,6 +1571,7 @@ int main(int argc, char** argv) {
     HWND window=nullptr;
     try {
         testDecodedDrawRequest();
+        testRepeatComparison();
         testSubtitleContextLifetime();
         require(argc==2,"Game directory required for original AOT decoder comparison");
         // Match the executable's initialization, including linking the

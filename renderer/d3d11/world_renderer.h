@@ -25,6 +25,8 @@ class WorldVertexShaderD3D11 {
     std::optional<Native::WorldVertexConstants> uploadedConstants_;
     WorldConstantRanges constantRanges_=WorldConstantRanges::full();
     bool vectorsUploaded_=false,referencesUploaded_=false;
+    // False after a planned upload: DISCARD left rows outside the plan undefined.
+    bool vectorRowsComplete_=false;
     bool compiled_=false;
     uint64_t constantUploadCount_=0,constantCompareCalls_=0,constantCompareReadBytes_=0;
     uint64_t constantPlansBuilt_=0,referenceUploadCount_=0;
@@ -35,6 +37,8 @@ public:
               const std::array<std::array<float,2>,8>* indexBounds=nullptr,bool alreadyBound=false);
     ID3DBlob* bytecode() const {return code_.Get();}
     bool compiled() const {return compiled_;}
+    // The skinning check bind() makes, for a stream with these index bounds.
+    bool indexBoundsValid(const Native::WorldVertexConstants&,const std::array<std::array<float,2>,8>&) const;
     uint64_t constantUploadCount() const {return constantUploadCount_;}
     uint64_t constantCompareCalls() const {return constantCompareCalls_;}
     uint64_t constantCompareReadBytes() const {return constantCompareReadBytes_;}
@@ -47,6 +51,15 @@ public:
 class WorldRendererD3D11 {
     friend class EnginePreviewD3D11;
     friend struct WorldImageBudgetTestAccess;
+public:
+    // Cumulative render-thread totals for the opt-in frame timeline. Callers
+    // difference two snapshots; printPerformance never resets these.
+    struct WorkCounters {
+        uint64_t draws=0,imageUploads=0,imageUploadBytes=0,geometryUploads=0,geometryUploadBytes=0;
+        uint64_t transientUploadBytes=0,surfaceCreates=0,vertexShaders=0,vertexShaderCompiles=0,uploadDeferred=0;
+        double imageUploadMs=0,geometryUploadMs=0,transientUploadMs=0,surfaceMs=0,decodeMs=0;
+    };
+private:
     template<class T> using Ptr=Microsoft::WRL::ComPtr<T>;
     struct StringHash {
         using is_transparent=void;
@@ -91,6 +104,14 @@ class WorldRendererD3D11 {
         // Only a completed, opaque snapped Gaussian establishes this region.
         // Mixed atlas data and copied padding remain outside the proof.
         std::array<uint32_t,4> logicalBlurRegion{};
+        // Screen-space depth fog: a depth-read-only view of `depth` (its
+        // stencil stays writable) and the copy made at a draw's
+        // fogDepthSnapshot, each tied to the object it was created for.
+        Ptr<ID3D11DepthStencilView> fogReadOnlyDepth;
+        ID3D11DepthStencilView* fogReadOnlyFor=nullptr;
+        Ptr<ID3D11Texture2D> fogSnapshot;
+        Ptr<ID3D11ShaderResourceView> fogSnapshotView;
+        ID3D11Texture2D* fogSnapshotFor=nullptr;
     };
     std::unordered_map<const Native::StoredGeometry*,Geometry> geometry_;
     std::unordered_map<const Native::StoredGeometry*,Indices> indices_;
@@ -118,6 +139,7 @@ class WorldRendererD3D11 {
     double worstUploadMs_ = 0; size_t worstUploadBytes_ = 0;
     const char* worstUploadKind_ = "";
     void noteWorstUpload(double ms, size_t bytes, const char* kind);
+    WorkCounters workTotals_;
     DescriptorCache<D3D11_DEPTH_STENCIL_DESC,Ptr<ID3D11DepthStencilState>> depthStates_;
     DescriptorCache<D3D11_BLEND_DESC,Ptr<ID3D11BlendState>> blendStates_;
     DescriptorCache<D3D11_RASTERIZER_DESC,Ptr<ID3D11RasterizerState>> rasterStates_;
@@ -157,6 +179,43 @@ class WorldRendererD3D11 {
     WorldVertexShaderD3D11* lastShader_ = nullptr;
     bool lastShaderValid_ = false;
     std::unordered_map<uint64_t,Surface> resolved_;
+    // Per-draw shortcuts of draw() (render thread only, like every member).
+    // drawDepth_ counts draw() frames (the fog verification replays draws).
+    // While it is nonzero, a view or sampler that a cache gives up moves to
+    // these lists and is released when the outermost draw() returns: the raw
+    // pointers a draw has already chosen stay valid until the context holds
+    // its own references, without an AddRef/Release pair per slot.
+    unsigned drawDepth_=0;
+    std::vector<Ptr<ID3D11ShaderResourceView>> retiredViews_;
+    std::vector<Ptr<ID3D11SamplerState>> retiredSamplers_;
+    void retireSamplerStates();
+    // Last sampler chosen per slot; emptied whenever samplerStates_ is.
+    struct SamplerMemo {Native::WorldSampler source;ID3D11SamplerState* state=nullptr;};
+    std::array<SamplerMemo,16> samplerMemo_{};
+    ID3D11SamplerState* slotSampler(unsigned slot,const Native::WorldSampler&);
+    // One bit per hashed key ever inserted into resolved_ (never erased one
+    // by one): a clear bit proves a texture is not a resolve destination.
+    uint64_t resolvedFilter_=0;
+    static uint64_t resolvedBit(uint64_t key) noexcept {return uint64_t(1)<<((key*0x9E3779B97F4A7C15ull)>>58);}
+    // Depth-stencil, blend and rasterizer state of the last accepted draw,
+    // keyed by the attribute bytes 92..147, render scale and sample count
+    // they are built from. Refreshed together, so a cache that was emptied
+    // meanwhile has already been repopulated with these objects.
+    struct StateMemo {
+        bool valid=false;unsigned scale=0,samples=0;
+        std::array<uint8_t,56> attributes{};
+        D3D11_DEPTH_STENCIL_DESC depth{};D3D11_BLEND_DESC blend{};D3D11_RASTERIZER_DESC raster{};
+        ID3D11DepthStencilState* depthState=nullptr;ID3D11BlendState* blendState=nullptr;ID3D11RasterizerState* rasterState=nullptr;
+    } stateMemo_;
+    // Last color (0) and depth (1) target nodes of surfaces_. Map nodes stay
+    // put until the map is swapped (sample count or render scale change).
+    struct SurfaceMemo {uint64_t key=0;Surface* surface=nullptr;};
+    std::array<SurfaceMemo,2> surfaceMemo_{};
+    // beginFrame(): keys of the immediate (single-frame) geometry draw() has
+    // uploaded and that may still be cached, and the frame counter that
+    // spaces out the walk over the complete caches.
+    std::vector<const Native::StoredGeometry*> immediateVertices_,immediateIndices_;
+    unsigned orphanSweep_=0;
     uint64_t presentCount_=0;
     bool inspectFrame_=false;
     bool diagnostics_=false;
@@ -212,6 +271,14 @@ class WorldRendererD3D11 {
     std::array<uint8_t,16> uploadedShadow_{};
     bool viewportUploaded_=false,pixelConstantsUploaded_=false;
     bool bindingsValid_=false;
+    // Set by a draw() that ended with every binding of its WorldDraw in place
+    // and nothing that depends on its geometry beyond the vertex and index
+    // buffers. A repeat of that WorldDraw drawn right after it (engine_preview
+    // passes `continues`) needs only its own geometry (drawRepeat).
+    const Native::WorldDraw* shortPathDraw_=nullptr;
+    std::array<uint8_t,16> shortPathFormats_{};
+    uint64_t shortPathDraws_=0,shortPathChecks_=0,shortPathMismatches_=0,shortPathRejected_=0;
+    bool drawRepeat(const Native::WorldDraw&,const Native::WorldGeometry&);
     bool pixelBuffersBound_=false;
     WorldVertexShaderD3D11* boundVertex_=nullptr;
     ID3D11Buffer* boundVB_=nullptr;
@@ -228,6 +295,27 @@ class WorldRendererD3D11 {
     std::array<ID3D11ShaderResourceView*,16> boundViews_{};
     std::array<ID3D11SamplerState*,16> boundSamplers_{};
     Ptr<ID3D11VertexShader> transferVertex_;
+    // Screen-space depth fog (renderer/engine/screen_fog.h): one pixel shader
+    // per XREngine_DepthFog flag variant, for single-sample and multisample
+    // depth.
+    std::array<std::array<Ptr<ID3D11PixelShader>,2>,4> screenFogPixel_;
+    Ptr<ID3D11Buffer> screenFogConstants_;
+    uint64_t screenFogPasses_=0,screenFogMissingSnapshots_=0;
+    void snapshotFogDepth(const Native::WorldDraw&);
+    bool drawScreenFog(const Native::WorldDraw&,unsigned fragmentFlags,const D3D11_DEPTH_STENCIL_DESC&,UINT stencilReference,
+                       const D3D11_RASTERIZER_DESC&,ID3D11RenderTargetView* color,bool ignoreStencil);
+    // DARK_SCREEN_FOG_VERIFY=1: the color and depth-stencil targets before a
+    // sampled fog run and its per-object result, compared at the run's last
+    // draw with a replay of what the screen-space mode would have queued.
+    Ptr<ID3D11Texture2D> fogVerifyBefore_,fogVerifyOriginal_,fogVerifyStencil_;
+    ID3D11Texture2D* fogVerifyFor_=nullptr;
+    ID3D11Texture2D* fogVerifyStencilFor_=nullptr;
+    std::vector<Native::WorldDraw> fogVerifyStay_;
+    bool fogVerifyOpen_=false,fogVerifySampled_=false,fogVerifyReplay_=false;
+    uint64_t fogVerifyRuns_=0,fogVerifyReports_=0;
+    void beginFogVerify(const Native::WorldDraw&);
+    void finishFogVerify(const Native::WorldDraw&,unsigned fragmentFlags,const D3D11_DEPTH_STENCIL_DESC&,UINT stencilReference,
+                         const D3D11_RASTERIZER_DESC&,ID3D11RenderTargetView* color);
     Ptr<ID3D11PixelShader> transferPixel_;
     Ptr<ID3D11PixelShader> logicalPixel_;
     ID3D11ShaderResourceView* logicalBloomView(Surface&);
@@ -284,7 +372,8 @@ public:
     void printPerformance();
     void beginFrame();
     // Required after external code changes the shared immediate context.
-    void invalidateBindings() {bindingsValid_=false;}
+    void invalidateBindings() {bindingsValid_=false;shortPathDraw_=nullptr;}
+    uint64_t shortPathDraws() const {return shortPathDraws_;}
     size_t textureBudget() const {return imageBudget_;}
     // Render-thread-only optional upload of a complete authored image. Device
     // initialization leaves current immediate-context bindings unchanged.
@@ -297,7 +386,14 @@ public:
     uint64_t imageUploadCount() const {return imageUploads_;}
     size_t vertexShaderCount() const {return shaders_.size();}
     uint64_t vertexShaderCompileCount() const {return vertexShaderCompileCount_;}
-    bool draw(const Native::WorldDraw&);
+    WorkCounters workCounters() const {
+        auto out=workTotals_;
+        out.imageUploads=imageUploads_;out.vertexShaders=shaders_.size();
+        out.vertexShaderCompiles=vertexShaderCompileCount_;out.uploadDeferred=budgetDeferred_;
+        return out;
+    }
+    // repeat: draw with this geometry instead of the draw's own (SimpleMesh::repeat).
+    bool draw(const Native::WorldDraw&,const Native::WorldGeometry* repeat=nullptr,bool continues=false);
     void clear(const Native::WorldClear&);
     bool resolve(const Native::WorldResolve&);
     bool present(const Native::WorldTexture&,ID3D11Texture2D*);

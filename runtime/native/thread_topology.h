@@ -29,8 +29,9 @@ inline bool applicationSystemThreadRole(uint32_t entry, uint32_t vtable, uint32_
 
 // Guest processor numbers are synchronization identities, not Windows logical
 // processor indices. Prefer different physical cores over SMT siblings. On an
-// eight-P-core host, leave the first two cores for the native engine/display
-// hints in app/windows/thread_policy.h. Restricted and smaller hosts still map
+// eight-P-core host, leave two performance cores free for the native engine
+// and display threads (app/windows/thread_policy.h), which Windows schedules
+// on performance cores itself. Restricted and smaller hosts still map
 // every guest identity onto an available processor.
 inline std::array<unsigned,6> mapGuestProcessors(std::vector<HostProcessor> cpus,WORD group,DWORD_PTR allowed) {
     std::erase_if(cpus,[&](auto p){return p.group!=group || p.number>=sizeof(DWORD_PTR)*8 || !(allowed&(DWORD_PTR(1)<<p.number));});

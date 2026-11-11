@@ -10,6 +10,7 @@
 
 namespace DarkRecomp::Native::StallProfiler {
 std::atomic<bool> enabledFlag{false};
+std::atomic<bool> hotFlag{false};
 namespace {
 constexpr size_t sections = size_t(Section::Count), threadLimit = 128;
 constexpr size_t eventCapacity = 128, frameCapacity = 8, topCount = 6;
@@ -68,7 +69,12 @@ struct Buffer {
 };
 std::array<Buffer, threadLimit> buffers;
 std::atomic<uint64_t> unregistered{0};
-uint64_t frequency = 0, callThreshold = 0, frameThreshold = 0;
+uint64_t frequency = 0, callThreshold = 0;
+// Atomic: configureFrameReports may run after the reporter thread starts.
+std::atomic<uint64_t> frameThreshold{0};
+std::atomic<bool> logCalls{true};
+std::atomic<double> frameThresholdMs{16.67}; // printed by the reporter
+
 HANDLE stopEvent = nullptr;
 std::thread reporter;
 std::atomic_flag stopping = ATOMIC_FLAG_INIT;
@@ -238,11 +244,12 @@ uint64_t overlap(const Event& event, const Frame& frame) noexcept {
 }
 void reportFrame(OutputBatch& output, const Frame& frame, const std::array<Event, 1024>& history, size_t historyCount) {
     const auto elapsed = frame.end - frame.begin;
-    if (elapsed <= frameThreshold) return;
-    output.print("[STALL] frame=%llu stream=%s thread=%u total_ms=%.3f budget_ms=16.670 dropped=%llu incomplete_thread_intervals=%llu unregistered_threads=%llu\n",
-        frame.serial, frame.name, frame.thread, ms(elapsed), frame.dropped,
+    if (elapsed <= frameThreshold.load(std::memory_order_relaxed)) return;
+    // end_qpc joins this report with --frame-timeline rows (its origin_qpc).
+    output.print("[STALL] frame=%llu stream=%s thread=%u total_ms=%.3f budget_ms=%.3f dropped=%llu incomplete_thread_intervals=%llu unregistered_threads=%llu end_qpc=%llu\n",
+        frame.serial, frame.name, frame.thread, ms(elapsed), frameThresholdMs.load(std::memory_order_relaxed), frame.dropped,
         frame.incomplete,
-        unregistered.load(std::memory_order_relaxed));
+        unregistered.load(std::memory_order_relaxed), frame.end);
     for (unsigned group = 0; group < 2; ++group) {
         const auto& totals = group ? frame.workers : frame.local;
         std::array<size_t, sections> order{};
@@ -297,7 +304,8 @@ void writer() noexcept {
             Event event;
             const auto budget = buffer.events.pending();
             for (size_t n = 0; n < budget && buffer.events.pop(event); ++n) {
-                if (!event.segment) printEvent(output, event, event.section == Section::Wait ? "[WAIT]" : "[STALL] call");
+                if (!event.segment && logCalls.load(std::memory_order_relaxed))
+                    printEvent(output, event, event.section == Section::Wait ? "[WAIT]" : "[STALL] call");
                 history[cursor++ % history.size()] = event;
                 count = (std::min)(history.size(), count + 1);
             }
@@ -364,16 +372,20 @@ void Scope::end() noexcept {
 void initializeFromEnvironment() noexcept {
     if (enabled() || reporter.joinable()) return;
     wchar_t setting[8]{};
-    if (GetEnvironmentVariableW(L"DARKRECOMP_STALL_PROFILE", setting, 8) != 1 || setting[0] != L'1') return;
+    if (GetEnvironmentVariableW(L"DARKRECOMP_STALL_PROFILE", setting, 8) != 1 ||
+        (setting[0] != L'1' && setting[0] != L'2')) return;
+    const bool hotScopes = setting[0] == L'2';
     LARGE_INTEGER value{}; QueryPerformanceFrequency(&value); frequency = uint64_t(value.QuadPart);
     if (!frequency) return;
     callThreshold = frequency * 2 / 1000;
-    frameThreshold = frequency * 1667 / 100000;
+    frameThreshold.store(frequency * 1667 / 100000, std::memory_order_relaxed);
     stopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     if (!stopEvent) return;
     try { reporter = std::thread(writer); }
     catch (...) { CloseHandle(stopEvent); stopEvent = nullptr; return; }
-    std::fprintf(stderr, "[StallProfiler] enabled frame_budget_ms=16.670 call_threshold_ms=2.000 threads=128 deferred_log=1\n");
+    std::fprintf(stderr, "[StallProfiler] enabled frame_budget_ms=16.670 call_threshold_ms=2.000 threads=128 deferred_log=1 per_draw_scopes=%u\n",
+                 unsigned(hotScopes));
+    hotFlag.store(hotScopes, std::memory_order_relaxed);
     enabledFlag.store(true, std::memory_order_release);
 }
 void frameBoundary(const char* name) noexcept {
@@ -422,10 +434,20 @@ void frameBoundary(const char* name) noexcept {
     local.frameStart = time;
     // Fast guest boundaries can run far more often than presentation. They
     // update the baseline but must not fill the queue needed by slow frames.
-    if (frame.begin && time - frame.begin > frameThreshold && !buffer->frames.push(frame))
+    if (frame.begin && time - frame.begin > frameThreshold.load(std::memory_order_relaxed) && !buffer->frames.push(frame))
         buffer->dropped.fetch_add(1, std::memory_order_relaxed);
 }
+void configureFrameReports(double thresholdMs, bool calls) noexcept {
+    if (!enabled() || !frequency || !(thresholdMs > 0) || thresholdMs > 10000) return;
+    // Frames already queued keep their original admission; call this before
+    // the guest thread starts so both streams use one threshold.
+    frameThresholdMs.store(thresholdMs, std::memory_order_relaxed);
+    frameThreshold.store(uint64_t(thresholdMs * double(frequency) / 1000.0), std::memory_order_relaxed);
+    logCalls.store(calls, std::memory_order_relaxed);
+    std::fprintf(stderr, "[StallProfiler] frame_report_threshold_ms=%.3f call_lines=%u\n", thresholdMs, unsigned(calls));
+}
 void shutdown() noexcept {
+    hotFlag.store(false, std::memory_order_relaxed);
     enabledFlag.store(false, std::memory_order_release);
     // Fatal guest, timeout and display paths can race during process teardown.
     if (stopping.test_and_set(std::memory_order_acq_rel)) return;

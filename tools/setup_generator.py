@@ -14,6 +14,9 @@ COMMIT = "c5bfd90d87f2ed0db8cff5c19ea3aff0e161e527"
 PATCHES = (
     ROOT / "tools/patches/xenonrecomp-darkness.patch",
     ROOT / "tools/patches/xenonrecomp-corrections.patch",
+    ROOT / "tools/patches/xenonrecomp-register-locals.patch",
+    ROOT / "tools/patches/xenonrecomp-non-argument-locals.patch",
+    ROOT / "tools/patches/xenonrecomp-stack-accesses.patch",
 )
 
 

@@ -1,0 +1,196 @@
+--- a/XenonRecomp/recompiler.cpp
++++ b/XenonRecomp/recompiler.cpp
+@@ -316,7 +316,7 @@ bool Recompiler::Recompile(
+     // TODO: we could cache these formats in an array
+     auto r = [&](size_t index)
+         {
+-            if ((config.nonArgumentRegistersAsLocalVariables && (index == 0 || index == 2 || index == 11 || index == 12)) || 
++            if ((nonArgumentLocal && (index == 0 || index == 2 || index == 11 || index == 12)) || 
+                 (nonVolatileLocal && index >= 14))
+             {
+                 localVariables.r[index] = true;
+@@ -327,7 +327,7 @@ bool Recompiler::Recompile(
+ 
+     auto f = [&](size_t index)
+         {
+-            if ((config.nonArgumentRegistersAsLocalVariables && index == 0) ||
++            if ((nonArgumentLocal && index == 0) ||
+                 (nonVolatileLocal && index >= 14))
+             {
+                 localVariables.f[index] = true;
+@@ -338,7 +338,7 @@ bool Recompiler::Recompile(
+ 
+     auto v = [&](size_t index)
+         {
+-            if ((config.nonArgumentRegistersAsLocalVariables && (index >= 32 && index <= 63)) ||
++            if ((nonArgumentLocal && (index >= 32 && index <= 63)) ||
+                 (nonVolatileLocal && ((index >= 14 && index <= 31) || (index >= 64 && index <= 127))))
+             {
+                 localVariables.v[index] = true;
+@@ -773,10 +773,20 @@ bool Recompiler::Recompile(
+         // from the context, then restore the context: functions that keep
+         // their registers in ctx rely on callees preserving them.
+         std::vector<std::string> synced;
+-        if (auto sync = config.registerSyncs.find(base); sync != config.registerSyncs.end())
++        const RecompilerRegisterSync* sync = nullptr;
++        if (auto at = config.registerSyncs.find(base); at != config.registerSyncs.end())
+         {
+             usedRegisterSyncs.emplace(base);
+-            for (auto& reg : sync->second.registers)
++            sync = &at->second;
++        }
++        else if (auto to = config.registerSyncTargets.find(insn.operands[0]); to != config.registerSyncTargets.end())
++        {
++            usedRegisterSyncTargets.emplace(insn.operands[0]);
++            sync = &to->second;
++        }
++        if (sync != nullptr)
++        {
++            for (auto& reg : sync->registers)
+             {
+                 std::string local;
+                 if (reg.size() >= 2 && reg[0] == 'r' && std::isdigit(reg[1]))
+@@ -2705,6 +2715,7 @@ void Recompiler::FindReachableInstructions(const Function& fn)
+ bool Recompiler::Recompile(const Function& fn)
+ {
+     nonVolatileLocal = config.NonVolatileAsLocal(fn.base);
++    nonArgumentLocal = config.NonArgumentAsLocal(fn.base);
+     FindReachableInstructions(fn);
+     auto base = fn.base;
+     auto end = base + fn.size;
+@@ -3057,6 +3068,14 @@ bool Recompiler::Recompile(const std::filesystem::path& headerFilePath)
+             ++diagnosticCount;
+         }
+     }
++    for (auto& [target, sync] : config.registerSyncTargets)
++    {
++        if (!usedRegisterSyncTargets.contains(target))
++        {
++            fmt::println("ERROR: register_sync target {:X} has no recompiled bl caller", target);
++            ++diagnosticCount;
++        }
++    }
+ 
+     SaveCurrentOutData();
+     fmt::println("Translation units: {}", cppFileIndex);
+--- a/XenonRecomp/recompiler.h
++++ b/XenonRecomp/recompiler.h
+@@ -39,7 +39,9 @@ struct Recompiler
+     // Whether the function being recompiled keeps non-volatile registers in
+     // locals (see RecompilerConfig::NonVolatileAsLocal).
+     bool nonVolatileLocal = false;
++    bool nonArgumentLocal = false;
+     std::unordered_set<uint32_t> usedRegisterSyncs;
++    std::unordered_set<uint32_t> usedRegisterSyncTargets;
+ 
+     void FindReachableInstructions(const Function& fn);
+ 
+--- a/XenonRecomp/recompiler_config.cpp
++++ b/XenonRecomp/recompiler_config.cpp
+@@ -77,6 +77,36 @@ void RecompilerConfig::Load(const std::string_view& configFilePath)
+             }
+         }
+ 
++        if (auto rangeArray = main["non_argument_local_ranges"].as_array())
++        {
++            for (auto& range : *rangeArray)
++            {
++                auto* pair = range.as_array();
++                if (pair == nullptr || pair->size() != 2 || !(*pair)[0].value<uint32_t>() || !(*pair)[1].value<uint32_t>())
++                {
++                    fmt::println("ERROR: non_argument_local_ranges entries must be [start, end] pairs");
++                    continue;
++                }
++                uint32_t start = *(*pair)[0].value<uint32_t>();
++                uint32_t end = *(*pair)[1].value<uint32_t>();
++                if (end <= start)
++                    fmt::println("ERROR: empty non_argument_local_ranges entry {:X}-{:X}", start, end);
++                else
++                    nonArgumentLocal.ranges.emplace_back(start, end);
++            }
++        }
++
++        if (auto contextArray = main["non_argument_context_functions"].as_array())
++        {
++            for (auto& entry : *contextArray)
++            {
++                if (auto address = entry.value<uint32_t>())
++                    nonArgumentLocal.exceptions.emplace(*address);
++                else
++                    fmt::println("ERROR: non_argument_context_functions entries must be addresses");
++            }
++        }
++
+         if (auto functionsArray = main["functions"].as_array())
+         {
+             for (auto& func : *functionsArray)
+@@ -129,9 +159,10 @@ void RecompilerConfig::Load(const std::string_view& configFilePath)
+         {
+             auto& table = *entry.as_table();
+             auto address = table["address"].value<uint32_t>();
+-            if (!address)
++            auto target = table["target"].value<uint32_t>();
++            if (!address == !target)
+             {
+-                fmt::println("ERROR: register_sync entry without an address");
++                fmt::println("ERROR: register_sync entries need exactly one of address or target");
+                 continue;
+             }
+             RecompilerRegisterSync sync;
+@@ -140,8 +171,10 @@ void RecompilerConfig::Load(const std::string_view& configFilePath)
+                 for (auto& reg : *registerArray)
+                     sync.registers.push_back(*reg.value<std::string>());
+             }
+-            if (!registerSyncs.emplace(*address, std::move(sync)).second)
++            if (address && !registerSyncs.emplace(*address, std::move(sync)).second)
+                 fmt::println("ERROR: duplicate register_sync at {:X}", *address);
++            if (target && !registerSyncTargets.emplace(*target, std::move(sync)).second)
++                fmt::println("ERROR: duplicate register_sync target {:X}", *target);
+         }
+     }
+ 
+--- a/XenonRecomp/recompiler_config.h
++++ b/XenonRecomp/recompiler_config.h
+@@ -27,6 +27,23 @@ struct RecompilerRegisterSync
+     std::vector<std::string> registers;
+ };
+ 
++struct RecompilerFunctionRanges
++{
++    std::vector<std::pair<uint32_t, uint32_t>> ranges;
++    std::unordered_set<uint32_t> exceptions;
++    bool Contains(uint32_t function) const
++    {
++        if (exceptions.contains(function))
++            return false;
++        for (auto& [start, end] : ranges)
++        {
++            if (function >= start && function < end)
++                return true;
++        }
++        return false;
++    }
++};
++
+ struct RecompilerConfig
+ {
+     std::string directoryPath;
+@@ -53,6 +70,18 @@ struct RecompilerConfig
+     // non-volatile registers from PPCContext. The listed locals are published
+     // to the context for the call and the previous context values restored.
+     std::unordered_map<uint32_t, RecompilerRegisterSync> registerSyncs;
++    // The same, keyed by call target: applies to every bl to that function.
++    std::unordered_map<uint32_t, RecompilerRegisterSync> registerSyncTargets;
++    // Per-function non-argument locals (r0, r2, r11, r12, f0, v32-v63). Only
++    // applies to functions that also keep non-volatile registers in locals,
++    // whose save/restore helper calls (which take r11/r12) are elided.
++    RecompilerFunctionRanges nonArgumentLocal;
++    bool NonArgumentAsLocal(uint32_t function) const
++    {
++        if (nonArgumentRegistersAsLocalVariables)
++            return true;
++        return NonVolatileAsLocal(function) && nonArgumentLocal.Contains(function);
++    }
+     bool NonVolatileAsLocal(uint32_t function) const
+     {
+         if (nonVolatileRegistersAsLocalVariables)

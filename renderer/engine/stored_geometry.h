@@ -1,8 +1,10 @@
 #pragma once
 #include "engine_transforms.h"
 #include "engine_vertex_program.h"
+#include "unowned_reference.h"
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -13,7 +15,8 @@
 namespace DarkRecomp::Native {
 // Owned original conversion output. Formats retain engine slot semantics;
 // in particular slot 9 is NORMAL, not COLOR. No shader meaning is inferred.
-struct StoredGeometry {
+struct StoredGeometry : std::enable_shared_from_this<StoredGeometry> {
+    StoredGeometry() noexcept {} // Not an aggregate: its base cannot be list-initialized.
     uint32_t address = 0, id = 0, vertexCount = 0, stride = 0, conversionMask = 0;
     uint16_t maximumIndex = 0;
     std::array<uint8_t, 16> formats{};
@@ -31,6 +34,9 @@ struct StoredUpload {
 struct StoredDraw {
     std::shared_ptr<const StoredGeometry> vertices, indices;
     uint32_t firstIndex = 0, indexCount = 0;
+    // Nonzero: vertices and indices are unowned references (unowned_reference.h)
+    // whose owners the cache pinned in this epoch (StoredGeometryCache::takePins).
+    uint32_t pinEpoch = 0;
     std::optional<EngineTransformSnapshot> transforms;
     std::optional<EngineVertexBindingSnapshot> vertexBindings;
     StoredDraw() = default;
@@ -43,23 +49,23 @@ struct StoredDraw {
     // Engaged snapshots retain their complete owned values, including after
     // moving the geometry references. No guest data or validation is cached.
     StoredDraw(const StoredDraw& other) noexcept
-        :vertices(other.vertices),indices(other.indices),firstIndex(other.firstIndex),indexCount(other.indexCount) {
+        :vertices(other.vertices),indices(other.indices),firstIndex(other.firstIndex),indexCount(other.indexCount),pinEpoch(other.pinEpoch) {
         copySnapshots(other);
     }
     StoredDraw(StoredDraw&& other) noexcept
-        :vertices(std::move(other.vertices)),indices(std::move(other.indices)),firstIndex(other.firstIndex),indexCount(other.indexCount) {
+        :vertices(std::move(other.vertices)),indices(std::move(other.indices)),firstIndex(other.firstIndex),indexCount(other.indexCount),pinEpoch(other.pinEpoch) {
         copySnapshots(other);
     }
     StoredDraw& operator=(const StoredDraw& other) noexcept {
         if(this!=&other) {
-            vertices=other.vertices;indices=other.indices;firstIndex=other.firstIndex;indexCount=other.indexCount;
+            vertices=other.vertices;indices=other.indices;firstIndex=other.firstIndex;indexCount=other.indexCount;pinEpoch=other.pinEpoch;
             copySnapshots(other);
         }
         return *this;
     }
     StoredDraw& operator=(StoredDraw&& other) noexcept {
         if(this!=&other) {
-            vertices=std::move(other.vertices);indices=std::move(other.indices);firstIndex=other.firstIndex;indexCount=other.indexCount;
+            vertices=std::move(other.vertices);indices=std::move(other.indices);firstIndex=other.firstIndex;indexCount=other.indexCount;pinEpoch=other.pinEpoch;
             copySnapshots(other);
         }
         return *this;
@@ -76,6 +82,13 @@ struct StoredGeometryStats {
     uint64_t matchedDraws = 0, missingDraws = 0, invalidDraws = 0;
     size_t cachedBytes = 0, cachedResources = 0;
 };
+
+// DARK_OWNED_DRAW_REFERENCES=1 restores a reference count per draw for stored
+// geometry and images (comparison runs).
+inline const bool drawReferencesOwned = [] {
+    const char* value = std::getenv("DARK_OWNED_DRAW_REFERENCES");
+    return value && *value == '1';
+}();
 
 // Recover one attribute using the original CPU conversion semantics from
 // 82760598. The result has default (0,0,0,1) components and applies the stored
@@ -104,9 +117,16 @@ public:
     int drawFast(uint8_t* base, uint32_t vertexId, uint32_t indexId, uint32_t firstIndex,
                  uint32_t indexCount, uint32_t boundIndexBuffer, StoredDraw& output) noexcept;
     std::shared_ptr<const StoredGeometry> vertexStream(uint8_t* base,uint32_t vertexId,uint32_t boundVertexBuffer) noexcept;
+    // drawFast() hands out unowned references and keeps one owner per entry
+    // and epoch. takePins() moves those owners to the caller, which keeps them
+    // for as long as a draw of that epoch can be in use, and starts the next
+    // epoch (returned; the first is 1, none is 0).
+    uint32_t takePins(std::vector<std::shared_ptr<const StoredGeometry>>& out);
+    // Diagnostic: the objects pinned so far in the current epoch.
+    void pinnedNow(std::vector<const StoredGeometry*>& out) const;
     StoredGeometryStats stats() const;
 private:
-    struct Entry { std::shared_ptr<const StoredGeometry> geometry; uint64_t used; };
+    struct Entry { std::shared_ptr<const StoredGeometry> geometry; uint64_t used; uint32_t pinEpoch = 0; };
     using Entries=std::unordered_map<uint32_t,Entry>;
     Entries::iterator eraseEntry(Entries::iterator);
     mutable std::mutex mutex_;
@@ -123,6 +143,8 @@ private:
     // lock-free guest validation in draw()/vertexStream().
     std::unordered_multimap<uint32_t, uint32_t> byAddress_;
     std::vector<uint64_t> generations_;
+    std::vector<std::shared_ptr<const StoredGeometry>> pins_;
+    uint32_t pinEpoch_ = 1;
     uint64_t clock_ = 0;
     size_t byteLimit_, entryLimit_;
     StoredGeometryStats stats_;

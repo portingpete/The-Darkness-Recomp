@@ -2397,6 +2397,16 @@ int main(int argc, char** argv) {
             ctx.r3.u64 = input; __imp__VdQueryVideoMode(ctx, memory->base());
             check(memory->read32(input) == width && memory->read32(input + 4) == 720,
                   "Ultrawide VdQueryVideoMode ABI mismatch");
+            // D3D's swap reads display sizes from X_DISPLAY_INFO; a stale
+            // stack word there once reached a divide in the scaler rebuild.
+            std::memset(memory->base() + input, 0xCD, 0x60);
+            ctx.r3.u64 = input; __imp__VdGetCurrentDisplayInformation(ctx, memory->base());
+            auto read16 = [&](uint32_t offset) { const uint8_t* at = memory->base() + input + offset; return uint32_t(at[0]) << 8 | at[1]; };
+            check(ctx.r3.u64 == 0 && read16(0x00) == width && read16(0x02) == 720 &&
+                  read16(0x48) == width && read16(0x4A) == 720 && read16(0x56) == width &&
+                  memory->read32(input + 0x4C) == 0x42700000 && memory->read32(input + 0x08 + 0x10) == width &&
+                  memory->base()[input + 0x58] == 0xCD,
+                  "VdGetCurrentDisplayInformation ABI mismatch");
         }
         // The original selected-mode indirection, with an untouched neighbor
         // and metadata canary. Logical mode identifiers must remain unchanged.

@@ -1,0 +1,41 @@
+# The Darkness Recomp recording. It plays by itself from launch to exit:
+#   DarkRecomp.exe --test-skip-intros --test-input <a copy of this file> ...
+# (build_native\claude-play.cmd does this when BENCH_RECORDING names the file).
+# Chinatown, noclip flight below street level (a draw-heavy benchmark view, not a play route).
+wait world
+wait 2500
+dev open
+wait menu
+dev mission NY1_Chinatown:ny1+layer1
+# The mission closes the panel; reopen it so the player state keeps updating.
+dev open
+wait player
+wait 3000
+dev noclip on
+dev invincible on
+dev close
+wait 4000
+capture
+74 300
+wait 3500
+87 1500
+wait 3500
+capture
+74 300
+wait 3500
+mouse 0 -12
+87 1500
+wait 3500
+capture
+74 300
+wait 3500
+mouse 0 24
+87 1500
+wait 3500
+capture
+74 300
+wait 3500
+mouse 0 -12
+wait 3500
+capture
+quit

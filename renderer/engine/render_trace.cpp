@@ -15,6 +15,7 @@
 #include "engine_vertex_program.h"
 #include "world_mesh.h"
 #include "native_layer.h"
+#include "screen_fog.h"
 #include "runtime/native/runtime.h"
 #include "runtime/native/audio_refill_trace.h"
 #include "ppc_recomp_shared.h"
@@ -1121,7 +1122,7 @@ void DarkRecomp::Native::traceEngineVertexProgram(uint8_t* base, const EngineVer
 #define TRACE_ORIGINAL(address) \
     extern "C" PPC_FUNC(__imp__sub_##address); \
     PPC_FUNC(sub_##address) { \
-        DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::Section::Guest, "sub_" #address, 0x##address, uint32_t(ctx.lr)); \
+        DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::hot, DarkRecomp::Native::StallProfiler::Section::Guest, "sub_" #address, 0x##address, uint32_t(ctx.lr)); \
         static std::atomic<uint64_t> calls{0}; \
         if (enabled.load(std::memory_order_relaxed)) \
             capture(0x##address, ++calls, ctx, base); \
@@ -1238,7 +1239,7 @@ PPC_FUNC(sub_8259C490) {
 }
 extern "C" PPC_FUNC(__imp__sub_8259CA10);
 PPC_FUNC(sub_8259CA10) {
-    DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::Section::Guest, "sub_8259CA10", 0x8259CA10, uint32_t(ctx.lr));
+    DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::hot, DarkRecomp::Native::StallProfiler::Section::Guest, "sub_8259CA10", 0x8259CA10, uint32_t(ctx.lr));
     const auto manager = ctx.r3.u32;
     const auto generation = DarkRecomp::Native::queuedPromptGeneration(base, manager);
     __imp__sub_8259CA10(ctx, base);
@@ -1249,7 +1250,7 @@ PPC_FUNC(sub_8259CA10) {
 // in one frame, so contexts expire at its frame/allocation boundary.
 extern "C" PPC_FUNC(__imp__sub_8259D098);
 PPC_FUNC(sub_8259D098) {
-    DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::Section::Guest, "sub_8259D098", 0x8259D098, uint32_t(ctx.lr));
+    DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::hot, DarkRecomp::Native::StallProfiler::Section::Guest, "sub_8259D098", 0x8259D098, uint32_t(ctx.lr));
     const auto manager = ctx.r3.u32, draw = ctx.r4.u32;
     const auto context = DarkRecomp::Native::currentPromptRenderContext();
     const auto generation = DarkRecomp::Native::queuedPromptGeneration(base, manager);
@@ -1261,7 +1262,7 @@ PPC_FUNC(sub_8259D098) {
 }
 extern "C" PPC_FUNC(__imp__sub_8259D3B8);
 PPC_FUNC(sub_8259D3B8) {
-    DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::Section::Guest, "sub_8259D3B8", 0x8259D3B8, uint32_t(ctx.lr));
+    DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::hot, DarkRecomp::Native::StallProfiler::Section::Guest, "sub_8259D3B8", 0x8259D3B8, uint32_t(ctx.lr));
     const auto manager = ctx.r3.u32, pointers = ctx.r4.u32, count = ctx.r5.u32;
     const auto context = DarkRecomp::Native::currentPromptRenderContext();
     const auto generation = DarkRecomp::Native::queuedPromptGeneration(base, manager);
@@ -1294,7 +1295,7 @@ PPC_FUNC(sub_825A24D0) {
 }
 extern "C" PPC_FUNC(__imp__sub_82299EA0);
 PPC_FUNC(sub_82299EA0) {
-    DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::Section::Guest, "sub_82299EA0", 0x82299EA0, uint32_t(ctx.lr));
+    DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::hot, DarkRecomp::Native::StallProfiler::Section::Guest, "sub_82299EA0", 0x82299EA0, uint32_t(ctx.lr));
     const auto context = executingPromptManager && executingPromptManager->base == base &&
         uint32_t(ctx.lr) == 0x825A2E18 ? DarkRecomp::Native::queuedPromptContext(base,
         executingPromptManager->manager, ctx.r3.u32, executingPromptManager->generation) : DarkRecomp::Native::PromptRenderContext::Menu;
@@ -1303,12 +1304,37 @@ PPC_FUNC(sub_82299EA0) {
         uint32_t(ctx.lr) == 0x825A2E18 && DarkRecomp::Native::queuedSubtitleContext(base,
         executingPromptManager->manager, ctx.r3.u32, executingPromptManager->generation);
     const DarkRecomp::Native::ScopedSubtitleRenderContext subtitleScope(subtitle);
+    // Screen-space depth fog (native_layer.h): while a fog run is held, the
+    // elements of a record are executed from here as the original executes
+    // them, one 8225E2F0 each, except those the run is known to cover. The
+    // manager only adds the returned element count to a statistic; a skipped
+    // element changes nothing, and what its preparation would have bound is
+    // bound again by the next element that is executed.
+    const DarkRecomp::Native::ScreenFogQueuedElement* elements = nullptr;
+    size_t elementCount = 0;
+    if (uint32_t(ctx.lr) == 0x825A2E18 && !enabled && DarkRecomp::Native::enginePreviewEnabled() &&
+        DarkRecomp::Native::screenFogEmitterBegin(base, ctx.r3.u32, elements, elementCount)) {
+        const auto returnAddress = ctx.lr;
+        for (size_t i = 0; i < elementCount; ++i) {
+            const auto element = elements[i];
+            if (!element.vertices || DarkRecomp::Native::screenFogEmitterSkip(element)) continue;
+            ctx.r3.u64 = element.vertices; ctx.r4.u64 = element.indices;
+            ctx.r5.u64 = element.triangles; ctx.r6.u64 = element.first;
+            ctx.lr = 0x82299F14;
+            sub_8225E2F0(ctx, base);
+            DarkRecomp::Native::screenFogEmitterExecuted();
+        }
+        DarkRecomp::Native::screenFogEmitterEnd();
+        ctx.r3.u64 = elementCount;
+        ctx.lr = returnAddress;
+        return;
+    }
     __imp__sub_82299EA0(ctx, base);
 }
 
 extern "C" PPC_FUNC(__imp__sub_8225DBC8);
 PPC_FUNC(sub_8225DBC8) {
-    DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::Section::Guest, "sub_8225DBC8", 0x8225DBC8, uint32_t(ctx.lr));
+    DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::hot, DarkRecomp::Native::StallProfiler::Section::Guest, "sub_8225DBC8", 0x8225DBC8, uint32_t(ctx.lr));
     DarkRecomp::Native::EngineCpuScope profile(DarkRecomp::Native::EnginePhase::immediate);
     static std::atomic<uint64_t> calls{0};
     if (enabled) capture(0x8225DBC8, ++calls, ctx, base);
@@ -1399,7 +1425,7 @@ PPC_FUNC(sub_8225F320) {
 }
 extern "C" PPC_FUNC(__imp__sub_8225E218);
 PPC_FUNC(sub_8225E218) {
-    DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::Section::Guest, "sub_8225E218", 0x8225E218, uint32_t(ctx.lr));
+    DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::hot, DarkRecomp::Native::StallProfiler::Section::Guest, "sub_8225E218", 0x8225E218, uint32_t(ctx.lr));
     DarkRecomp::Native::EngineCpuScope profile(DarkRecomp::Native::EnginePhase::stored);
     static std::atomic<uint64_t> calls{0};
     if (enabled) capture(0x8225E218, ++calls, ctx, base);
@@ -1413,7 +1439,7 @@ PPC_FUNC(sub_8225E218) {
 }
 extern "C" PPC_FUNC(__imp__sub_8225E2F0);
 PPC_FUNC(sub_8225E2F0) {
-    DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::Section::Guest, "sub_8225E2F0", 0x8225E2F0, uint32_t(ctx.lr));
+    DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::hot, DarkRecomp::Native::StallProfiler::Section::Guest, "sub_8225E2F0", 0x8225E2F0, uint32_t(ctx.lr));
     DarkRecomp::Native::EngineCpuScope profile(DarkRecomp::Native::EnginePhase::stored);
     static std::atomic<uint64_t> calls{0};
     if (enabled) capture(0x8225E2F0, ++calls, ctx, base);
@@ -1423,6 +1449,25 @@ PPC_FUNC(sub_8225E2F0) {
 }
 TRACE_ORIGINAL(8225E3C8)
 TRACE_ORIGINAL(8225CDD8)
+// The velocity ("MotionMap") geometry pass feeds only the final composite's
+// motion-blur input. With motion blur off, the composite permutation chosen
+// for this logical frame does not sample it (graphicsFragmentFlags), so the
+// emitter returns as it does for a model with nothing to draw. Both callers
+// (825BDDA4, 825D0930) ignore its result. Motion blur on, renderer tracing
+// and DARK_VELOCITY_PASS=1 keep the original call.
+static const bool keepVelocityPass = [] {
+    const char* value = std::getenv("DARK_VELOCITY_PASS");
+    return value && *value == '1';
+}();
+extern "C" PPC_FUNC(__imp__sub_82276148);
+PPC_FUNC(sub_82276148) {
+    if (!keepVelocityPass && !enabled && DarkRecomp::Native::enginePreviewEnabled() &&
+        !DarkRecomp::Native::previewMotionBlurEnabled()) {
+        DarkRecomp::Native::recordSkippedMotionBatch();
+        return;
+    }
+    __imp__sub_82276148(ctx, base);
+}
 extern "C" PPC_FUNC(__imp__sub_82252878);
 PPC_FUNC(sub_82252878) {
     const auto resource=ctx.r3.u32,caller=uint32_t(ctx.lr);
@@ -1520,7 +1565,7 @@ PPC_FUNC(sub_82762328) {
 }
 extern "C" PPC_FUNC(__imp__sub_82899BF0);
 PPC_FUNC(sub_82899BF0) {
-    DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::Section::Guest, "sub_82899BF0", 0x82899BF0, uint32_t(ctx.lr));
+    DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::hot, DarkRecomp::Native::StallProfiler::Section::Guest, "sub_82899BF0", 0x82899BF0, uint32_t(ctx.lr));
     const bool stored = uint32_t(ctx.lr) == 0x82252DD4;
     const uint32_t destination = ctx.r3.u32, bytes = ctx.r5.u32, resource = ctx.r22.u32;
     __imp__sub_82899BF0(ctx, base);
@@ -1548,7 +1593,7 @@ PPC_FUNC(sub_82765410) {
 extern "C" PPC_FUNC(__imp__sub_8224A2E8);
 extern "C" PPC_FUNC(__imp__sub_8224DAE0);
 PPC_FUNC(sub_8224DAE0) {
-    DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::Section::Guest, "sub_8224DAE0", 0x8224DAE0, uint32_t(ctx.lr));
+    DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::hot, DarkRecomp::Native::StallProfiler::Section::Guest, "sub_8224DAE0", 0x8224DAE0, uint32_t(ctx.lr));
     DarkRecomp::Native::EngineCpuScope profile(DarkRecomp::Native::EnginePhase::descriptor);
     DarkRecomp::Native::EngineDescriptorObservation observation;
     const bool observe = uint32_t(ctx.lr) == 0x82248E98 &&
@@ -1565,7 +1610,7 @@ PPC_FUNC(sub_8224DAE0) {
 }
 extern "C" PPC_FUNC(__imp__sub_8224A0A8);
 PPC_FUNC(sub_8224A0A8) {
-    DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::Section::Guest, "sub_8224A0A8", 0x8224A0A8, uint32_t(ctx.lr));
+    DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::hot, DarkRecomp::Native::StallProfiler::Section::Guest, "sub_8224A0A8", 0x8224A0A8, uint32_t(ctx.lr));
     DarkRecomp::Native::EngineCpuScope profile(DarkRecomp::Native::EnginePhase::conversion);
     DarkRecomp::Native::EngineConversionObservation observation;
     const bool observe = uint32_t(ctx.lr) == 0x822490B8 &&
@@ -1580,7 +1625,7 @@ PPC_FUNC(sub_8224A0A8) {
     }
 }
 PPC_FUNC(sub_8224A2E8) {
-    DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::Section::Guest, "sub_8224A2E8", 0x8224A2E8, uint32_t(ctx.lr));
+    DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::hot, DarkRecomp::Native::StallProfiler::Section::Guest, "sub_8224A2E8", 0x8224A2E8, uint32_t(ctx.lr));
     DarkRecomp::Native::EngineCpuScope profile(DarkRecomp::Native::EnginePhase::textures);
     // Direct engine preparation boundary. The original still performs all
     // descriptor/device writes exactly once; host observation is read-only.
@@ -1595,9 +1640,26 @@ PPC_FUNC(sub_8224A2E8) {
         if (enabled) captureTextureConstants(++calls, base, observation);
     }
 }
+// The original indexed draw is not run in preview play (DARK_SKIP_XBOX_DRAW=0
+// runs it again). After the observations below, all that call still does is
+// flush the device's dirty state into the Xbox command stream and append the
+// draw packet. This port never reads that stream, and all five callers ignore
+// the result. An audit of every device and render-context word across 6.8
+// million original draws (village route) found the call changes only: the
+// dirty masks (device+0..39), which then stay set until the next original
+// flush (clear, resolve, non-indexed draw); command-buffer bookkeeping
+// (+48..56, +10908, +13224..13360, +14892..14908); and values the flush
+// derives from the bound programs and depth state and that only the flush
+// paths consume (+10528..10536, +10560 low bits, +10580, flag bytes
+// +10941/10942, +11824). None of it is state the native capture reads.
+// Renderer tracing and non-preview runs always keep the original call.
+static const bool skipXboxDraw = [] {
+    const char* value = std::getenv("DARK_SKIP_XBOX_DRAW");
+    return !value || *value != '0';
+}();
 extern "C" PPC_FUNC(__imp__sub_82868FE8);
 PPC_FUNC(sub_82868FE8) {
-    DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::Section::Guest, "sub_82868FE8", 0x82868FE8, uint32_t(ctx.lr));
+    DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::hot, DarkRecomp::Native::StallProfiler::Section::Guest, "sub_82868FE8", 0x82868FE8, uint32_t(ctx.lr));
     DarkRecomp::Native::EngineCpuScope profile(DarkRecomp::Native::EnginePhase::indexed);
     captureWorldBoundary(0x82868FE8,ctx,base);
     if (uint32_t(ctx.lr)==0x8225DD38 && ctx.r4.u32==4 && !ctx.r5.u32) {
@@ -1628,6 +1690,17 @@ PPC_FUNC(sub_82868FE8) {
             // stored observation (resolve, binding, snapshot, queue) with exact fallback.
             if (!enabled && DarkRecomp::Native::nativeLayerMode() != DarkRecomp::Native::NativeLayerMode::off) {
                 const auto floatingPointMode=_mm_getcsr();
+                // Screen-space depth fog (screen_fog.h): a fog draw the held
+                // run already covers needs no observation, and the original
+                // draw's only output is the unread Xbox command stream.
+                if (DarkRecomp::Native::nativeLayerMode() == DarkRecomp::Native::NativeLayerMode::on) {
+                    const bool absorbed = DarkRecomp::Native::screenFogAbsorb(base,drawingGeometry->vertices,drawingGeometry->indices,ctx.r6.u32,ctx.r7.u32);
+                    DarkRecomp::Native::screenFogEmitterObserved(absorbed);
+                    if (absorbed) {
+                        _mm_setcsr(floatingPointMode);
+                        return;
+                    }
+                }
                 DarkRecomp::Native::nativeLayerObserveStoredDraw(base,*drawingGeometry,uint32_t(ctx.lr),
                     ctx.r4.u32,ctx.r5.u32,ctx.r6.u32,ctx.r7.u32,word(base,renderContext+16532),word(base,device+12428));
                 _mm_setcsr(floatingPointMode);
@@ -1695,6 +1768,7 @@ PPC_FUNC(sub_82868FE8) {
         }
         _mm_setcsr(mode);
     }
+    if (skipXboxDraw && !enabled && DarkRecomp::Native::enginePreviewEnabled()) return;
     __imp__sub_82868FE8(ctx, base);
 }
 extern "C" PPC_FUNC(__imp__sub_828630D8);
@@ -1858,7 +1932,7 @@ PPC_FUNC(sub_828AE188) {
 }
 extern "C" PPC_FUNC(__imp__sub_8226A7E0);
 PPC_FUNC(sub_8226A7E0) {
-    DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::Section::Guest, "sub_8226A7E0", 0x8226A7E0, uint32_t(ctx.lr));
+    DarkRecomp::Native::StallProfiler::Scope stallCall(DarkRecomp::Native::StallProfiler::hot, DarkRecomp::Native::StallProfiler::Section::Guest, "sub_8226A7E0", 0x8226A7E0, uint32_t(ctx.lr));
     const uint32_t caller=uint32_t(ctx.lr);
     const bool initial=caller==0x822581F0,incremental=caller==0x822594E0;
     auto* upload=preparingImage;

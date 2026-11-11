@@ -9,10 +9,20 @@
 #include <span>
 #include <vector>
 #include "preview_frame_diagnostics.h"
+#include "unowned_reference.h"
 
 namespace DarkRecomp {
 namespace Native {
 struct WorldDraw;struct WorldClear;struct WorldResolve;struct WorldTexture;struct StoredDraw;struct WorldQuery;struct DisplayGamma;
+struct StoredGeometry;
+// The GPU needs immutable geometry and prepared constants, not a second copy
+// of the 4 KiB engine constant bank used to validate those constants.
+struct WorldGeometry {
+    std::shared_ptr<const StoredGeometry> vertices, indices;
+    uint32_t firstIndex=0,indexCount=0;
+    uint32_t pinEpoch=0; // As StoredDraw::pinEpoch: nonzero when the two references own nothing.
+    explicit operator bool() const {return vertices && indices;}
+};
 enum class PromptRenderContext : uint8_t { Menu = 0, Gameplay = 1 };
 // Original UI owners scope the producer; queued draws retain their own copy.
 // Outside a verified gameplay HUD owner, menu alternatives remain available.
@@ -63,7 +73,11 @@ struct AlphaImage {
     uint32_t width = 0, height = 0;
     std::vector<uint8_t> pixels;
 };
-struct ColorImage {
+// Cache-line aligned: std::make_shared then keeps the reference counts, which
+// the engine thread writes for every draw that samples the image, off the
+// line holding the fields the display thread reads for every such draw.
+struct alignas(64) ColorImage : std::enable_shared_from_this<ColorImage> {
+    ColorImage() noexcept {} // Not an aggregate: its base cannot be list-initialized.
     uint32_t width = 0, height = 0;
     uint32_t faces = 1;
     std::vector<uint8_t> pixels; // Owned, tightly packed RGBA8.
@@ -125,6 +139,15 @@ struct SimpleMesh {
     bool opaque = false;
     Native::PromptRenderContext promptContext = Native::PromptRenderContext::Menu;
     bool subtitle = false;
+    // Set on the first command of a part: the owners of what the part's world
+    // draws refer to without owning (unowned_reference.h). Keep it with the
+    // commands for as long as any of them is used.
+    std::shared_ptr<const void> retained;
+    // A repeat: `world` is the WorldDraw of an earlier command of the same
+    // part, and the draw differs from that one in this geometry only. The
+    // game queues many elements under one set of attributes and one
+    // transform; only the first of them is captured in full.
+    Native::WorldGeometry repeat;
 };
 
 namespace Native {
@@ -247,9 +270,19 @@ struct PreviewFramePart {
     // Populated only on the final part when explicitly configured at startup.
     std::optional<PreviewFrameDiagnostics> diagnostics;
 };
+// With backpressure, up to this many published parts wait for the consumer
+// before the producer blocks.
+inline constexpr std::size_t previewReadyPartDepth=3;
 // Configure before guest entry. No draw timers or guest input resampling.
 void setPreviewFrameTimelineEnabled(bool enabled);
 bool takePreviewFrame(std::vector<SimpleMesh>& frame,unsigned waitMilliseconds=0,PreviewFramePart* part=nullptr);
+// World draws refer to stored geometry and images without owning them
+// (unowned_reference.h). The producer collects the owners in sets that each
+// cover this many consecutive frames; a part shares the set of its frame
+// (SimpleMesh::retained). A resource that was replaced or evicted while in
+// use is therefore released once two further sets have been closed and the
+// parts that shared its set are gone.
+inline constexpr unsigned previewPinEpochFrames=8;
 void printPreviewCounters();
 void recordPreviewRender(size_t meshCount);
 }

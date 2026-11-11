@@ -11,6 +11,7 @@
 #include "engine_palette.h"
 #include "engine_vertex_program.h"
 #include "world_mesh.h"
+#include "screen_fog.h"
 #include "frame_resource_set.h"
 #include "thread_counters.h"
 #include "scene_work.h"
@@ -20,11 +21,13 @@
 #include "runtime/native/graphics_settings.h"
 #include "runtime/native/stall_profiler.h"
 #include <windows.h>
+#include <intrin.h>
 #include <algorithm>
 #include <atomic>
 #include <bit>
 #include <cmath>
 #include <condition_variable>
+#include <deque>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -50,10 +53,26 @@ constexpr size_t promptManagerLimit = 16, promptDrawLimit = 4096;
 std::array<PromptContextFrame, promptManagerLimit> promptContextFrames;
 std::mutex promptContextMutex;
 uint64_t promptContextGeneration = 0;
+// Lock-free guards for the per-draw paths (enqueue, execute, release). Both
+// are written only under promptContextMutex. promptContextTracked counts the
+// entries of every frame's two sets: while it is zero an erase or a lookup
+// cannot find anything, so those calls return before the lock, as if they had
+// run before any concurrent insert. promptContextEpoch changes whenever a
+// frame's identity or generation changes; a thread may reuse the generation
+// it last read for the same manager while the epoch stands.
+std::atomic<uint32_t> promptContextTracked{0};
+std::atomic<uint64_t> promptContextEpoch{1};
 PromptContextFrame* findPromptContextFrame(uint8_t* base, uint32_t manager) noexcept {
     for (auto& frame : promptContextFrames)
         if (frame.base == base && frame.manager == manager) return &frame;
     return nullptr;
+}
+// Under promptContextMutex.
+void clearPromptContextSets(PromptContextFrame& frame) noexcept {
+    const auto entries = uint32_t(frame.gameplayDraws.size() + frame.subtitleDraws.size());
+    frame.gameplayDraws.clear();
+    frame.subtitleDraws.clear();
+    if (entries) promptContextTracked.fetch_sub(entries);
 }
 bool TextureUploadTraceEnabled() {
     // Per-new-texture success logs cost unbuffered writes during area loads.
@@ -84,17 +103,19 @@ std::mutex queueMutex;
 std::condition_variable frameConsumed,frameAvailable;
 bool frameBackpressure=false;
 bool streamLargeFrames=false,pendingFirst=true;
-PreviewFramePart readyPart;
 std::atomic<int> frameMotionBlur{-1};
 // A live frame may contain many lighting passes. Bound the in-flight batch,
-// not the logical frame: producer, ready slot and consumer own at most one
-// batch each. Constants/commands are bounded by 512 entries; immutable world
-// buffers and images have independent byte limits and are charged once.
+// not the logical frame: the producer and consumer own one batch each and up
+// to readyPartDepth published batches wait between them, so momentary
+// differences in part cost do not stall either thread. Constants/commands are
+// bounded by 512 entries; immutable world buffers and images have independent
+// byte limits and are charged once.
 constexpr size_t livePartCommands=512,worldGeometryByteLimit=64*1024*1024;
+constexpr size_t readyPartDepth=previewReadyPartDepth;
 constexpr size_t worldImageByteLimit=256*1024*1024;
 std::unordered_map<uint32_t, std::shared_ptr<const AlphaImage>> textures;
 std::unordered_map<uint32_t, std::shared_ptr<const ColorImage>> alphaColors;
-struct CachedColor { std::shared_ptr<const ColorImage> image; uint64_t used = 0; uint32_t resource = 0; };
+struct CachedColor { std::shared_ptr<const ColorImage> image; uint64_t used = 0; uint32_t resource = 0; uint32_t pinEpoch = 0; };
 std::unordered_map<uint32_t, CachedColor> colorTextures;
 // NATIVE_LAYER: per-ID generation of colorTextures entries (guarded by queueMutex). An insert,
 // replacement or erase of an ID advances only that ID's generation; other entries' node pointers
@@ -145,7 +166,9 @@ struct CachedVideo {
     std::shared_ptr<const VideoFrame> image;
 };
 std::unordered_map<uint32_t, CachedVideo> videos;
-std::vector<SimpleMesh> pending, ready, recycledFrame;
+std::vector<SimpleMesh> pending, recycledFrame;
+struct ReadyPreviewPart { std::vector<SimpleMesh> commands; PreviewFramePart part; };
+std::deque<ReadyPreviewPart> readyParts; // published, not yet taken; frameReady == !empty()
 std::atomic<uint64_t> frameBufferReuses{};
 bool frameReady = false;
 size_t pendingVertices = 0, pendingWorldVertices=0;
@@ -153,6 +176,97 @@ FrameResourceSet<StoredGeometry> pendingGeometry;
 size_t pendingGeometryBytes=0;
 FrameResourceSet<ColorImage> pendingWorldImages;
 size_t pendingWorldImageBytes=0,pendingGuiDraws=0;
+// World draws refer to stored geometry and decoded images without owning them
+// (unowned_reference.h). Their owners are kept once per pin epoch instead (an
+// epoch is previewPinEpochFrames frames): the geometry cache collects one per
+// entry while it hands out references (StoredGeometryCache::drawFast), and
+// one per image is added here when a draw that samples it is queued. Every
+// part published during the epoch shares the set through its first command
+// (SimpleMesh::retained), so a part's draws remain valid for as long as the
+// part exists, wherever it is. The set of the epoch before is kept as well: a
+// draw captured before an epoch boundary and queued after it takes its owners
+// from there. Everything below is guarded by queueMutex.
+struct FramePins {
+    std::vector<std::shared_ptr<const StoredGeometry>> geometry; // Filled when the epoch ends.
+    std::vector<std::shared_ptr<const ColorImage>> images;
+};
+std::shared_ptr<FramePins> framePins=std::make_shared<FramePins>(),previousFramePins;
+// The geometry cache's pin epoch, advanced together with it at the end of
+// every previewPinEpochFrames-th frame. CachedColor::pinEpoch equal to it:
+// the image's owner is in framePins.
+uint32_t framePinEpoch=1;
+unsigned framePinAge=0; // Frames ended in this epoch.
+std::atomic<uint64_t> stalePinRepins{},stalePinDrops{};
+size_t lastFrameGeometryPins=0,lastFrameImagePins=0;
+// The draw's geometry is alive (see the callers): own it in this epoch's set.
+void repinGeometry(WorldDraw& draw) {
+    auto& geometry=draw.geometry;
+    framePins->geometry.push_back(ownerOf(geometry.vertices));
+    if(geometry.indices!=geometry.vertices)framePins->geometry.push_back(ownerOf(geometry.indices));
+    geometry.pinEpoch=framePinEpoch;
+}
+// A draw arrives with a geometry epoch other than the current one. Zero: it
+// owns its geometry. The epoch before: it was captured before an epoch
+// boundary and is queued after it, and the previous epoch's set, held above,
+// owns the geometry. Anything older cannot be shown to be alive and is not
+// drawn.
+bool admitUnownedGeometry(WorldDraw& draw) {
+    const auto epoch=draw.geometry.pinEpoch;
+    if(!epoch)return true;
+    if(uint32_t(epoch+1)!=framePinEpoch || !previousFramePins) {
+        if(++stalePinDrops<=8)std::fprintf(stderr,"[EngineFramePins] dropped a draw captured in epoch %u at epoch %u\n",epoch,framePinEpoch);
+        return false;
+    }
+    repinGeometry(draw);++stalePinRepins;
+    return true;
+}
+// Repeats (SimpleMesh::repeat). The game queues its draws as records of many
+// elements under one set of attributes and one transform. When the game
+// applied nothing between two elements of a record (fogEmitter.elementClean,
+// no vertex program preparation since), the second draw's captured state
+// would be byte for byte the first one's. It is then queued as a command that
+// shares the first one's WorldDraw and carries its own geometry, without
+// reading the device again. DARK_RECORD_REPEAT=0 captures every element in
+// full; 2 does that and compares the prediction with each capture
+// (printRecordProbe).
+const int recordRepeatMode = [] {
+    const char* value = std::getenv("DARK_RECORD_REPEAT");
+    return value && *value == '0' ? 0 : value && *value == '2' ? 2 : 1;
+}();
+uint64_t pendingPartSerial=1; // queueMutex: the part `pending` is building.
+// The world draw queueCapturedWorldLocked just queued, if later draws may
+// repeat it: where it sits in `pending`, valid while that part is pending.
+struct QueuedWorld {uint64_t part=0;size_t index=0;const WorldDraw* draw=nullptr;uint32_t epoch=0;};
+thread_local QueuedWorld lastQueuedWorld;
+// ...and the record and vertex program preparation it was captured under.
+struct RepeatAnchor:QueuedWorld {bool valid=false;uint64_t record=0,prepares=0;};
+thread_local RepeatAnchor repeatAnchor;
+// Record thread only. One predicted repeat in 64 is captured in full and
+// compared with its anchor; a difference turns repeats off for the session.
+struct RecordRepeatCounts {uint64_t repeats=0,anchors=0,declined=0,audits=0,agreed=0,mismatches=0;unsigned audit=0;bool failed=false;};
+RecordRepeatCounts recordRepeatCounts;
+void printRecordRepeat() {
+    const auto& c=recordRepeatCounts;
+    if(recordRepeatMode!=1)return;
+    std::fprintf(stderr,"[RecordRepeat] active=%d repeats=%llu anchors=%llu declined=%llu audits=%llu agreed=%llu mismatches=%llu\n",
+        int(!c.failed),static_cast<unsigned long long>(c.repeats),static_cast<unsigned long long>(c.anchors),
+        static_cast<unsigned long long>(c.declined),static_cast<unsigned long long>(c.audits),
+        static_cast<unsigned long long>(c.agreed),static_cast<unsigned long long>(c.mismatches));
+}
+// DARK_DRAW_PIN_CHECK=1: before a part is published, confirm that everything
+// its world draws refer to without owning has its owner in this epoch's set
+// or among the geometry cache's pins of this epoch.
+const bool drawPinCheck=[] {const char* value=std::getenv("DARK_DRAW_PIN_CHECK");return value && *value=='1';}();
+struct DrawPinCheckCounts {uint64_t parts=0,draws=0,references=0,owning=0,unpinned=0;};
+DrawPinCheckCounts drawPinCheckCounts;
+void printFramePins();
+void printDrawPinCheck() {
+    const auto& c=drawPinCheckCounts;
+    std::fprintf(stderr,"[DrawPinCheck] parts=%llu draws=%llu references=%llu owning=%llu unpinned=%llu\n",
+        static_cast<unsigned long long>(c.parts),static_cast<unsigned long long>(c.draws),
+        static_cast<unsigned long long>(c.references),static_cast<unsigned long long>(c.owning),
+        static_cast<unsigned long long>(c.unpinned));
+}
 uint64_t worldQueued=0; // Protected by queueMutex, alongside pending commands.
 std::atomic<uint64_t> worldVertexBudgetDrops{},worldCommandBudgetDrops{};
 std::atomic<uint64_t> worldImageBudgetDrops{},streamedParts{};
@@ -173,11 +287,30 @@ int64_t previewTimelineNowNs() noexcept {
         std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 uint64_t previewTimelineFileTime(FILETIME time) noexcept {return uint64_t(time.dwHighDateTime)<<32|time.dwLowDateTime;}
+// GetThreadTimes advances in scheduler ticks (15.6 ms), too coarse for one
+// frame. The thread's cycle count is exact; convert it with the time-stamp
+// counter rate measured against the steady clock over the first second.
+double previewTimelineCyclesPer100ns(int64_t wallNs) noexcept {
+    static std::atomic<double> rate{0};
+    static const uint64_t startCycles=__rdtsc();
+    static const int64_t startNs=wallNs;
+    if(const double known=rate.load(std::memory_order_relaxed);known>0)return known;
+    const uint64_t cycles=__rdtsc();
+    if(wallNs-startNs<1'000'000'000 || cycles<=startCycles)return 0;
+    const double measured=double(cycles-startCycles)/(double(wallNs-startNs)/100.0);
+    rate.store(measured,std::memory_order_relaxed);
+    return measured;
+}
 Detail::PreviewProducerBoundary previewTimelineBoundary() noexcept {
     FILETIME creation{},exit{},kernel{},user{};
-    const bool valid=GetThreadTimes(GetCurrentThread(),&creation,&exit,&kernel,&user)!=FALSE;
+    const bool times=GetThreadTimes(GetCurrentThread(),&creation,&exit,&kernel,&user)!=FALSE;
+    ULONG64 cycles=0;
+    const bool counted=QueryThreadCycleTime(GetCurrentThread(),&cycles)!=FALSE;
+    const int64_t wallNs=previewTimelineNowNs();
+    const double rate=previewTimelineCyclesPer100ns(wallNs);
+    const bool valid=times && counted && rate>0;
     return {GetCurrentThreadId(),previewTimelineFileTime(creation),
-        previewTimelineFileTime(kernel)+previewTimelineFileTime(user),previewTimelineNowNs(),valid};
+        valid?uint64_t(double(cycles)/rate):0,wallNs,valid};
 }
 std::atomic<size_t> queueHighWater{0}, oversizedFrames{0};
 unsigned queueFrameReports=0;
@@ -292,23 +425,23 @@ void resetQueuedPromptContexts(uint8_t* base, uint32_t manager) noexcept {
                 if (!candidate.base) { frame = &candidate; break; }
         }
         if (!frame) return;
-        frame->gameplayDraws.clear();
-        frame->subtitleDraws.clear();
+        clearPromptContextSets(*frame);
         frame->base = base;
         frame->manager = manager;
         frame->generation = promptContextGeneration < UINT64_MAX ? ++promptContextGeneration : 0;
+        promptContextEpoch.fetch_add(1);
     } catch (...) {}
 }
 void retireQueuedPromptContexts() noexcept {
     try {
         std::lock_guard lock(promptContextMutex);
         for (auto& frame : promptContextFrames) {
-            frame.gameplayDraws.clear();
-            frame.subtitleDraws.clear();
+            clearPromptContextSets(frame);
             frame.base = nullptr;
             frame.manager = 0;
             frame.generation = 0;
         }
+        promptContextEpoch.fetch_add(1);
     } catch (...) {}
 }
 void retireQueuedPromptContexts(uint8_t* base, uint32_t manager) noexcept {
@@ -316,19 +449,25 @@ void retireQueuedPromptContexts(uint8_t* base, uint32_t manager) noexcept {
     try {
         std::lock_guard lock(promptContextMutex);
         if (auto* frame = findPromptContextFrame(base, manager)) {
-            frame->gameplayDraws.clear();
-            frame->subtitleDraws.clear();
+            clearPromptContextSets(*frame);
             frame->base = nullptr;
             frame->manager = 0;
             frame->generation = 0;
+            promptContextEpoch.fetch_add(1);
         }
     } catch (...) {}
 }
 uint64_t queuedPromptGeneration(uint8_t* base, uint32_t manager) noexcept {
     if (!base || !manager) return 0;
+    struct Cached { uint64_t epoch = 0; uint8_t* base = nullptr; uint32_t manager = 0; uint64_t generation = 0; };
+    thread_local Cached cached;
+    if (cached.base == base && cached.manager == manager && cached.epoch == promptContextEpoch.load())
+        return cached.generation;
     try {
         std::lock_guard lock(promptContextMutex);
-        if (const auto* frame = findPromptContextFrame(base, manager)) return frame->generation;
+        const auto* frame = findPromptContextFrame(base, manager);
+        cached = {promptContextEpoch.load(), base, manager, frame ? frame->generation : 0};
+        return cached.generation;
     } catch (...) {}
     return 0;
 }
@@ -337,11 +476,12 @@ void forgetQueuedPromptContext(uint8_t* base, uint32_t manager, uint32_t draw) n
 }
 void forgetQueuedPromptContext(uint8_t* base, uint32_t manager, uint32_t draw, uint64_t generation) noexcept {
     if (!base || !manager || !draw || !generation) return;
+    if (!promptContextTracked.load()) return;
     try {
         std::lock_guard lock(promptContextMutex);
         if (auto* frame = findPromptContextFrame(base, manager); frame && frame->generation == generation) {
-            frame->gameplayDraws.erase(draw);
-            frame->subtitleDraws.erase(draw);
+            const auto removed = uint32_t(frame->gameplayDraws.erase(draw) + frame->subtitleDraws.erase(draw));
+            if (removed) promptContextTracked.fetch_sub(removed);
         }
     } catch (...) {}
 }
@@ -350,13 +490,14 @@ void recordQueuedPromptContext(uint8_t* base, uint32_t manager, uint32_t draw, P
 }
 void recordQueuedPromptContext(uint8_t* base, uint32_t manager, uint32_t draw, PromptRenderContext context, uint64_t generation) noexcept {
     if (!base || !manager || !draw || (draw & 3) || !generation) return;
+    if (context != PromptRenderContext::Gameplay && !promptContextTracked.load()) return;
     try {
         std::lock_guard lock(promptContextMutex);
         if (auto* frame = findPromptContextFrame(base, manager); frame && frame->generation == generation) {
             // Clear first, including Menu and failed/overflowed replacements.
-            frame->gameplayDraws.erase(draw);
-            if (frame->generation && context == PromptRenderContext::Gameplay && frame->gameplayDraws.size() < promptDrawLimit)
-                frame->gameplayDraws.insert(draw);
+            if (frame->gameplayDraws.erase(draw)) promptContextTracked.fetch_sub(1);
+            if (frame->generation && context == PromptRenderContext::Gameplay && frame->gameplayDraws.size() < promptDrawLimit &&
+                frame->gameplayDraws.insert(draw).second) promptContextTracked.fetch_add(1);
         }
     } catch (...) {}
 }
@@ -365,6 +506,7 @@ PromptRenderContext queuedPromptContext(uint8_t* base, uint32_t manager, uint32_
 }
 PromptRenderContext queuedPromptContext(uint8_t* base, uint32_t manager, uint32_t draw, uint64_t generation) noexcept {
     if (!base || !manager || !draw || (draw & 3) || !generation) return PromptRenderContext::Menu;
+    if (!promptContextTracked.load()) return PromptRenderContext::Menu;
     try {
         std::lock_guard lock(promptContextMutex);
         if (const auto* frame = findPromptContextFrame(base, manager); frame && frame->generation == generation && frame->gameplayDraws.contains(draw))
@@ -380,17 +522,19 @@ bool setSubtitleRenderContext(bool subtitle) noexcept {
 void recordQueuedSubtitleContext(uint8_t* base, uint32_t manager, uint32_t draw,
                                  bool subtitle, uint64_t generation) noexcept {
     if (!base || !manager || !draw || (draw & 3) || !generation) return;
+    if (!subtitle && !promptContextTracked.load()) return;
     try {
         std::lock_guard lock(promptContextMutex);
         if (auto* frame = findPromptContextFrame(base, manager); frame && frame->generation == generation) {
-            frame->subtitleDraws.erase(draw);
-            if (subtitle && frame->subtitleDraws.size() < promptDrawLimit)
-                frame->subtitleDraws.insert(draw);
+            if (frame->subtitleDraws.erase(draw)) promptContextTracked.fetch_sub(1);
+            if (subtitle && frame->subtitleDraws.size() < promptDrawLimit && frame->subtitleDraws.insert(draw).second)
+                promptContextTracked.fetch_add(1);
         }
     } catch (...) {}
 }
 bool queuedSubtitleContext(uint8_t* base, uint32_t manager, uint32_t draw, uint64_t generation) noexcept {
     if (!base || !manager || !draw || (draw & 3) || !generation) return false;
+    if (!promptContextTracked.load()) return false;
     try {
         std::lock_guard lock(promptContextMutex);
         if (const auto* frame = findPromptContextFrame(base, manager);
@@ -1197,6 +1341,476 @@ static bool submitTriangles(uint8_t* base, uint32_t indices, uint32_t triangles)
 void previewObserveTriangles(uint8_t* base, uint32_t indices, uint32_t triangles) {
     submitTriangles(base, indices, triangles);
 }
+// NATIVE_LAYER: screen-space depth fog (screen_fog.h). A run's first fog draw
+// is captured normally and held instead of queued. Later fog draws of the run
+// are absorbed before capture when the device state and vertex constants
+// match the held reference. The held draw is queued when the run ends, after
+// any fog draw that had to stay per object: the original stencil increment
+// then keeps the pass off the pixels those draws covered.
+// The pass covers the pixels that still hold their prepass depth. Geometry
+// that wrote depth later keeps its own fog draw, which finds that depth.
+// DARK_SCREEN_FOG=0 keeps the original per-object pass.
+namespace {
+struct ScreenFogPass {
+    uint32_t target = 0;
+    bool tracked = false, lateWriter = false, prepassAfterLate = false, snapshot = false;
+    // User clip planes of the pass's prepass draws. The fog pass has no
+    // geometry to clip; it is exact only when the fog draws would be clipped
+    // exactly as the prepass was, so that every surviving fog fragment still
+    // finds its own prepass depth.
+    bool clipKnown = false, clipMixed = false;
+    float clearDepth = 0;
+    WorldClipPlanes clip;
+    // Geometry keys (screenFogGeometryKey) of the pass's depth writes outside
+    // the prepass: open addressing, zero is empty. A full set leaves the
+    // pass to the per-object draws.
+    bool lateFull = false;
+    unsigned lateKeys = 0;
+    std::array<uint64_t,1024> late{};
+    void insertLate(uint64_t key) noexcept {
+        if (lateFull) return;
+        size_t slot = size_t(key >> 20) & (late.size() - 1);
+        for (; late[slot]; slot = (slot + 1) & (late.size() - 1)) if (late[slot] == key) return;
+        if (lateKeys >= late.size() / 2) { lateFull = true; return; }
+        late[slot] = key;
+        ++lateKeys;
+    }
+    bool wroteLate(uint64_t key) const noexcept {
+        if (!lateKeys) return false;
+        for (size_t slot = size_t(key >> 20) & (late.size() - 1); late[slot]; slot = (slot + 1) & (late.size() - 1))
+            if (late[slot] == key) return true;
+        return false;
+    }
+};
+inline uint64_t screenFogDrawKey(const WorldDraw& draw) noexcept {
+    return screenFogGeometryKey(draw.geometry.vertices ? draw.geometry.vertices->id : 0,
+                                draw.geometry.indices ? draw.geometry.indices->id : 0,
+                                draw.geometry.firstIndex, draw.geometry.indexCount);
+}
+struct ScreenFogState {
+    const bool enabled = [] { const char* value = std::getenv("DARK_SCREEN_FOG"); return !(value && *value == '0'); }();
+    // Diagnostic: DARK_SCREEN_FOG_VERIFY=1 absorbs nothing. Every fog draw
+    // stays per object; the held draw, queued last, asks the renderer to
+    // compare that result with the pass it would have drawn instead.
+    const bool verify = [] { const char* value = std::getenv("DARK_SCREEN_FOG_VERIFY"); return value && *value == '1'; }();
+    unsigned verifyStay = 0;
+    std::atomic<bool> holding{false};
+    std::shared_ptr<WorldDraw> held;
+    ScreenFogPass* heldPass = nullptr;
+    uint8_t* base = nullptr;
+    DWORD owner = 0;
+    ScreenFogReference reference;
+    std::array<ScreenFogPass,8> passes{};
+    // Passes are tracked only while fog draws keep arriving (the New York
+    // levels have none): the first fog draw starts the watch, 8192 depth
+    // clears without one end it and forget every pass. Until a pass's next
+    // clear is observed its fog draws stay per object, as when untracked.
+    bool watching = false;
+    unsigned quietClears = 0;
+    unsigned nextPass = 0, snapshotWanted = 0, unsupportedLogged = 0;
+    uint64_t clears = 0, runs = 0, absorbed = 0, rebased = 0, perObject = 0, unsupported = 0, untracked = 0,
+             lateOrder = 0, awaitingSnapshot = 0, snapshots = 0, constantDepth = 0, lateTwins = 0, lateFull = 0;
+};
+ScreenFogState screenFog;
+void printFogEmitter();
+ScreenFogPass* screenFogPass(uint32_t target, bool create) noexcept {
+    auto& fog = screenFog;
+    for (auto& pass : fog.passes) if (pass.target == target) return &pass;
+    if (!create) return nullptr;
+    auto& pass = fog.passes[fog.nextPass++ % fog.passes.size()];
+    pass = {};
+    pass.target = target;
+    return &pass;
+}
+// Only a depth clear of the whole viewport starts a pass. A smaller one
+// leaves cleared depth behind, which the fog pass skips like the original.
+void screenFogObserveClear(const WorldClear& clear) noexcept {
+    auto& fog = screenFog;
+    if (!fog.enabled || !fog.watching) return;
+    if (++fog.quietClears > 8192 && !fog.holding.load(std::memory_order_relaxed)) {
+        fog.watching = false;
+        for (auto& pass : fog.passes) pass = {};
+        return;
+    }
+    if (!(clear.flags & 16) || !clear.targets[4]) return;
+    if (clear.rectangle) {
+        const auto& r = *clear.rectangle;
+        const auto& v = clear.viewport;
+        if (r[0] > int64_t(v[0]) || r[1] > int64_t(v[1]) || r[2] < int64_t(v[0]) + v[2] || r[3] < int64_t(v[1]) + v[3]) return;
+    }
+    auto* pass = screenFogPass(clear.targets[4], true);
+    *pass = {};
+    pass->target = clear.targets[4];
+    pass->tracked = true;
+    pass->clearDepth = std::clamp(clear.depth, 0.0f, 1.0f);
+    if (fog.snapshotWanted) --fog.snapshotWanted;
+    if ((++fog.clears & 2047) == 256)
+        std::fprintf(stderr, "[ScreenFog] passes=%llu runs=%llu absorbed=%llu rebased=%llu perObject=%llu unsupported=%llu "
+            "untracked=%llu lateOrder=%llu awaitingSnapshot=%llu snapshots=%llu constantDepth=%llu lateTwins=%llu lateFull=%llu\n",
+            static_cast<unsigned long long>(fog.clears), static_cast<unsigned long long>(fog.runs),
+            static_cast<unsigned long long>(fog.absorbed), static_cast<unsigned long long>(fog.rebased),
+            static_cast<unsigned long long>(fog.perObject), static_cast<unsigned long long>(fog.unsupported),
+            static_cast<unsigned long long>(fog.untracked), static_cast<unsigned long long>(fog.lateOrder),
+            static_cast<unsigned long long>(fog.awaitingSnapshot), static_cast<unsigned long long>(fog.snapshots),
+            static_cast<unsigned long long>(fog.constantDepth), static_cast<unsigned long long>(fog.lateTwins),
+            static_cast<unsigned long long>(fog.lateFull));
+    if ((fog.clears & 2047) == 256) printFogEmitter();
+}
+// The fog draws test depth EQUAL, so a pixel receives fog only while it still
+// holds a prepass depth. The prepass writes depth with stencil ALWAYS/REPLACE;
+// an EQUAL draw rewrites the stored value. Any other depth write changes the
+// eligible pixels: the first one is marked to snapshot the depth target, and
+// the fog pass then requires the stored depth to equal that snapshot. A
+// prepass draw after it would be missing from the snapshot. Geometry written
+// from then on is remembered: where it is the visible surface, only its own
+// fog draw matches the stored depth.
+inline void screenFogObserveDraw(WorldDraw& draw) noexcept {
+    const auto* a = draw.attributes.data();
+    if (!screenFog.watching || !(a[95] & 4) || ((a[95] & 2) && a[96] == 3) || !draw.targets[4] || !screenFog.enabled) return;
+    auto* pass = screenFogPass(draw.targets[4], false);
+    if (!pass || !pass->tracked) return;
+    if ((a[94] & 0x40) && (a[120] >> 4) == 8 && (a[121] & 7) == 2) {
+        if (pass->lateWriter) pass->prepassAfterLate = true;
+        if (!pass->clipKnown) { pass->clip = draw.clipPlanes; pass->clipKnown = true; }
+        else if (!pass->clipMixed && !screenFogSameClip(pass->clip, draw.clipPlanes)) pass->clipMixed = true;
+        return;
+    }
+    pass->insertLate(screenFogDrawKey(draw));
+    if (pass->lateWriter) return;
+    pass->lateWriter = true;
+    if (screenFog.snapshotWanted) {
+        draw.fogDepthSnapshot = true;
+        pass->snapshot = true;
+        ++screenFog.snapshots;
+    }
+}
+// The same observation for a repeat of `state` with other geometry. False:
+// this draw would be its pass's first late depth writer, which may have to
+// carry the depth snapshot request itself; it is captured in full instead.
+inline bool screenFogObserveRepeat(const WorldDraw& state, uint64_t geometryKey) noexcept {
+    const auto* a = state.attributes.data();
+    if (!screenFog.watching || !(a[95] & 4) || ((a[95] & 2) && a[96] == 3) || !state.targets[4] || !screenFog.enabled) return true;
+    auto* pass = screenFogPass(state.targets[4], false);
+    if (!pass || !pass->tracked) return true;
+    if ((a[94] & 0x40) && (a[120] >> 4) == 8 && (a[121] & 7) == 2) {
+        if (pass->lateWriter) pass->prepassAfterLate = true;
+        if (!pass->clipKnown) { pass->clip = state.clipPlanes; pass->clipKnown = true; }
+        else if (!pass->clipMixed && !screenFogSameClip(pass->clip, state.clipPlanes)) pass->clipMixed = true;
+        return true;
+    }
+    if (!pass->lateWriter) return false;
+    pass->insertLate(geometryKey);
+    return true;
+}
+void screenFogFlush() {
+    auto& fog = screenFog;
+    auto draw = std::move(fog.held);
+    fog.held.reset();
+    fog.holding.store(false, std::memory_order_relaxed);
+    if (draw && fog.verify) draw->fogVerifyStay = uint16_t((std::min)(fog.verifyStay, 65535u));
+    if (draw) previewQueueCapturedWorld(fog.base, std::move(draw));
+}
+// Before another command is queued. A fog draw of the held run's own pass
+// goes ahead of the pass; anything else ends the run.
+inline void screenFogBeforeQueue(const WorldDraw* next) {
+    auto& fog = screenFog;
+    if (!fog.holding.load(std::memory_order_relaxed)) [[likely]] return;
+    if (fog.owner != GetCurrentThreadId()) return;
+    if (next && next->material == WorldMaterial::post && next->targets == fog.held->targets &&
+        next->viewport == fog.held->viewport && next->fragmentName == "XREngine_DepthFog") return;
+    screenFogFlush();
+}
+// Offered every captured fog draw on the fast path. true: the caller must not
+// queue it (it became the held reference, or the held run covers it).
+bool screenFogTake(uint8_t* base, const EngineVertexBindingState& binding, std::shared_ptr<WorldDraw>& draw) {
+    auto& fog = screenFog;
+    if (!fog.enabled || draw->material != WorldMaterial::post || draw->fragmentName != "XREngine_DepthFog") return false;
+    fog.watching = true;
+    fog.quietClears = 0;
+    if (fog.holding.load(std::memory_order_relaxed) && fog.owner == GetCurrentThreadId()) {
+        if (fog.held->targets == draw->targets && fog.held->viewport == draw->viewport) {
+            // Reached capture although a run is held: its geometry wrote
+            // depth after the prepass, or its device bytes differ from the
+            // reference's. Equivalent decoded state joins the run; anything
+            // else is drawn per object ahead of the pass.
+            const bool late = fog.heldPass->wroteLate(screenFogDrawKey(*draw));
+            if (late) ++fog.lateTwins;
+            if (!late && fog.base == base && screenFogRebase(base, binding, *fog.held, *draw, fog.reference)) {
+                if (!fog.verify) {
+                    ++fog.absorbed; ++fog.rebased;
+                    return true;
+                }
+            } else if (fog.verify) {
+                ++fog.verifyStay;
+                draw->fogVerifyStay = 1;
+            }
+            ++fog.perObject;
+            if (screenFogConstantDepth(draw->constants)) ++fog.constantDepth;
+            return false;
+        }
+        screenFogFlush();
+    }
+    auto* pass = draw->targets[4] ? screenFogPass(draw->targets[4], false) : nullptr;
+    if (!pass || !pass->tracked) { ++fog.untracked; return false; }
+    if (pass->prepassAfterLate) { ++fog.lateOrder; return false; }
+    if (pass->lateFull) { ++fog.lateFull; return false; }
+    // Late-written geometry cannot stand for the run: its own draw is needed.
+    if (pass->wroteLate(screenFogDrawKey(*draw))) {
+        ++fog.lateTwins; ++fog.perObject;
+        if (fog.verify) draw->fogVerifyStay = 1;
+        return false;
+    }
+    if (pass->lateWriter && !pass->snapshot) {
+        // No snapshot was requested for this pass; request them from now on.
+        fog.snapshotWanted = 4096;
+        ++fog.awaitingSnapshot;
+        return false;
+    }
+    int reason = pass->clipKnown && !pass->clipMixed && screenFogSameClip(pass->clip, draw->clipPlanes) ? 0 : 5;
+    if (!reason) reason = screenFogReferenceFrom(base, binding, *draw, fog.reference);
+    if (reason) {
+        ++fog.unsupported;
+        if (fog.unsupportedLogged < 8) {
+            ++fog.unsupportedLogged;
+            const auto* a = draw->attributes.data();
+            std::fprintf(stderr, "[ScreenFogUnsupported] reason=%d flags=%02X%02X%02X%02X depth=%u stencil=%02X%02X clip=%08X "
+                "modes=%u,%u matrices=%u,%u fragmentFlags=%u viewport=%ux%u\n", reason, a[92], a[93], a[94], a[95], unsigned(a[96]),
+                a[120], a[121], draw->clipPlanes.control, unsigned(draw->options.modes[0]), unsigned(draw->options.modes[1]),
+                unsigned(draw->options.matrices[0]), unsigned(draw->options.matrices[1]), draw->fragmentFlags,
+                draw->viewport[2], draw->viewport[3]);
+        }
+        return false;
+    }
+    if (pass->lateWriter) fog.snapshotWanted = 4096;
+    draw->screenFog = uint8_t((pass->lateWriter ? 2 : 1) | (fog.verify ? 4 : 0));
+    fog.verifyStay = 0;
+    draw->fogClearDepth = pass->clearDepth;
+    fog.base = base;
+    fog.owner = GetCurrentThreadId();
+    fog.heldPass = pass;
+    fog.held = std::move(draw);
+    fog.holding.store(true, std::memory_order_relaxed);
+    ++fog.runs;
+    return true;
+}
+}
+// DARK_RECORD_PROBE=1 (diagnostic): how the game's queued records are shaped
+// and how often two consecutive captured elements of one record differ in
+// nothing but their geometry. With it every multi-element record runs through
+// the native element loop, also in levels without fog.
+namespace {
+const bool recordProbe = recordRepeatMode == 2 || [] { const char* value = std::getenv("DARK_RECORD_PROBE"); return value && *value == '1'; }();
+struct RecordProbe {
+    uint64_t serial = 0, previousSerial = 0;
+    uint64_t single = 0, otherShape = 0, multi = 0, multiElements = 0;
+    std::array<uint64_t,8> lengths{}; // 2, 3-4, 5-8, 9-16, 17-32, 33-64, 65-256, more
+    uint64_t captures = 0, pairs = 0, identical = 0, sameFormats = 0;
+    // The prediction "nothing but the geometry changed" (recordElementUnchanged) against the comparison.
+    uint64_t predictedIdentical = 0, predictedDifferent = 0, missed = 0, previousPrepares = 0;
+    std::array<std::pair<const char*,uint64_t>,24> differences{};
+    std::unique_ptr<WorldDraw> previous;
+    std::array<uint8_t,16> previousFormats{};
+};
+RecordProbe recordProbeState;
+void printRecordProbe() {
+    const auto& p = recordProbeState;
+    std::fprintf(stderr, "[RecordProbe] records: single=%llu otherShape=%llu multi=%llu multiElements=%llu lengths 2=%llu 3-4=%llu 5-8=%llu "
+        "9-16=%llu 17-32=%llu 33-64=%llu 65-256=%llu more=%llu | captures=%llu pairs=%llu identical=%llu sameFormats=%llu "
+        "predictedIdentical=%llu predictedDifferent=%llu missed=%llu differences:",
+        static_cast<unsigned long long>(p.single), static_cast<unsigned long long>(p.otherShape),
+        static_cast<unsigned long long>(p.multi), static_cast<unsigned long long>(p.multiElements),
+        static_cast<unsigned long long>(p.lengths[0]), static_cast<unsigned long long>(p.lengths[1]),
+        static_cast<unsigned long long>(p.lengths[2]), static_cast<unsigned long long>(p.lengths[3]),
+        static_cast<unsigned long long>(p.lengths[4]), static_cast<unsigned long long>(p.lengths[5]),
+        static_cast<unsigned long long>(p.lengths[6]), static_cast<unsigned long long>(p.lengths[7]),
+        static_cast<unsigned long long>(p.captures), static_cast<unsigned long long>(p.pairs),
+        static_cast<unsigned long long>(p.identical), static_cast<unsigned long long>(p.sameFormats),
+        static_cast<unsigned long long>(p.predictedIdentical), static_cast<unsigned long long>(p.predictedDifferent),
+        static_cast<unsigned long long>(p.missed));
+    for (const auto& [name, count] : p.differences) if (count) std::fprintf(stderr, " %s=%llu", name, static_cast<unsigned long long>(count));
+    std::fputc('\n', stderr);
+}
+bool recordElementUnchanged() noexcept;
+// A draw captured on the fast path, before it is queued (its images are not attached yet).
+void probeCapturedDraw(const WorldDraw& draw) {
+    auto& p = recordProbeState;
+    ++p.captures;
+    try {
+        const auto prepares = engineVertexProgramPrepares();
+        if (!p.previous) p.previous = std::make_unique<WorldDraw>();
+        else if (p.previousSerial == p.serial && draw.geometry.vertices) {
+            ++p.pairs;
+            if (p.previousFormats == draw.geometry.vertices->formats) ++p.sameFormats;
+            p.previous->geometry = draw.geometry;
+            const char* field = nullptr;
+            const bool identical = sameCapturedWorldDraw(*p.previous, draw, field);
+            const bool predicted = recordElementUnchanged() && prepares == p.previousPrepares;
+            if (identical) ++p.identical;
+            else for (auto& [name, count] : p.differences) if (!count || name == field) { name = field ? field : "?"; ++count; break; }
+            if (predicted) ++(identical ? p.predictedIdentical : p.predictedDifferent);
+            else if (identical) ++p.missed;
+        }
+        *p.previous = draw;
+        p.previousSerial = p.serial;
+        p.previousPrepares = prepares;
+        if (draw.geometry.vertices) p.previousFormats = draw.geometry.vertices->formats;
+    } catch (...) {}
+}
+}
+// NATIVE_LAYER: fog records decided at the game's own emitter (native_layer.h).
+// DARK_FOG_EMITTER=0 executes every element as before; 2 executes them all
+// and compares each prediction with the decision made at the draw. Otherwise
+// a predicted element is not executed, except one in 64, which is executed
+// and compared: a single disagreement ends the skipping for the session.
+namespace {
+struct FogEmitter {
+    const int mode = [] {
+        const char* value = std::getenv("DARK_FOG_EMITTER");
+        return value && *value == '0' ? 0 : value && *value == '2' ? 2 : 1;
+    }();
+    bool failed = false;
+    unsigned audit = 0;
+    // The record being executed (fog owner thread only).
+    bool executing = false, covered = false, late = false, predicted = false, armed = false, observed = false, absorbed = false;
+    // The element being executed by the native loop: nothing was waiting to
+    // be applied when the game began to prepare it (82249488: attribute dirty
+    // word beyond 0x1800, constants, clip planes).
+    bool elementActive = false, elementClean = false;
+    // This record may skip fog elements (the fog conditions held when it began).
+    bool fogActive = false;
+    uint64_t recordSerial = 0; // Records the native loop has begun.
+    uint64_t coveredRun = 0;
+    DWORD thread = 0;
+    uint8_t* base = nullptr;
+    uint64_t records = 0, elements = 0, skipped = 0, executed = 0, lateTwins = 0, compared = 0, agreed = 0, noDraw = 0,
+             mismatches = 0, otherRecords = 0;
+    std::array<ScreenFogQueuedElement,4096> chain{};
+};
+FogEmitter fogEmitter;
+void printFogEmitter() {
+    const auto& e = fogEmitter;
+    if (!e.records && !e.otherRecords) return;
+    std::fprintf(stderr, "[ScreenFogEmitter] mode=%d active=%d records=%llu otherRecords=%llu elements=%llu skipped=%llu executed=%llu "
+        "lateTwins=%llu compared=%llu agreed=%llu noDraw=%llu mismatches=%llu\n",
+        e.mode, int(!e.failed), static_cast<unsigned long long>(e.records), static_cast<unsigned long long>(e.otherRecords),
+        static_cast<unsigned long long>(e.elements), static_cast<unsigned long long>(e.skipped),
+        static_cast<unsigned long long>(e.executed), static_cast<unsigned long long>(e.lateTwins),
+        static_cast<unsigned long long>(e.compared), static_cast<unsigned long long>(e.agreed),
+        static_cast<unsigned long long>(e.noDraw), static_cast<unsigned long long>(e.mismatches));
+}
+}
+bool screenFogEmitterBegin(uint8_t* base, uint32_t record, const ScreenFogQueuedElement*& elements, size_t& count) noexcept {
+    auto& fog = screenFog;
+    auto& emitter = fogEmitter;
+    // Fog elements are decided here only while fog draws keep arriving (the
+    // New York levels have none). A run usually begins inside a record: its
+    // first element is captured and held, the next one is absorbed, the rest
+    // are predicted. Repeats use the same loop in every level.
+    const bool fogWanted = emitter.mode && !emitter.failed && !fog.verify && fog.watching;
+    if (recordProbe) [[unlikely]] ++recordProbeState.serial;
+    else if (!fogWanted && recordRepeatMode != 1) return false;
+    if (nativeLayerMode() != NativeLayerMode::on) return false;
+    const DWORD thread = GetCurrentThreadId();
+    if (emitter.thread != thread) {
+        // One thread executes the game's render queue. Another one would share the scratch chain below.
+        if (emitter.thread) return false;
+        emitter.thread = thread;
+    }
+    // A record executed from inside another one would overwrite the scratch chain.
+    if (emitter.executing) return false;
+    if (!screenFogQueuedElements(base, record, emitter.chain.data(), emitter.chain.size(), count) || count < 2) {
+        ++emitter.otherRecords;
+        if (recordProbe) ++(count == 1 ? recordProbeState.single : recordProbeState.otherShape);
+        return false;
+    }
+    if (recordProbe) {
+        auto& p = recordProbeState;
+        ++p.multi; p.multiElements += count;
+        ++p.lengths[count <= 2 ? 0 : count <= 4 ? 1 : count <= 8 ? 2 : count <= 16 ? 3 : count <= 32 ? 4 : count <= 64 ? 5 : count <= 256 ? 6 : 7];
+    }
+    emitter.executing = true;
+    emitter.fogActive = fogWanted;
+    ++emitter.recordSerial;
+    ++emitter.records;
+    emitter.elements += count;
+    emitter.covered = false;
+    emitter.base = base;
+    elements = emitter.chain.data();
+    return true;
+}
+void screenFogEmitterEnd() noexcept { fogEmitter.executing = false; }
+bool screenFogEmitterSkip(const ScreenFogQueuedElement& element) noexcept {
+    auto& fog = screenFog;
+    auto& emitter = fogEmitter;
+    const bool held = fog.holding.load(std::memory_order_relaxed) && fog.owner == emitter.thread && fog.base == emitter.base;
+    // Geometry that wrote depth after the prepass keeps its own fog draw; its
+    // decision says nothing about the record's state.
+    emitter.late = held && fog.heldPass->wroteLate(screenFogGeometryKey(element.vertices, element.indices, element.first,
+                                                                          uint32_t(element.triangles) * 3));
+    emitter.predicted = emitter.fogActive && emitter.covered && held && fog.runs == emitter.coveredRun && !emitter.late && !emitter.failed;
+    if (emitter.late) ++emitter.lateTwins;
+    if (emitter.predicted && emitter.mode == 1 && (++emitter.audit & 63)) {
+        ++emitter.skipped; ++fog.absorbed;
+        return true;
+    }
+    emitter.armed = true; emitter.observed = false; emitter.absorbed = false;
+    const uint8_t* guest = emitter.base;
+    emitter.elementClean = !(nativeGuest32(guest, context + 340) & ~0x1800u) && !nativeGuest32(guest, context + 8228) &&
+                           !nativeGuest32(guest, context + 8344);
+    // What the game applies for this element is not in an earlier element's capture.
+    if (!emitter.elementClean) repeatAnchor.valid = false;
+    emitter.elementActive = true;
+    return false;
+}
+namespace {
+// Fog owner thread, inside the indexed draw of an element the native loop is
+// executing: the game applied nothing for this element before the draw.
+bool recordElementUnchanged() noexcept {
+    const auto& emitter = fogEmitter;
+    return emitter.elementActive && emitter.elementClean && emitter.thread == GetCurrentThreadId();
+}
+}
+void screenFogEmitterObserved(bool absorbed) noexcept {
+    auto& emitter = fogEmitter;
+    if (!emitter.armed) [[likely]] return;
+    if (emitter.thread != GetCurrentThreadId()) return;
+    emitter.observed = true; emitter.absorbed = absorbed;
+}
+void screenFogEmitterExecuted() noexcept {
+    auto& fog = screenFog;
+    auto& emitter = fogEmitter;
+    emitter.armed = false;
+    emitter.elementActive = false;
+    ++emitter.executed;
+    if (emitter.predicted) {
+        ++emitter.compared;
+        if (!emitter.observed) ++emitter.noDraw; // The game issued no draw: nothing to absorb or to show.
+        else if (emitter.absorbed) ++emitter.agreed;
+        else {
+            if (++emitter.mismatches <= 16)
+                std::fprintf(stderr, "[ScreenFogEmitter] MISMATCH: an element predicted to join the held run was not absorbed at its draw\n");
+            if (emitter.mode == 1 && !emitter.failed) {
+                emitter.failed = true;
+                std::fprintf(stderr, "[ScreenFogEmitter] prediction disagreed with the draw; every fog element is executed again\n");
+            }
+        }
+    }
+    if (emitter.late || !emitter.observed) return;
+    emitter.covered = emitter.absorbed && fog.holding.load(std::memory_order_relaxed) && fog.owner == emitter.thread;
+    emitter.coveredRun = fog.runs;
+}
+bool screenFogAbsorb(uint8_t* base, uint32_t vertices, uint32_t indices, uint32_t first, uint32_t count) noexcept {
+    auto& fog = screenFog;
+    if (!fog.holding.load(std::memory_order_relaxed)) [[likely]] return false;
+    if (fog.verify) return false;
+    if (fog.base != base || fog.owner != GetCurrentThreadId() || !screenFogRawMatches(base, fog.reference)) return false;
+    if (fog.heldPass->wroteLate(screenFogGeometryKey(vertices, indices, first, count))) return false;
+    EngineVertexBindingState binding;
+    if (currentEngineVertexBindingFast(base, binding) != NativeLayerResult::ok ||
+        !screenFogMatches(base, binding, fog.reference)) return false;
+    ++fog.absorbed;
+    return true;
+}
 static void queueCapturedWorldInto(uint8_t* base,std::shared_ptr<WorldDraw> draw);
 static void queueCapturedWorldLocked(uint8_t* base,std::shared_ptr<WorldDraw> draw,std::unique_lock<std::mutex>& lock);
 template<class Geometry>
@@ -1221,8 +1835,11 @@ void previewQueueCapturedWorld(uint8_t* base,std::shared_ptr<WorldDraw> draw) {
     } catch (...) {}
 }
 __attribute__((hot)) static void queueCapturedWorldInto(uint8_t* base,std::shared_ptr<WorldDraw> draw) {
-
+    screenFogBeforeQueue(draw.get());
     std::unique_lock<std::mutex> lock(queueMutex);
+    // Before anything reads the geometry: its owner must be known to be held.
+    if(draw->geometry.pinEpoch!=framePinEpoch && !admitUnownedGeometry(*draw)) [[unlikely]] return;
+    screenFogObserveDraw(*draw);
     queueCapturedWorldLocked(base,std::move(draw),lock);
 }
 __attribute__((hot)) static void queueCapturedWorldLocked(uint8_t* base,std::shared_ptr<WorldDraw> draw,std::unique_lock<std::mutex>& lock) {
@@ -1250,6 +1867,15 @@ __attribute__((hot)) static void queueCapturedWorldLocked(uint8_t* base,std::sha
             }
         };
         const bool streaming = liveStreaming();
+        // Publishing a part releases queueMutex for a moment. Hold this
+        // epoch's owners across it; if another thread ended the epoch in that
+        // moment, the draw's references move to the new epoch's set below.
+        std::shared_ptr<FramePins> pinsBeforePublish;
+        uint32_t unownedImages=0;
+        auto publishPart=[&] {
+            if(!pinsBeforePublish)pinsBeforePublish=framePins;
+            publishPreviewPart(lock,false);
+        };
         bool geometryMeasured = false;
         if(streaming || pendingWorldVertices+maxAddVertices>4*1024*1024 ||
            pendingGeometryBytes+maxAddBytes>worldGeometryByteLimit) {
@@ -1258,10 +1884,12 @@ __attribute__((hot)) static void queueCapturedWorldLocked(uint8_t* base,std::sha
             if(streaming && !pending.empty() && (pending.size()>=livePartCommands ||
                pendingWorldVertices+additionalVertices>4*1024*1024 ||
                pendingGeometryBytes+additionalBytes>worldGeometryByteLimit)) {
-                publishPreviewPart(lock,false);measureGeometry();
+                publishPart();measureGeometry();
             }
         }
-        if (!reservePreviewCommand(lock) ||
+        // As reservePreviewCommand(), publishing through publishPart().
+        if(liveStreaming() && pending.size()>=livePartCommands)publishPart();
+        if (pending.size()>=4096 ||
             (geometryMeasured && (pendingWorldVertices+additionalVertices>4*1024*1024 ||
                                   pendingGeometryBytes+additionalBytes>worldGeometryByteLimit))) {
             if(pending.size()>=4096)++pendingCounts.commandDrops;else ++pendingCounts.vertexDrops;
@@ -1306,7 +1934,17 @@ __attribute__((hot)) static void queueCapturedWorldLocked(uint8_t* base,std::sha
                memo.faces!=texture.faces)) {unresolvedSlots|=(1u<<s);continue;}
             const auto required=(std::max)(texture.firstMip,sampler.lodValid?unsigned(sampler.minLevel):0u);
             if(memo.firstMip>required) {unresolvedSlots|=(1u<<s);continue;}
-            draw->textures[s]=memo.entry->image;memo.entry->used=++colorUse;
+            memo.entry->used=++colorUse;
+            if(drawReferencesOwned) [[unlikely]] draw->textures[s]=memo.entry->image;
+            else {
+                // One owner per image and epoch instead of a reference count
+                // per draw and slot. The owner is in place before anything
+                // below can replace or evict the cache entry.
+                if(memo.entry->pinEpoch!=framePinEpoch) {
+                    framePins->images.push_back(memo.entry->image);memo.entry->pinEpoch=framePinEpoch;
+                }
+                draw->textures[s]=unownedReference(memo.entry->image.get());unownedImages|=1u<<s;
+            }
             recordImage(memo.entry->image.get());
         }
         for (uint32_t slots=unresolvedSlots;slots;slots&=slots-1) {
@@ -1382,7 +2020,7 @@ __attribute__((hot)) static void queueCapturedWorldLocked(uint8_t* base,std::sha
         if(streaming || pendingWorldImageBytes+maxAddImageBytes>worldImageByteLimit) {
             measureImages();
             if(streaming && !pending.empty() && pendingWorldImageBytes+additionalImageBytes>worldImageByteLimit) {
-                publishPreviewPart(lock,false);measureGeometry();geometryMeasured=true;measureImages();
+                publishPart();measureGeometry();geometryMeasured=true;measureImages();
             }
             if(geometryMeasured && (pendingWorldVertices+additionalVertices>4*1024*1024 ||
                pendingGeometryBytes+additionalBytes>worldGeometryByteLimit)) {
@@ -1404,9 +2042,82 @@ __attribute__((hot)) static void queueCapturedWorldLocked(uint8_t* base,std::sha
             if(pendingWorldImages.insert(images[i]))
                 pendingWorldImageBytes+=images[i]->bytes();
         }
+        if(pinsBeforePublish && pinsBeforePublish!=framePins) [[unlikely]] {
+            // The epoch ended while this draw waited to be queued. What it
+            // refers to is alive (pinsBeforePublish, or the cache's pins that
+            // joined it); the epoch it is queued into must own it as well.
+            if(draw->geometry.pinEpoch)repinGeometry(*draw);
+            for(uint32_t slots=unownedImages;slots;slots&=slots-1)
+                framePins->images.push_back(ownerOf(draw->textures[std::countr_zero(slots)]));
+            ++stalePinRepins;
+        }
+        // Later elements of the same record may repeat this draw; never a
+        // fog draw (each one is offered to screenFogTake) or one that carries
+        // fog requests of its own.
+        const bool repeatable=!draw->screenFog && !draw->fogDepthSnapshot && !draw->fogVerifyStay &&
+                              draw->fragmentName!="XREngine_DepthFog";
         auto& command=pending.emplace_back();command.promptContext=draw->promptContext; // NATIVE_LAYER: in place
         command.world=std::move(draw);
+        lastQueuedWorld=repeatable?QueuedWorld{pendingPartSerial,pending.size()-1,command.world.get(),framePinEpoch}:QueuedWorld{};
         ++worldQueued;
+    }
+}
+// repeatAnchor still names a command of the part being built (queueMutex held).
+static bool repeatAnchorPending() noexcept {
+    const auto& anchor=repeatAnchor;
+    return anchor.part==pendingPartSerial && anchor.index<pending.size() && pending[anchor.index].world.get()==anchor.draw &&
+           anchor.epoch==framePinEpoch;
+}
+// Queue `geometry` as a repeat of repeatAnchor. False, with nothing changed,
+// whenever the ordinary path has a decision to make instead: the anchor's
+// part was published, a budget is reached, or the fog pass needs this draw's
+// own flags.
+static bool queueRepeatedWorld(StoredDraw& geometry) {
+    if(!active)return false;
+    try {
+        screenFogBeforeQueue(nullptr); // A repeat is never a fog draw: it ends a held run.
+        std::unique_lock<std::mutex> lock(queueMutex);
+        if(!repeatAnchorPending() || !geometry || (geometry.pinEpoch && geometry.pinEpoch!=framePinEpoch))return false;
+        if((liveStreaming() && pending.size()>=livePartCommands) || pending.size()>=4096)return false;
+        const std::array resources{geometry.vertices.get(),geometry.indices.get()};
+        size_t additionalVertices=0,additionalBytes=0;
+        for(size_t i=0;i<resources.size();++i) {
+            if(i && resources[i]==resources[0])continue;
+            if(!pendingGeometry.contains(resources[i])) {
+                additionalVertices+=resources[i]->vertexCount;additionalBytes+=resources[i]->bytes();
+            }
+        }
+        if(pendingWorldVertices+additionalVertices>4*1024*1024 || pendingGeometryBytes+additionalBytes>worldGeometryByteLimit)return false;
+        const WorldDraw& state=*repeatAnchor.draw;
+        if(!screenFogObserveRepeat(state,screenFogGeometryKey(resources[0]->id,resources[1]->id,geometry.firstIndex,geometry.indexCount)))
+            return false;
+        auto world=pending[repeatAnchor.index].world;
+        auto& command=pending.emplace_back();
+        command.promptContext=state.promptContext;command.world=std::move(world);
+        for(size_t i=0;i<resources.size();++i) {
+            if(i && resources[i]==resources[0])continue;
+            if(pendingGeometry.insert(resources[i])) {
+                pendingGeometryBytes+=resources[i]->bytes();pendingWorldVertices+=resources[i]->vertexCount;
+            }
+        }
+        command.repeat={std::move(geometry.vertices),std::move(geometry.indices),geometry.firstIndex,geometry.indexCount,geometry.pinEpoch};
+        ++pendingCounts.worldDraws;++worldQueued;
+        return true;
+    } catch(...) {return false;}
+}
+// A predicted repeat that was captured in full instead: it must equal its anchor in everything but geometry.
+static void auditRepeatedWorld(const WorldDraw& fresh) {
+    auto& counts=recordRepeatCounts;
+    std::lock_guard<std::mutex> lock(queueMutex);
+    if(!repeatAnchorPending())return;
+    ++counts.audits;
+    const char* field=nullptr;
+    if(sameCapturedWorldDraw(*repeatAnchor.draw,fresh,field,true)) {++counts.agreed;return;}
+    ++counts.mismatches;
+    if(!counts.failed) {
+        counts.failed=true;
+        std::fprintf(stderr,"[RecordRepeat] MISMATCH field=%s: a predicted repeat differs from its anchor; every draw is captured in full again\n",
+            field?field:"?");
     }
 }
 void previewObserveWorld(uint8_t* base,const StoredDraw& geometry) {
@@ -1454,7 +2165,12 @@ void printNativeLayerCounters() {
 namespace {
 void nativeLayerFrame() noexcept {
     if (nativeLayerMode() == NativeLayerMode::off) return;
-    if (nativeLayerCounts.frames.fetch_add(1, std::memory_order_relaxed) % 1000 == 999) printNativeLayerCounters();
+    if (nativeLayerCounts.frames.fetch_add(1, std::memory_order_relaxed) % 1000 == 999) {
+        printNativeLayerCounters();
+        printFramePins();
+        printRecordRepeat();
+        if (recordProbe) printRecordProbe();
+    }
 }
 void reportNativeLayerMismatch(const char* kind, const char* field, const StoredDraw* geometry, const WorldDraw* draw) {
     static std::atomic<unsigned> reports{};
@@ -1539,6 +2255,19 @@ __attribute__((hot)) void nativeLayerObserveStoredDraw(uint8_t* base, const Stor
         return;
     }
     if (resolved == NativeLayerResult::empty) { counts.addEmpty(); return; }
+    // A repeat: same record as the anchor, nothing applied for this element,
+    // no vertex program preparation since the anchor was captured.
+    bool auditRepeat = false;
+    if (repeatAnchor.valid) {
+        auto& repeat = recordRepeatCounts;
+        if (!repeat.failed && recordElementUnchanged() && repeatAnchor.record == fogEmitter.recordSerial &&
+            repeatAnchor.prepares == engineVertexProgramPrepares()) {
+            if (!(++repeat.audit & 63)) auditRepeat = true;
+            else if (queueRepeatedWorld(owned)) { ++repeat.repeats; return; }
+            else ++repeat.declined;
+        }
+        repeatAnchor.valid = false; // The full capture below becomes the anchor.
+    }
     EngineVertexBindingState binding;
     if (currentEngineVertexBindingFast(base, binding) != NativeLayerResult::ok) {
         counts.bindingFallback.fetch_add(1, std::memory_order_relaxed);
@@ -1552,7 +2281,18 @@ __attribute__((hot)) void nativeLayerObserveStoredDraw(uint8_t* base, const Stor
         return;
     }
     counts.addFast();
+    if (recordProbe) [[unlikely]] probeCapturedDraw(*draw);
+    if (auditRepeat) [[unlikely]] auditRepeatedWorld(*draw);
+    try { if (screenFogTake(base, binding, draw)) return; } catch (...) {}
+    lastQueuedWorld = {};
     previewQueueCapturedWorld(base, std::move(draw));
+    if (recordRepeatMode == 1 && lastQueuedWorld.draw && fogEmitter.elementActive && fogEmitter.thread == GetCurrentThreadId()) {
+        static_cast<QueuedWorld&>(repeatAnchor) = lastQueuedWorld;
+        repeatAnchor.record = fogEmitter.recordSerial;
+        repeatAnchor.prepares = engineVertexProgramPrepares();
+        repeatAnchor.valid = true;
+        ++recordRepeatCounts.anchors;
+    }
 }
 // Immediate world draws after their original geometry snapshot (non-diagnostic runs only).
 // true: the draw was fully handled; false: the caller continues with the original sequence.
@@ -1651,11 +2391,13 @@ void previewObserveImmediateWorld(uint8_t* base,uint32_t device,uint32_t indices
 }
 void previewObserveClear(uint8_t* base,uint32_t device,uint32_t flags,uint32_t color,float depth,uint32_t stencil,const std::array<int32_t,4>& rectangle) {
     if (!active) return;
+    screenFogBeforeQueue(nullptr);
     try {
         auto clear=std::make_shared<WorldClear>();
         if (!snapshotWorldClear(base,device,flags,color,depth,stencil,*clear)) return;
         if(rectangle[2]<rectangle[0] || rectangle[3]<rectangle[1])return;
         clear->rectangle=rectangle;
+        screenFogObserveClear(*clear);
         std::unique_lock lock(queueMutex);
         if (!reservePreviewCommand(lock)) {++pendingCounts.clearDrops;return;}
         SimpleMesh command;command.worldClear=std::move(clear);pending.push_back(std::move(command));
@@ -1675,6 +2417,7 @@ bool previewWorldActive() {return worldActive;}
 void previewObserveResolve(uint8_t* base,uint32_t device,uint32_t flags,uint32_t rectangle,uint32_t destination,
                            uint32_t offset,uint32_t color,float depth,uint32_t stencil,uint32_t face,uint32_t mip) {
     if(!active || !worldActive) return;
+    screenFogBeforeQueue(nullptr);
     try {
         auto resolve=std::make_shared<WorldResolve>();
         if(!snapshotWorldResolve(base,device,flags,rectangle,destination,offset,color,depth,stencil,face,mip,*resolve)) return;
@@ -1684,6 +2427,7 @@ void previewObserveResolve(uint8_t* base,uint32_t device,uint32_t flags,uint32_t
 }
 void previewObservePresent(uint8_t* base,uint32_t frontbuffer) {
     if(!active || !worldActive) return;
+    screenFogBeforeQueue(nullptr);
     try {
         auto texture=std::make_shared<WorldTexture>();
         if(!snapshotWorldTexture(base,frontbuffer,*texture)) return;
@@ -1694,6 +2438,7 @@ void previewObservePresent(uint8_t* base,uint32_t frontbuffer) {
 }
 void previewObserveDisplayGamma(uint8_t* base,uint32_t ramp,bool piecewise) {
     if(!active)return;
+    screenFogBeforeQueue(nullptr);
     try {
         std::array<uint8_t,1536> bytes{};
         if(!copyRenderMemory(base,ramp,bytes.data(),bytes.size()))return;
@@ -1725,6 +2470,7 @@ void setPreviewFrameTimelineEnabled(bool enabled) {
 }
 void previewBeginHistogram(unsigned bin) {
     if(!active || !worldActive || bin>=histogramResults.size() || activeHistogram || activeFlare)return;
+    screenFogBeforeQueue(nullptr);
     std::unique_lock lock(queueMutex);
     if(liveStreaming())reservePreviewCommand(lock);
     auto& result=histogramResults[bin];if(!result)result=std::make_shared<WorldQueryResult>();
@@ -1734,6 +2480,7 @@ void previewBeginHistogram(unsigned bin) {
 }
 void previewEndHistogram() {
     if(!activeHistogram)return;
+    screenFogBeforeQueue(nullptr);
     std::unique_lock lock(queueMutex);
     if(liveStreaming())reservePreviewCommand(lock);
     SimpleMesh command;command.worldQuery=std::move(activeHistogram);pending.push_back(std::move(command));
@@ -1747,6 +2494,7 @@ bool previewReadHistogram(unsigned bin,uint64_t& samples) {
 }
 void previewBeginFlare(unsigned id) {
     if(!active || !worldActive || id>flareQueryMaximumId || activeHistogram || activeFlare)return;
+    screenFogBeforeQueue(nullptr);
     std::unique_lock lock(queueMutex);
     if(liveStreaming())reservePreviewCommand(lock);
     // The u16 key bounds this lazy map to at most 65536 result owners. Keep
@@ -1758,6 +2506,7 @@ void previewBeginFlare(unsigned id) {
 }
 void previewEndFlare() {
     if(!activeFlare)return;
+    screenFogBeforeQueue(nullptr);
     std::unique_lock lock(queueMutex);
     if(liveStreaming())reservePreviewCommand(lock);
     SimpleMesh command;command.worldQuery=std::move(activeFlare);pending.push_back(std::move(command));
@@ -1771,6 +2520,36 @@ bool previewReadFlare(unsigned id,uint64_t& samples) {
     samples=value;return true;
 }
 namespace {
+void printFramePins() {
+    size_t geometry=0,images=0;uint32_t epoch=0;
+    {std::lock_guard lock(queueMutex);geometry=lastFrameGeometryPins;images=lastFrameImagePins;epoch=framePinEpoch;}
+    std::fprintf(stderr,"[EngineFramePins] owned=%u epoch=%u lastFrameGeometry=%zu lastFrameImages=%zu staleRepins=%llu staleDrops=%llu\n",
+        unsigned(drawReferencesOwned),epoch,geometry,images,stalePinRepins.load(),stalePinDrops.load());
+    if(drawPinCheck)printDrawPinCheck();
+}
+void checkDrawPins() {
+    std::vector<const StoredGeometry*> cachePins;
+    storedGeometryCache().pinnedNow(cachePins);
+    std::unordered_set<const void*> pinned(cachePins.begin(),cachePins.end());
+    for(const auto& owner:framePins->geometry)pinned.insert(owner.get());
+    for(const auto& owner:framePins->images)pinned.insert(owner.get());
+    auto& counts=drawPinCheckCounts;
+    const auto check=[&](const auto& reference,const char* kind,const WorldDraw& draw) {
+        if(!reference)return;
+        ++counts.references;
+        if(reference.use_count()) {++counts.owning;return;}
+        if(pinned.contains(reference.get()))return;
+        if(++counts.unpinned<=16)std::fprintf(stderr,"[DrawPinCheck] UNPINNED %s program=%s drawEpoch=%u epoch=%u\n",
+            kind,draw.fragmentName.c_str(),draw.geometry.pinEpoch,framePinEpoch);
+    };
+    for(const auto& command:pending)if(command.world) {
+        const auto& draw=*command.world;++counts.draws;
+        check(draw.geometry.vertices,"vertices",draw);check(draw.geometry.indices,"indices",draw);
+        check(command.repeat.vertices,"repeat vertices",draw);check(command.repeat.indices,"repeat indices",draw);
+        for(const auto& image:draw.textures)check(image,"image",draw);
+    }
+    if((++counts.parts&8191)==4096)printDrawPinCheck();
+}
 void publishPreviewPart(std::unique_lock<std::mutex>& lock,bool last) {
     const auto publishStart=frameTimelineEnabled?previewTimelineNowNs():0;
     {
@@ -1778,7 +2557,7 @@ void publishPreviewPart(std::unique_lock<std::mutex>& lock,bool last) {
         StallProfiler::Scope stallWait(StallProfiler::Section::Wait, "preview frame producer backpressure",
             ctx ? ctx->lastFunction : 0, ctx ? uint32_t(ctx->lr) : 0,
             reinterpret_cast<uint64_t>(&frameConsumed), "frameConsumed condition variable");
-        frameConsumed.wait(lock,[]{return !frameBackpressure || !frameReady;});
+        frameConsumed.wait(lock,[]{return !frameBackpressure || readyParts.size()<readyPartDepth;});
     }
     if(frameTimelineEnabled) {
         const auto afterWait=previewTimelineNowNs();
@@ -1828,8 +2607,30 @@ void publishPreviewPart(std::unique_lock<std::mutex>& lock,bool last) {
     }
     pendingCounts={};pendingGuiDraws=0;++frames;
     }
-    readyPart={pendingFirst,last,previewMotionBlurEnabled()};pendingFirst=last;
-    ready = std::move(pending); pending.clear();
+    // The part's draws rely on this epoch's owners for as long as the part exists.
+    if(drawPinCheck) [[unlikely]] {try {checkDrawPins();} catch(...) {}}
+    if(!pending.empty())pending.front().retained=framePins;
+    std::shared_ptr<FramePins> retiredPins;
+    if(last && ++framePinAge>=previewPinEpochFrames) {
+        // Close the epoch's set: the owners the geometry cache collected join
+        // it, and both sides start the next epoch. The set of the epoch
+        // before the one that just ended is released below, outside the lock;
+        // its parts were retired long ago unless the consumer is far behind.
+        framePinAge=0;
+        try {
+            framePinEpoch=storedGeometryCache().takePins(framePins->geometry);
+            lastFrameGeometryPins=framePins->geometry.size();lastFrameImagePins=framePins->images.size();
+            auto next=std::make_shared<FramePins>();
+            next->geometry.reserve(framePins->geometry.size());next->images.reserve(framePins->images.size());
+            retiredPins=std::move(previousFramePins);previousFramePins=std::move(framePins);framePins=std::move(next);
+        } catch(...) {}
+    }
+    // Without backpressure the newest publication replaces unconsumed ones.
+    if(!frameBackpressure)readyParts.clear();
+    auto& readyPart=readyParts.emplace_back();
+    readyPart.part={pendingFirst,last,previewMotionBlurEnabled()};pendingFirst=last;
+    readyPart.commands=std::move(pending); pending.clear();
+    ++pendingPartSerial;
     // The consumer returns only empty storage. Reuse capacity without moving
     // thousands of commands through the vector's growth stages every frame.
     pending.swap(recycledFrame);
@@ -1845,10 +2646,11 @@ void publishPreviewPart(std::unique_lock<std::mutex>& lock,bool last) {
             const auto boundary=previewTimelineBoundary();
             pendingTimeline.publishWallNs+=uint64_t((std::max)(int64_t(0),boundary.wallNs-publishStart));
             producerTimelineClock.finish(pendingTimeline,boundary);
-            readyPart.diagnostics=pendingTimeline;pendingTimeline={};timelinePartThread=0;
+            readyPart.part.diagnostics=pendingTimeline;pendingTimeline={};timelinePartThread=0;
         } else pendingTimeline.publishWallNs+=uint64_t((std::max)(int64_t(0),previewTimelineNowNs()-publishStart));
     }
     lock.unlock();frameAvailable.notify_one();
+    retiredPins.reset();
     lock.lock();
 }
 }
@@ -1875,14 +2677,15 @@ bool takePreviewFrame(std::vector<SimpleMesh>& frame,unsigned waitMilliseconds,P
             0,0,reinterpret_cast<uint64_t>(&queueMutex),"preview queue mutex");
         lock.lock();
     }
-    if(waitMilliseconds && !frameReady) {
+    if(waitMilliseconds && readyParts.empty()) {
         StallProfiler::Scope stallWait(StallProfiler::Section::Wait, "preview frame consumer wait",
             0,0,reinterpret_cast<uint64_t>(&frameAvailable),"frameAvailable condition variable");
-        frameAvailable.wait_for(lock,std::chrono::milliseconds(waitMilliseconds),[]{return frameReady;});
+        frameAvailable.wait_for(lock,std::chrono::milliseconds(waitMilliseconds),[]{return !readyParts.empty();});
     }
-    if (!frameReady) return false;
-    if(part)*part=readyPart;
-    auto completed=std::move(ready);ready.clear();frameReady=false;
+    if (readyParts.empty()) return false;
+    if(part)*part=std::move(readyParts.front().part);
+    auto completed=std::move(readyParts.front().commands);
+    readyParts.pop_front();frameReady=!readyParts.empty();
     lock.unlock();frameConsumed.notify_one();
     // Retiring thousands of draw snapshots must not hold the producer's
     // queue lock. Their immutable shared resources outlive either frame.
@@ -1909,6 +2712,7 @@ void printPreviewCounters() {
     std::fprintf(stderr,"[EngineQueueStreaming] intermediateParts=%llu imageBudgetDrops=%llu partCommandLimit=%zu geometryMiB=%zu imageMiB=%zu\n",
         streamedParts.load(),worldImageBudgetDrops.load(),livePartCommands,worldGeometryByteLimit/(1024*1024),worldImageByteLimit/(1024*1024));
     std::fprintf(stderr,"[EngineFrameBuffers] reused=%llu\n",frameBufferReuses.load(std::memory_order_relaxed));
+    printFramePins();
     printEngineTextureCounters();
     printEngineVertexDescriptorCounters();
     printEnginePaletteCounters();

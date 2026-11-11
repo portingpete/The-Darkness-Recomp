@@ -1,6 +1,7 @@
 #include "display_settings.h"
 #include "resource.h"
 #include "runtime/native/fov_settings.h"
+#include "runtime/native/draw_distance.h"
 
 #include <windows.h>
 
@@ -24,7 +25,7 @@ using DarkRecomp::Native::AntialiasingMode;
 constexpr int kPlayButton = IDOK;
 constexpr int kCancelButton = IDCANCEL;
 constexpr int kClientWidth = 620;
-constexpr int kClientHeight = 650;
+constexpr int kClientHeight = 686;
 
 enum Row : size_t {
     Brightness,
@@ -39,12 +40,14 @@ enum Row : size_t {
     Language,
     TextureFiltering,
     SubtitleSize,
+    DrawDistance,
     RowCount,
 };
 
 constexpr std::array<const wchar_t*, RowCount> kRowNames{
     L"Brightness", L"Field of view", L"Bloom", L"Vertical sync",
     L"Frame limit", L"Resolution", L"Display", L"Motion blur", L"Antialiasing", L"Language", L"Texture filtering", L"Subtitle size",
+    L"Draw distance",
 };
 
 struct Choice {
@@ -64,6 +67,7 @@ struct Launcher {
     fs::path settingsPath;
     GraphicsSettings settings;
     float fieldOfView = 0;
+    unsigned drawDistance = 0;
     GameLanguage language = GameLanguage::System;
     std::array<RowControl, RowCount> rows;
 };
@@ -138,6 +142,7 @@ std::wstring savedValueLabel(Row row, double value) {
     case FieldOfView: std::swprintf(text, 80, L"%.3f (saved)", value); break;
     case FrameLimit: std::swprintf(text, 80, L"%u FPS (saved)", unsigned(value)); break;
     case Resolution: std::swprintf(text, 80, L"%up (saved)", unsigned(value)); break;
+    case DrawDistance: std::swprintf(text, 80, L"%u units (saved)", unsigned(value)); break;
     default: throw std::runtime_error("Unexpected saved video setting.");
     }
     return text;
@@ -194,6 +199,14 @@ void populateChoices(Launcher& launcher) {
         addChoice(rows[Language], std::wstring(DarkRecomp::Native::gameLanguageDisplayName(language)),
                   unsigned(language));
 
+    // World units. Original keeps the game's ranges (unlimited in most levels);
+    // shorter values hide distant props and physics objects, never characters.
+    // Near is the default for settings that have no saved value.
+    addChoice(rows[DrawDistance], L"Original (unlimited)", 0);
+    addChoice(rows[DrawDistance], L"Far (3000 units)", 3000);
+    addChoice(rows[DrawDistance], L"Medium (2000 units)", 2000);
+    addChoice(rows[DrawDistance], L"Near (1500 units, default)", 1500);
+    addChoice(rows[DrawDistance], L"Very near (1000 units)", 1000);
     const auto& settings = launcher.settings;
     selectValue(launcher, Brightness, settings.brightnessPercent);
     selectValue(launcher, FieldOfView, launcher.fieldOfView);
@@ -207,6 +220,7 @@ void populateChoices(Launcher& launcher) {
     selectValue(launcher, TextureFiltering, settings.anisotropyLevels);
     selectValue(launcher, SubtitleSize, settings.subtitleScalePercent);
     selectValue(launcher, Language, unsigned(launcher.language));
+    selectValue(launcher, DrawDistance, launcher.drawDistance);
 }
 
 void createControls(HWND window, Launcher& launcher) {
@@ -223,14 +237,14 @@ void createControls(HWND window, Launcher& launcher) {
     }
     populateChoices(launcher);
     control(window, L"STATIC", L"Gamma calibration uses the in-game Video settings menu.",
-            0, 26, 522, 565, 20);
+            0, 26, 558, 565, 20);
     control(window, L"STATIC",
             L"Settings save when you click Play. Resolution and language apply at startup.",
-            0, 26, 566, 565, 36);
+            0, 26, 602, 565, 36);
     control(window, L"BUTTON", L"Play", BS_DEFPUSHBUTTON | WS_TABSTOP,
-            384, 609, 95, 29, kPlayButton);
+            384, 645, 95, 29, kPlayButton);
     control(window, L"BUTTON", L"Cancel", BS_PUSHBUTTON | WS_TABSTOP,
-            485, 609, 95, 29, kCancelButton);
+            485, 645, 95, 29, kCancelButton);
 }
 
 double chosenValue(const Launcher& launcher, Row row) {
@@ -255,8 +269,10 @@ void saveAndLaunch(HWND window, Launcher& launcher) {
     settings.anisotropyLevels = unsigned(chosenValue(launcher, TextureFiltering));
     settings.subtitleScalePercent = unsigned(chosenValue(launcher, SubtitleSize));
     const auto language = GameLanguage(unsigned(chosenValue(launcher, Language)));
+    const auto drawDistance = unsigned(chosenValue(launcher, DrawDistance));
 
-    if (!DarkRecomp::saveDisplaySettings(launcher.settingsPath, fov, settings, language))
+    if (!DarkRecomp::saveDisplaySettings(launcher.settingsPath, fov, settings, language) ||
+        !DarkRecomp::saveDrawDistance(launcher.settingsPath, drawDistance))
         throw std::runtime_error("Could not save DarkRecomp.settings.ini. "
                                  "Check that the game folder is writable, then retry.");
 
@@ -318,6 +334,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         checkGameFiles(launcher);
         launcher.settings = DarkRecomp::loadGraphicsSettings(launcher.settingsPath);
         launcher.fieldOfView = DarkRecomp::loadFieldOfView(launcher.settingsPath);
+        launcher.drawDistance = DarkRecomp::loadDrawDistance(launcher.settingsPath);
         launcher.language = DarkRecomp::Native::loadGameLanguage(launcher.settingsPath);
 
         constexpr auto className = L"DarkRecompVideoSettingsLauncher";

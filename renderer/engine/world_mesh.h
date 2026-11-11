@@ -42,13 +42,7 @@ struct WorldSampler {
     float bias=0;
 };
 WorldSampler decodeWorldSampler(const std::array<uint32_t,6>& state) noexcept;
-// The GPU needs immutable geometry and prepared constants, not a second copy
-// of the 4 KiB engine constant bank used to validate those constants.
-struct WorldGeometry {
-    std::shared_ptr<const StoredGeometry> vertices, indices;
-    uint32_t firstIndex=0,indexCount=0;
-    explicit operator bool() const {return vertices && indices;}
-};
+// WorldGeometry is declared in simple_mesh.h (a queued command can carry one).
 // Original82861698/8285E378 latch these words into the device. Surface objects
 // are temporary descriptors, not storage owners, and may be edited or recycled
 // before the render consumer executes the command.
@@ -107,7 +101,26 @@ struct WorldDraw : WorldSurfaceTargets {
     std::array<std::shared_ptr<const ColorImage>,16> textures{};
     PromptRenderContext promptContext = PromptRenderContext::Menu;
     bool subtitle = false;
+    // Screen-space depth fog (screen_fog.h). Nonzero: this XREngine_DepthFog
+    // draw stands for its whole run and is rendered as one pass over the
+    // eligible pixels; 2 also requires the stored depth to equal the snapshot
+    // taken at fogDepthSnapshot. fogClearDepth is the pass's cleared depth.
+    // Bit 4 (DARK_SCREEN_FOG_VERIFY): draw the geometry as captured, then
+    // compare with the pass; fogVerifyStay counts the run's fog draws that
+    // would have stayed per object.
+    uint8_t screenFog = 0;
+    bool fogDepthSnapshot = false; // Copy the depth target before this draw.
+    uint16_t fogVerifyStay = 0;
+    float fogClearDepth = 0;
 };
+// One draw of a part, kept beyond the part. Its stored geometry and images
+// may be unowned references (unowned_reference.h) that are valid only while
+// the part's owners exist; the result shares those owners.
+inline std::shared_ptr<const WorldDraw> keepWorldDraw(const std::vector<SimpleMesh>& part,size_t index) {
+    struct Kept {std::shared_ptr<const void> retained;std::shared_ptr<const WorldDraw> draw;};
+    auto kept=std::make_shared<Kept>(Kept{part.front().retained,part[index].world});
+    return std::shared_ptr<const WorldDraw>(kept,kept->draw.get());
+}
 struct WorldCaptureCounters {
     uint64_t observed=0,captured=0,rejected=0;
     std::array<uint64_t,5> submitted{};

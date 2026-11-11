@@ -5,40 +5,33 @@
 #include <vector>
 
 // Interactive render/game work should retain HighQoS when the window is
-// temporarily covered. Ideal-processor hints leave Windows free to migrate it.
-// The display thread may run above normal priority so presentation and input
-// stay responsive while engine workers saturate cores during level loads; the
-// engine itself keeps normal priority so guest timing is unaffected.
-inline void configureGameThread(const char* name,unsigned preferredCore,int priority=THREAD_PRIORITY_NORMAL) {
+// temporarily covered. The display thread may run above normal priority so
+// presentation and input stay responsive while engine workers saturate cores
+// during level loads; the engine itself keeps normal priority so guest timing
+// is unaffected.
+// No processor is suggested or required. With HighQoS, Windows already runs
+// these busy threads on performance cores and moves them to the fastest idle
+// one. In the busiest village views (about 11,000 draws), an ideal-processor
+// hint for the first two performance cores made engine frames 1-5% slower,
+// and restricting the engine to the first performance core about 13% slower.
+inline void configureGameThread(const char* name,int priority=THREAD_PRIORITY_NORMAL) {
     THREAD_POWER_THROTTLING_STATE power{};
     power.Version=THREAD_POWER_THROTTLING_CURRENT_VERSION;
     power.ControlMask=THREAD_POWER_THROTTLING_EXECUTION_SPEED;
     const bool highQos=SetThreadInformation(GetCurrentThread(),ThreadPowerThrottling,&power,sizeof(power))!=0;
     ULONG bytes=0;GetSystemCpuSetInformation(nullptr,0,&bytes,GetCurrentProcess(),0);
     std::vector<uint8_t> buffer(bytes);
-    struct Core {WORD group;BYTE number,core,efficiency;};
-    std::vector<Core> cores;
     BYTE highest=0,lowest=255;
     if(bytes && GetSystemCpuSetInformation(reinterpret_cast<PSYSTEM_CPU_SET_INFORMATION>(buffer.data()),bytes,&bytes,GetCurrentProcess(),0)) {
         for(size_t offset=0;offset+sizeof(SYSTEM_CPU_SET_INFORMATION)<=buffer.size();) {
             const auto* info=reinterpret_cast<const SYSTEM_CPU_SET_INFORMATION*>(buffer.data()+offset);
             if(!info->Size || info->Size>buffer.size()-offset)break;
             if(info->Type==CpuSetInformation && (!info->CpuSet.Allocated || info->CpuSet.AllocatedToTargetProcess)) {
-                const auto& cpu=info->CpuSet;
-                cores.push_back({cpu.Group,cpu.LogicalProcessorIndex,cpu.CoreIndex,cpu.EfficiencyClass});
-                highest=(std::max)(highest,cpu.EfficiencyClass);lowest=(std::min)(lowest,cpu.EfficiencyClass);
+                highest=(std::max)(highest,info->CpuSet.EfficiencyClass);lowest=(std::min)(lowest,info->CpuSet.EfficiencyClass);
             }
             offset+=info->Size;
         }
     }
-    std::vector<Core> performance;
-    for(const auto& core:cores)if(core.efficiency==highest && std::none_of(performance.begin(),performance.end(),[&](const auto& c){return c.group==core.group && c.core==core.core;}))performance.push_back(core);
-    bool ideal=false;
-    if(highest>lowest && !performance.empty()) {
-        const auto& cpu=performance[preferredCore%performance.size()];
-        PROCESSOR_NUMBER target{cpu.group,cpu.number,0};
-        ideal=SetThreadIdealProcessorEx(GetCurrentThread(),&target,nullptr)!=0;
-    }
     const bool prioritized=SetThreadPriority(GetCurrentThread(),priority)!=0;
-    std::fprintf(stderr,"[Scheduling] %s HighQoS=%u performanceCoreHint=%u cpuClasses=%u..%u priority=%lu threadPriority=%d prioritized=%u\n",name,unsigned(highQos),unsigned(ideal),unsigned(lowest),unsigned(highest),GetPriorityClass(GetCurrentProcess()),priority,unsigned(prioritized));
+    std::fprintf(stderr,"[Scheduling] %s HighQoS=%u cpuClasses=%u..%u priority=%lu threadPriority=%d prioritized=%u\n",name,unsigned(highQos),unsigned(lowest),unsigned(highest),GetPriorityClass(GetCurrentProcess()),priority,unsigned(prioritized));
 }
