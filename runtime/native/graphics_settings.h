@@ -48,6 +48,7 @@ struct GraphicsSettings {
     unsigned anisotropyLevels = 16; // 1 preserves original filtering; otherwise 2, 4, 8 or 16.
     unsigned subtitleScalePercent = 100; // Applies immediately; 100 preserves the original text size.
     DisplayAspectMode aspectMode = DisplayAspectMode::Auto; // Applied at startup; Auto preserves display aspect.
+    bool reduceLightFlicker = false; // Applies immediately; retain original lighting by default.
     bool operator==(const GraphicsSettings&) const = default;
 };
 bool validGraphicsSettings(const GraphicsSettings&) noexcept;

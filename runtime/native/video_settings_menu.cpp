@@ -71,6 +71,7 @@ bool changeVideoSetting(std::string_view action, int direction) noexcept {
     }
     auto settings = graphicsSettings();
     if (action == "darkrecomp.bloom") settings.bloom = !settings.bloom;
+    else if (action == "darkrecomp.reduce_light_flicker") settings.reduceLightFlicker = !settings.reduceLightFlicker;
     else if (action == "darkrecomp.motionblur") settings.motionBlur = !settings.motionBlur;
     else if (action == "darkrecomp.antialiasing")
         settings.antialiasing = AntialiasingMode(step(unsigned(settings.antialiasing), direction,
@@ -110,6 +111,7 @@ std::string videoSettingLabel(std::string_view action) {
         result = value;
     }
     else if (action == "darkrecomp.bloom") result = settings.bloom ? "On" : "Off";
+    else if (action == "darkrecomp.reduce_light_flicker") result = settings.reduceLightFlicker ? "On" : "Off";
     else if (action == "darkrecomp.motionblur") result = settings.motionBlur ? "On" : "Off";
     else if (action == "darkrecomp.antialiasing") result = antialiasingModeLabel(settings.antialiasing);
     else if (action == "darkrecomp.anisotropy")

@@ -91,6 +91,11 @@ Open **Options > Video Settings** for the game's native graphics rows:
 - **Field of view:** Original or **60�120 horizontal degrees at 16:9**;
   ultrawide displays show more at the sides.
 - **Bloom:** on by default; toggle the final-composite glow.
+- **Reduce flicker:** Off by default. On holds animated lamp intensity
+  steady while preserving light switches, destruction and color fades. Applies
+  immediately and saves as `ReduceLightFlicker=1` in `[Display]` of
+  `DarkRecomp.settings.ini`; listed as **Reduce light flicker** in the settings
+  launcher. This covers light animation, not every screen flash or bloom artifact.
 - **Vertical sync:** off by default; synchronize presentation to the display.
 - **Frame limit:** 30, 60 (default), 90, 120, 144, 165, 240, 360, or Unlimited.
 - **Resolution:** 360p, 480p, 720p, 1080p, 1440p or 2160p; requires a restart.
