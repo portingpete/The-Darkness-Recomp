@@ -356,6 +356,9 @@ private:
 public:
     WorldRendererD3D11(ID3D11Device*,ID3D11DeviceContext*,uint32_t scale=1,
                        const std::function<void()>& startup = {});
+    // Cold compiler preflight, including MSAA even when AA is off. No device
+    // or persistent shader cache; usable with the target Wine/Proton compiler.
+    static void validateScreenFogShaderCompiler();
     // Render-thread-only, between completed frames. Preserves retained GPU
     // contents and pending measurements; failed allocation leaves the old scale.
     bool setRenderScale(uint32_t scale);

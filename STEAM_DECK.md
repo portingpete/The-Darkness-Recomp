@@ -271,6 +271,11 @@ implementations; those paths need actual Linux hardware validation.
 
 ## Build the installer AppImage (maintainers)
 
+Complete the [release validation gates](https://github.com/portingpete/The-Darkness-Recomp/blob/main/docs/RELEASING.md) before publication.
+Installer `--help` and Windows tests do not validate Proton shader compilation
+or game startup. Retain cold-cache and warm-cache gameplay evidence for the
+supported Proton/UMU + DXVK stack; see issue #156 for the regression case.
+
 Run the packager on Linux with a complete Windows release ZIP built by
 `tools/package_release.py`. It validates the release manifest, file hashes and
 allowed contents before extracting the exact released payload. The AppImage

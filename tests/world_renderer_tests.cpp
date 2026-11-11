@@ -1856,7 +1856,7 @@ static void worldRendererDebugContract(ID3D11Device* device) {
 int main(int argc,char** argv) {
     ComPtr<ID3D11Device> device;
     try {
-        bool warp=false,cpuOnly=false,colorGradeOnly=false,guiFadeOnly=false,resolutionSwitchOnly=false,frontbufferOnly=false,clipPlanesOnly=false,bloomOnly=false,postCopyOnly=false,finalCaptureOnly=false,armBloomOnly=false,textureBudgetOnly=false,subtitleFontOnly=false;
+        bool warp=false,cpuOnly=false,colorGradeOnly=false,guiFadeOnly=false,resolutionSwitchOnly=false,frontbufferOnly=false,clipPlanesOnly=false,bloomOnly=false,postCopyOnly=false,finalCaptureOnly=false,armBloomOnly=false,textureBudgetOnly=false,subtitleFontOnly=false,screenFogCompilerOnly=false;
         for(int i=1;i<argc;++i) {
             if(std::strcmp(argv[i],"--warp")==0)warp=true;
             else if(std::strcmp(argv[i],"--cpu-only")==0)cpuOnly=true;
@@ -1871,10 +1871,14 @@ int main(int argc,char** argv) {
             else if(std::strcmp(argv[i],"--arm-bloom-only")==0)armBloomOnly=true;
             else if(std::strcmp(argv[i],"--texture-budget-only")==0)textureBudgetOnly=true;
             else if(std::strcmp(argv[i],"--subtitle-font-only")==0)subtitleFontOnly=true;
-            else throw std::runtime_error("Unknown argument; expected --warp, --cpu-only, --color-grade-only, --gui-fade-only, --resolution-switch-only, --frontbuffer-only, --clip-planes-only, --bloom-only, --post-copy-only, --final-capture-only, --arm-bloom-only, --texture-budget-only or --subtitle-font-only");
+            else if(std::strcmp(argv[i],"--screen-fog-compiler-only")==0)screenFogCompilerOnly=true;
+            else throw std::runtime_error("Unknown argument; expected --warp, --cpu-only, --color-grade-only, --gui-fade-only, --resolution-switch-only, --frontbuffer-only, --clip-planes-only, --bloom-only, --post-copy-only, --final-capture-only, --arm-bloom-only, --texture-budget-only, --subtitle-font-only or --screen-fog-compiler-only");
         }
-        require(unsigned(cpuOnly)+unsigned(colorGradeOnly)+unsigned(guiFadeOnly)+unsigned(resolutionSwitchOnly)+unsigned(frontbufferOnly)+unsigned(clipPlanesOnly)+unsigned(bloomOnly)+unsigned(postCopyOnly)+unsigned(finalCaptureOnly)+unsigned(armBloomOnly)+unsigned(textureBudgetOnly)+unsigned(subtitleFontOnly)<=1,
+        require(unsigned(cpuOnly)+unsigned(colorGradeOnly)+unsigned(guiFadeOnly)+unsigned(resolutionSwitchOnly)+unsigned(frontbufferOnly)+unsigned(clipPlanesOnly)+unsigned(bloomOnly)+unsigned(postCopyOnly)+unsigned(finalCaptureOnly)+unsigned(armBloomOnly)+unsigned(textureBudgetOnly)+unsigned(subtitleFontOnly)+unsigned(screenFogCompilerOnly)<=1,
             "Focused contract modes are mutually exclusive");
+        if(screenFogCompilerOnly) {
+            WorldRendererD3D11::validateScreenFogShaderCompiler();return 0;
+        }
         if(!colorGradeOnly && !guiFadeOnly && !resolutionSwitchOnly && !frontbufferOnly && !clipPlanesOnly && !bloomOnly && !postCopyOnly && !finalCaptureOnly && !armBloomOnly && !textureBudgetOnly && !subtitleFontOnly) {
             constantCopyContract();lightingValidationContract();promptWorldContract();
             formats();paletteUsageContract();paletteArithmeticContract();worldPositionUsageContract();worldWaterUsageContract();worldShadowInputContract();
