@@ -41,8 +41,30 @@ BlurRect blurRectIntersection(const BlurRect& a,const BlurRect& b) {
     BlurRect r{(std::max)(a[0],b[0]),(std::max)(a[1],b[1]),(std::min)(a[2],b[2]),(std::min)(a[3],b[3])};
     return blurRectEmpty(r)?BlurRect{}:r;
 }
+uint64_t blurRectArea(const BlurRect& r) {return blurRectEmpty(r)?0:uint64_t(r[2]-r[0])*(r[3]-r[1]);}
+// A write invalidates only what it covers. One rectangle describes the
+// proof, so keep the largest of the up to four strips left over; any
+// sub-rectangle of a proven region is still proven.
 void invalidateBlurRect(BlurRect& known,const BlurRect& written) {
-    if(blurRectOverlaps(known,written))known={};
+    if(!blurRectOverlaps(known,written))return;
+    const BlurRect strips[]{
+        {known[0],known[1],written[0],known[3]},{written[2],known[1],known[2],known[3]},
+        {known[0],known[1],known[2],written[1]},{known[0],written[3],known[2],known[3]}};
+    BlurRect best{};
+    for(const auto& strip:strips) {
+        const auto r=blurRectIntersection(strip,known);
+        if(blurRectArea(r)>blurRectArea(best))best=r;
+    }
+    known=best;
+}
+// Two proven rectangles as one: their union when it is exactly a rectangle,
+// otherwise the larger of the two.
+BlurRect blurRectMerge(const BlurRect& a,const BlurRect& b) {
+    if(blurRectEmpty(a))return blurRectEmpty(b)?BlurRect{}:b;
+    if(blurRectEmpty(b))return a;
+    const BlurRect hull{(std::min)(a[0],b[0]),(std::min)(a[1],b[1]),(std::max)(a[2],b[2]),(std::max)(a[3],b[3])};
+    if(blurRectArea(hull)==blurRectArea(a)+blurRectArea(b)-blurRectArea(blurRectIntersection(a,b)))return hull;
+    return blurRectArea(a)>=blurRectArea(b)?a:b;
 }
 struct FlatPostQuad {
     BlurRect rectangle{};
@@ -1190,7 +1212,8 @@ bool WorldRendererD3D11::resolve(const Native::WorldResolve& r) {
                 known[c]=known[c]-copied[c]+r.offset[c];
                 known[c+2]=known[c+2]-copied[c]+r.offset[c];
             }
-            dest.logicalBlurRegion=known;
+            // The part of the old proof this copy did not overwrite stays valid.
+            dest.logicalBlurRegion=blurRectMerge(dest.logicalBlurRegion,known);
         }
     } else dest.logicalBlurRegion={};
     // Record the completed transfer before any separately recorded resolve
