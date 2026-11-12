@@ -42,6 +42,11 @@ the expected folder layout and help with startup problems.
   draw distance for props in large open views (Near by default; Original restores
   the unlimited original).
 - Remappable keys and mouse buttons, clickable menus, and adjustable subtitle size.
+- **Experimental Alternate Movement** with faster response and stronger air steering,
+  selected live in **Options > Controls > Movement Style**. Original is the default;
+  occasional contact/camera snags remain under investigation. F5 developer options
+  have a 0.25x-4x speed slider with its 1x default marked in the center.
+  Video Settings has an FOV slider from Original to 120 degrees.
 - Optional light flicker reduction, applied live from Video Settings or selected
   in the settings launcher; original light animation remains the default.
 - Language selection and support for the original disc revision and the
@@ -221,10 +226,10 @@ commands install the missing generator patches and regenerate the output.
 For Windows, install Git, Visual Studio 2022 with the **C++ and ClangCL tools**,
 CMake 3.24+, Python 3.11+, MSYS2 MinGW64 GCC and `make` at `C:\msys64`, and
 standalone LLVM at `C:\Program Files\LLVM` (including `llvm-lib.exe` for audio).
-The resource-worker notification helper also requires Rust with the
-`x86_64-pc-windows-msvc` target and `rustc` on PATH (tested with Rust 1.90).
-It has no Cargo dependencies. Configure `-DDARK_RUST_RESOURCE_WAIT=OFF` to
-build the original polling path without Rust.
+Alternate movement and the resource-worker notification helper require Rust with
+the `x86_64-pc-windows-msvc` target and `rustc` on PATH (tested with Rust 1.90).
+They have no Cargo dependencies. Configure `-DDARK_RUST_RESOURCE_WAIT=OFF` to
+use the original resource polling path; movement still requires Rust.
 Allow approximately 15 GB free. The first build requires an internet connection.
 
 1. Copy your complete original extracted dump into `Darkness/`. Keep the included

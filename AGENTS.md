@@ -4,7 +4,7 @@
 - IDA Pro 9.4 MCP is available. For game modding or reverse engineering, read
   and briefly name the relevant installed universal-modder skills, especially
   mod-any-game, game-recon and reverse-engineering.
-- Use Tera Ultra subagents for game testing, unless the user explicitly
+- Use 6.1 Terra Ultra subagents for game testing, unless the user explicitly
   authorizes an available substitute. Keep test data isolated from real saves
   and settings.
 - Code in Rust whenever possible; retain existing language/ABI boundaries when

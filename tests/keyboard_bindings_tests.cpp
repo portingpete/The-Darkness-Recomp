@@ -40,6 +40,11 @@ int main() {
               defaults.keys[size_t(KeyboardAction::NextDialogueChoice)] == std::array<uint16_t, 2>{'4', kMouseWheelDown},
               "independent dialogue defaults lost");
         auto scoped = defaults;
+        check(defaults.keys[size_t(KeyboardAction::Walk)][0] == VK_MENU &&
+              assignKeyboardKey(scoped, KeyboardAction::Walk, 0, 'W') &&
+              scoped.keys[size_t(KeyboardAction::MoveForward)][0] == 'W' && validKeyboardBindings(scoped),
+              "movement modifiers must remap independently without displacing gameplay keys");
+        scoped = defaults;
         check(assignKeyboardKey(scoped, KeyboardAction::PreviousDialogueChoice, 0, '1') &&
               scoped.keys[size_t(KeyboardAction::PreviousWeapon)] == defaults.keys[size_t(KeyboardAction::PreviousWeapon)] &&
               scoped.keys[size_t(KeyboardAction::NextWeapon)] == defaults.keys[size_t(KeyboardAction::NextWeapon)],

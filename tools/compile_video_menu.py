@@ -164,9 +164,10 @@ KEYBOARD_ACTIONS = ("MOVE FORWARD", "MOVE BACKWARD", "MOVE LEFT", "MOVE RIGHT", 
                     "LOOK LEFT", "LOOK RIGHT", "JUMP", "USE / CONFIRM", "RELOAD", "CROUCH", "ZOOM",
                     "FIRE RIGHT WEAPON", "FIRE LEFT WEAPON", "PREVIOUS WEAPON", "NEXT WEAPON",
                     "PREV DARKNESS", "NEXT DARKNESS", "MANIFEST DARKNESS", "USE DARKNESS POWER",
-                    "REDIRECT DARKLING", "JOURNAL", "PAUSE", "PREV DIALOGUE", "NEXT DIALOGUE")
+                    "REDIRECT DARKLING", "JOURNAL", "PAUSE", "PREV DIALOGUE", "NEXT DIALOGUE",
+                    "WALK (ALTERNATE)",)
 KEYBOARD_PRIMARY = ("W", "S", "A", "D", "I", "K", "J", "L", "SPACE", "E", "R", "CTRL", "SHIFT",
-                    "X", "Z", "1", "2", "3", "4", "Q", "G", "F", "TAB", "ENTER", "3", "4")
+                    "X", "Z", "1", "2", "3", "4", "Q", "G", "F", "TAB", "ENTER", "3", "4", "ALT")
 KEYBOARD_SECONDARY = tuple({"CROUCH": "C", "ZOOM": "MMB", "FIRE RIGHT WEAPON": "LMB",
                             "FIRE LEFT WEAPON": "RMB", "PREVIOUS WEAPON": "WHEEL DN",
                             "NEXT WEAPON": "WHEEL UP", "PREV DIALOGUE": "WHEEL UP",
@@ -178,6 +179,8 @@ def localized_text(text, region, translations):
     if translations is None:
         return text
     token, value = text.split(", ", 1)
+    if not value.strip() or value == "|":
+        return text
     if value.startswith("§"):
         return text  # Original localized resources remain owned by the dump.
 
@@ -231,11 +234,15 @@ def replace_video_page(registry, translations=None):
             option_index = next(i for i, c in enumerate(children) if r.decode(c)[0] == "OPTION")
             children.insert(option_index, r.make("STYLE", "HIDDENFOCUS"))
         return r.make("WINDOW", r.decode(original)[1], children)
-    def window(cls, text, region, script=None):
+    def window(cls, text, region, script=None, identifier=None):
         children = [r.make("CLASSNAME", cls), r.make("TEXT", localized_text(text, region, translations))]
         if script:
             children.append(r.make("SCRIPT_PRESSED", script))
             children.append(r.make("ALWAYSPAINT", "1"))
+        if identifier:
+            children.append(r.make("ID", identifier))
+            if not script:
+                children.append(r.make("ALWAYSPAINT", "1"))
         # Preserve the original control's property order and native sizing.
         children.append(r.make("RGN", region))
         return r.make("WINDOW", "", children)
@@ -244,6 +251,17 @@ def replace_video_page(registry, translations=None):
     properties.append(window("CubeText", "nc, §LMENU_VIDEO_HEADING", "0,0,20,2"))
     for row, (key, name, initial) in enumerate(zip(SETTINGS, SETTING_NAMES, INITIAL_VALUES)):
         y = 2 + row + 3 * (row > 0)
+        if key == "fov":
+            properties.extend([
+                window("CubeText", "sc, FOV: ORIGINAL", f"1,{y},10,1", identifier="DARKRECOMP_FOV_CAPTION"),
+                # The retail TEXT property establishes the initial focus/hit
+                # rectangle. Spaces alone produce an empty control. The native
+                # paint hook hides this seed label after geometry is loaded.
+                window("CubeButton", "sc, < " + "ORIGINAL".center(12) + " >", f"11,{y},8,1", "darkrecomp.fov"),
+                r.make("WINDOW", "", [r.make("CLASSNAME", "CubeOptionMeter"),
+                    r.make("ID", "DARKRECOMP_FOV_SLIDER"), r.make("ALWAYSPAINT", "1"),
+                    r.make("RGN", f"11,{y},8,1")])])
+            continue
         properties.append(window("CubeText", "sc, " + name, f"1,{y},10,1"))
         properties.append(window("CubeButton", "sc, < " + initial.center(12) + " >", f"11,{y},8,1", "darkrecomp." + key))
         if row == 0:
@@ -321,7 +339,10 @@ def add_pc_menu_actions(r, translations=None):
         window("CubeText", "sc, MOUSE SENSITIVITY", "1,17,10,1"),
         window("CubeButton", "sc, < " + "1.0X".center(12) + " >", "11,17,8,1",
                "darkrecomp.mouse_sensitivity", always_paint=True),
-        window("CubeText", "sc, LEFT/RIGHT: CHANGE; CONFIRM: NEXT", "0,19,20,1")])
+        window("CubeText", "sc, MOVEMENT STYLE", "1,18,7,1"),
+        window("CubeButton", "sc, < " + "ORIGINAL".center(18) + " >", "9,18,11,1",
+               "darkrecomp.movement_style", always_paint=True),
+        window("CubeText", "sc, ALTERNATE MOVEMENT IS EXPERIMENTAL", "0,19,20,1")])
     r.set_children(controls, children)
 
     original_root_count = len(r.roots)

@@ -1,5 +1,6 @@
 #include "input.h"
 #include "keyboard_menu.h"
+#include "movement_settings.h"
 #include "runtime.h"
 #include "stall_profiler.h"
 #include "stall_profiler_lock.h"
@@ -452,6 +453,7 @@ void NativeInput::controllerWorker() {
         }
 }
 void NativeInput::clearKeysLocked() {
+    movementModifiers_.store(0, std::memory_order_release);
     ++menuEpoch_;
     keys_.fill(false);
     capturedKeys_.fill(false);
@@ -873,9 +875,14 @@ bool NativeInput::windowMessage(HWND window, UINT message, WPARAM key, LPARAM de
 }
 XINPUT_GAMEPAD NativeInput::keyboardLocked() {
     XINPUT_GAMEPAD pad{};
-    if (!window_ || !focused_ || settingsOpen_ || keyboardMenuInputBlocked()) return pad;
+    if (!window_ || !focused_ || settingsOpen_ || keyboardMenuInputBlocked()) {
+        movementModifiers_.store(0, std::memory_order_release);
+        return pad;
+    }
     const bool dialogueContext = dialogueChoicesActive_ && !guestMenuActive_;
     const bool menuContext = guestMenuActive_ || (!mouseLook_ && !dialogueContext);
+    const auto style = movementStyle();
+    const bool modifiersActive = !menuContext && !dialogueContext && style != MovementStyle::Original;
     const auto now = api_.ticks();
     if (now >= wheelNext_) {
         if (wheelKey_) { wheelKey_ = 0; wheelNext_ = now + 20; }
@@ -902,6 +909,10 @@ XINPUT_GAMEPAD NativeInput::keyboardLocked() {
             const bool held = isWheelBindingKey(key) ? key == wheelKey_ : key && keys_[key];
             if (!held) return false;
             if (dialogueAction) return true;
+            if (modifiersActive && action == KeyboardAction::Zoom) {
+                for (const auto assigned : bindings_.keys[size_t(KeyboardAction::Walk)])
+                    if (key == assigned) return false;
+            }
             if (dialogueContext) {
                 if (isWheelBindingKey(key)) return false;
                 for (const auto choice : {KeyboardAction::PreviousDialogueChoice, KeyboardAction::NextDialogueChoice})
@@ -912,6 +923,9 @@ XINPUT_GAMEPAD NativeInput::keyboardLocked() {
         };
         return pressed(binding[0]) || pressed(binding[1]);
     };
+    // Publish once per poll: a transient neutral store would let the movement
+    // thread briefly miss a held modifier between the two atomic stores.
+    movementModifiers_.store(modifiersActive && down(KeyboardAction::Walk) ? 1 : 0, std::memory_order_release);
     const struct { KeyboardAction action; WORD button; } buttons[] = {
         {KeyboardAction::Pause, XINPUT_GAMEPAD_START}, {KeyboardAction::Journal, XINPUT_GAMEPAD_BACK},
         {KeyboardAction::Use, XINPUT_GAMEPAD_A}, {KeyboardAction::Reload, XINPUT_GAMEPAD_B},
@@ -1017,6 +1031,7 @@ DWORD NativeInput::getState(Memory& owner, uint32_t user, uint32_t flags, uint32
         if (user == 0) keyboardMouseEvent_ = false;
     }
     if (keyboard) mergeKeyboard(state.Gamepad, keyboardLocked());
+    else movementModifiers_.store(0, std::memory_order_release);
     // Windows focus suppresses all input, including physical controllers.
     // Caps still report the attached device; returning neutral avoids inventing
     // a disconnect whenever the user switches to another application.

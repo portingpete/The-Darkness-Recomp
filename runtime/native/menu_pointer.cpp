@@ -2,6 +2,7 @@
 #include "menu_pointer.h"
 #include "input.h"
 #include "keyboard_menu_guest.h"
+#include "video_settings_menu.h"
 #include "runtime.h"
 #include "ppc_recomp_shared.h"
 #include <atomic>
@@ -25,6 +26,9 @@ std::atomic<uint32_t> observedFrontend{0};
 std::mutex pointerOwnershipMutex;
 uint32_t acceptedLoadFrontend = 0;
 thread_local MenuPointerSession pointerSession;
+thread_local uint32_t sliderDragRoot = 0;
+thread_local uint32_t sliderDragButton = 0;
+thread_local uint64_t sliderDragEpoch = 0;
 std::mutex projectionMutex;
 MenuPointerProjectionSession projectionSession;
 struct CubeRenderScope { uint32_t frontend = 0, root = 0, cube = 0; };
@@ -156,6 +160,8 @@ void processPointer(PPCContext& ctx, uint8_t* base, uint32_t root) {
     if (!memory || base != memory->base() || !root || uint64_t(root) + 272 > PPC_MEMORY_SIZE)
         return;
     const auto pointer = nativeInput().menuCursor();
+    if (!pointer.valid || !pointer.leftDown || sliderDragRoot != root || sliderDragEpoch != pointer.epoch)
+        sliderDragRoot = 0;
     // Nested layouts do not own input. The outer root's hit tester already
     // descends through them and respects original visibility and z order.
     if (PPC_LOAD_U32(root + 16) || PPC_LOAD_U8(root + 88) ||
@@ -184,7 +190,17 @@ void processPointer(PPCContext& ctx, uint8_t* base, uint32_t root) {
     }
     if (!projected) point = mapMenuPointer(display, pointer.x, pointer.y, width, height);
     if (!point) return;
-    const uint32_t hit = dispatchMenuPointer(ctx, base, root, *point, events.activate);
+    const bool dragging = sliderDragRoot == root && pointer.leftDown;
+    if (dragging && !events.activate && isNativeMenuSliderButton(base, sliderDragButton)) {
+        setNativeMenuSliderPointer(base, sliderDragButton, point->x + int32_t(PPC_LOAD_U32(root + 128)));
+        return;
+    }
+    const uint32_t hit = dispatchMenuPointer(ctx, base, root, *point, events.activate || dragging, dragging);
+    if (events.activate) {
+        sliderDragRoot = isNativeMenuSliderButton(base, hit) ? root : 0;
+        sliderDragButton = hit;
+        sliderDragEpoch = pointer.epoch;
+    }
     if (probeEnabled()) {
         static std::atomic<unsigned> reports{0};
         if (reports.fetch_add(1, std::memory_order_relaxed) < 512)
@@ -201,7 +217,7 @@ bool menuPointerTreeHasControl(uint8_t* base, uint32_t root) {
     return hasMenuControl(base, root, budget);
 }
 uint32_t dispatchMenuPointer(PPCContext& ctx, uint8_t* base, uint32_t root,
-                             MenuPointerPosition point, bool activate) {
+                             MenuPointerPosition point, bool activate, bool sliderOnly) {
     auto call = ctx;
     call.r1.u64 -= 512;
     const uint32_t position = call.r1.u32 + 80, message = call.r1.u32 + 112;
@@ -228,6 +244,8 @@ uint32_t dispatchMenuPointer(PPCContext& ctx, uint8_t* base, uint32_t root,
             PPC_LOAD_U32(hit + 84), call.r3.u32);
     const uint32_t listOwner = listMenuPointerOwner(base, root, hit);
     if (!activate) return hit;
+    if (setNativeMenuSliderPointer(base, hit, point.x + int32_t(PPC_LOAD_U32(root + 128)))) return hit;
+    if (sliderOnly) return hit;
     // Use the original confirm message for the newly hit window. This is the
     // title's normal button/menu callback route, including option buttons,
     // profile dialogs and custom native settings rows; it is never an XInput

@@ -4,6 +4,12 @@
   "encoding": "cp1251",
   "description": "Russian text for the added PC menus. Edit text in UTF-8; max_glyphs is the existing menu width. Physical key names remain unchanged.",
   "strings": {
+    "ALTERNATE MOVEMENT": {"text": "ДРУГОЕ ДВИЖЕНИЕ", "max_glyphs": 18},
+    "ALTERNATE MOVEMENT IS EXPERIMENTAL": {"text": "ДОП. ДВИЖЕНИЕ: ЭКСПЕРИМЕНТ", "max_glyphs": 40},
+    "FOV: ORIGINAL": {"text": "УГОЛ: ИСХОДНОЕ", "max_glyphs": 20},
+    "FOV": {"text": "УГОЛ", "max_glyphs": 4},
+    "MOVEMENT STYLE": {"text": "СТИЛЬ ДВИЖЕНИЯ", "max_glyphs": 20},
+    "WALK (ALTERNATE)": {"text": "ШАГ (РЕЖИМЫ)", "max_glyphs": 20},
     "BRIGHTNESS": {"text": "ЯРКОСТЬ", "max_glyphs": 20},
     "FIELD OF VIEW": {"text": "УГОЛ ОБЗОРА", "max_glyphs": 20},
     "BLOOM": {"text": "СВЕЧЕНИЕ", "max_glyphs": 20},

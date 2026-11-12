@@ -2,6 +2,7 @@
 #include "developer_invincibility.h"
 #include "developer_noclip.h"
 #include "developer_player_lookup.h"
+#include "movement.h"
 #include "runtime.h"
 #include "ppc_recomp_shared.h"
 #include <atomic>
@@ -16,6 +17,8 @@ std::atomic<uint64_t> activePlayer{0};
 std::atomic<float> activeSpeed{1};
 
 float movementMultiplier(const PPCRegister& actor, const PPCRegister& state) {
+    const auto userScale = DarkRecomp::Native::movementHorizontalSpeedScale(actor.u32, state.u32);
+    if (userScale != 1) return userScale;
     const auto player = activePlayer.load(std::memory_order_acquire);
     if (!player || uint32_t(player >> 32) != actor.u32 || uint32_t(player) != state.u32 ||
         !DarkRecomp::Native::memory || activeBase.load(std::memory_order_acquire) != DarkRecomp::Native::memory->base()) return 1;
@@ -36,6 +39,7 @@ bool probeEnabled() {
 namespace DarkRecomp::Native {
 void resetDeveloperPlayer() noexcept {
     activePlayer.store(0, std::memory_order_release);
+    configureMovementPlayer(nullptr, 0, 0);
     configureDeveloperInvincibility(nullptr, 0, 0, false, false);
     configureDeveloperNoclip(nullptr, 0, 0, false, false);
 }
@@ -46,6 +50,7 @@ DeveloperPlayerResult updateDeveloperPlayer(PPCContext& ctx, uint8_t* base, uint
     const bool available = player.actor && player.state;
     const bool validSpeed = std::isfinite(speed) && speed >= 0.25f && speed <= 4;
     const bool apply = available && enabled && validSpeed;
+    configureMovementPlayer(base, player.actor, player.state, apply ? speed : 1, apply && noclip, client, player.server);
     configureDeveloperInvincibility(base, player.actor, player.state, invincible, apply);
     configureDeveloperNoclip(base, player.actor, player.state, noclip, apply);
     activePlayer.store(0, std::memory_order_release);

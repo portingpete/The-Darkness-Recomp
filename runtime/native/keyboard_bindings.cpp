@@ -16,7 +16,8 @@ const std::array<KeyboardActionInfo, kKeyboardActionCount>& keyboardActions() no
         {L"MANIFEST DARKNESS", L"ManifestDarkness"}, {L"USE DARKNESS POWER", L"UseDarkness"},
         {L"REDIRECT DARKLING", L"RedirectDarkling"}, {L"JOURNAL", L"Journal"}, {L"PAUSE", L"Pause"},
         {L"PREVIOUS DIALOGUE CHOICE", L"PreviousDialogueChoice"},
-        {L"NEXT DIALOGUE CHOICE", L"NextDialogueChoice"}
+        {L"NEXT DIALOGUE CHOICE", L"NextDialogueChoice"},
+        {L"WALK (ALTERNATE)", L"Walk"}
     }};
     return actions;
 }
@@ -24,7 +25,7 @@ KeyboardBindings defaultKeyboardBindings() noexcept {
     KeyboardBindings result;
     constexpr std::array<uint16_t, kKeyboardActionCount> primary{
         'W','S','A','D','I','K','J','L', VK_SPACE,'E','R',VK_CONTROL,VK_SHIFT,
-        'X','Z','1','2','3','4','Q','G','F',VK_TAB,VK_RETURN,'3','4'};
+        'X','Z','1','2','3','4','Q','G','F',VK_TAB,VK_RETURN,'3','4',VK_MENU};
     for (size_t i = 0; i < primary.size(); ++i) result.keys[i][0] = primary[i];
     result.keys[size_t(KeyboardAction::Crouch)][1] = 'C';
     result.keys[size_t(KeyboardAction::FireRight)][1] = VK_LBUTTON;
@@ -63,9 +64,9 @@ bool assignableKeyboardKey(unsigned key) noexcept {
     }
 }
 bool validKeyboardBindings(const KeyboardBindings& bindings) noexcept {
-    std::array<std::array<bool, kBindingKeyCount>, 2> used{};
+    std::array<std::array<bool, kBindingKeyCount>, 3> used{};
     for (size_t action = 0; action < bindings.keys.size(); ++action) {
-        auto& context = used[isDialogueBindingAction(KeyboardAction(action))];
+        auto& context = used[keyboardBindingContext(KeyboardAction(action))];
         for (const auto key : bindings.keys[action]) {
             if (!assignableKeyboardKey(key) || (key && context[key])) return false;
             if (key) context[key] = true;
@@ -80,7 +81,7 @@ bool assignKeyboardKey(KeyboardBindings& bindings, KeyboardAction action, size_t
     auto& current = bindings.keys[index][slot];
     if (key == current) return true;
     if (key) for (size_t other = 0; other < bindings.keys.size(); ++other) {
-        if (isDialogueBindingAction(KeyboardAction(other)) != isDialogueBindingAction(action)) continue;
+        if (keyboardBindingContext(KeyboardAction(other)) != keyboardBindingContext(action)) continue;
         for (auto& assigned : bindings.keys[other])
             if (assigned == key) { assigned = current; current = uint16_t(key); return true; }
     }

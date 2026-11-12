@@ -12,7 +12,7 @@ enum class KeyboardAction : uint8_t {
     Jump, Use, Reload, Crouch, Zoom, FireRight, FireLeft,
     PreviousWeapon, NextWeapon, PreviousPower, NextPower,
     ManifestDarkness, UseDarkness, RedirectDarkling, Journal, Pause,
-    PreviousDialogueChoice, NextDialogueChoice, Count
+    PreviousDialogueChoice, NextDialogueChoice, Walk, Count
 };
 inline constexpr size_t kKeyboardActionCount = size_t(KeyboardAction::Count);
 inline constexpr size_t kKeyboardBindingSlots = 2;
@@ -31,11 +31,18 @@ bool isWheelBindingKey(unsigned key) noexcept;
 constexpr bool isDialogueBindingAction(KeyboardAction action) noexcept {
     return action == KeyboardAction::PreviousDialogueChoice || action == KeyboardAction::NextDialogueChoice;
 }
+constexpr bool isMovementBindingAction(KeyboardAction action) noexcept {
+    return action == KeyboardAction::Walk;
+}
+constexpr size_t keyboardBindingContext(KeyboardAction action) noexcept {
+    return isDialogueBindingAction(action) ? 1 : isMovementBindingAction(action) ? 2 : 0;
+}
 // Keyboard keys, mouse buttons and wheel directions are assignable. Escape,
 // system shortcuts, and the runtime's own function keys stay available.
 bool assignableKeyboardKey(unsigned key) noexcept;
 bool validKeyboardBindings(const KeyboardBindings& bindings) noexcept;
-// Duplicate keys swap within gameplay or dialogue. The two contexts may share keys.
+// Duplicate keys swap within gameplay, dialogue, or movement modifiers.
+// Contexts may share keys; alternative movement gives modifiers priority.
 bool assignKeyboardKey(KeyboardBindings& bindings, KeyboardAction action, size_t slot,
                        unsigned key) noexcept;
 std::wstring keyboardKeyName(unsigned key);

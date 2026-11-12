@@ -70,7 +70,7 @@ void captureValidation() {
     bind(menu, jump, 'M');
     check(menu.action("darkrecomp.keyboard.defaults") && menu.staged() == original,
           "restore defaults was not staged");
-    for (const char* malformed : {"darkrecomp.keyboard.bind.26.0", "darkrecomp.keyboard.bind.0.2",
+    for (const char* malformed : {"darkrecomp.keyboard.bind.27.0", "darkrecomp.keyboard.bind.0.2",
          "darkrecomp.keyboard.bind.-1.0", "darkrecomp.keyboard.bind.1.0.extra",
          "darkrecomp.keyboard.bind..0", "darkrecomp.keyboard.bind.999999999999999999999.0", "unknown"})
         check(!menu.action(malformed) && menu.label(malformed).empty() && menu.staged() == original,

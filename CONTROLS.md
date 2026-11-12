@@ -1,5 +1,32 @@
 # Native keyboard and mouse controls
 
+**Movement options:** In **Options > Controls > Movement Style**, choose
+**Original** or **Alternate Movement** with Left/Right, the mouse wheel, or
+confirm. Changes apply immediately and save for the next launch. Original is
+the default.
+
+Alternate Movement uses a 198-unit/second run speed, quick starts and stops,
+normalized diagonals and stronger air steering. Hold **Alt** to walk at 99
+units/second; remap Walk on the final Keyboard Controls page. Shift retains
+Zoom. Crouching halves speed. The jump eases smoothly around the apex; softer descending gravity
+and a fall-speed limit ease the return to the ground. Its camera keeps a level horizon. The original
+eye position, crouch pose and camera collision still apply. Scripted movement, ladders, swimming and noclip use
+their original handling.
+
+**Alternate Movement is experimental.** Some contact/camera snags remain under
+investigation. F5 > Player Speed scales horizontal movement in either style from
+0.25x to 4x; 1x is the center line and retains the speeds above. This remains a
+session-only developer option. Jump impulse
+and gravity are independent of this slider. Click or drag the track, or use
+Left/Right. Video Settings > FOV uses the same slider interaction:
+Original is the minimum at the far left, and the maximum is 120 degrees.
+
+The saved preference is `[Game] MovementStyle=original|alternate` in
+`DarkRecomp.settings.ini`. Existing `doom` selections load Alternate Movement;
+removed `hl2` selections and invalid values load Original.
+See [movement notes](https://github.com/portingpete/The-Darkness-Recomp/blob/main/docs/MOVEMENT.md)
+for integration details and limits.
+
 Run `Launch.cmd` for audio, or `Launch.cmd mute` for a muted game.
 Keyboard/mouse play captures the cursor as soon as Continue or a confirmed New
 Game starts loading. Camera movement begins when the gameplay client is ready;

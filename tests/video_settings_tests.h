@@ -5,6 +5,7 @@
 #include "runtime/native/language_settings.h"
 #include "runtime/native/native_menu_text.h"
 #include "runtime/native/input.h"
+#include "runtime/native/movement_settings.h"
 #include <fstream>
 #include <utility>
 
@@ -279,6 +280,35 @@ static void testVideoSettings(PPCContext& ctx) {
           graphicsSettings() == beforeMouseGraphics && fieldOfViewSetting() == beforeMouseFov &&
           !takeDisplaySettingsSaveRequest(), "mouse setting altered graphics preferences or value-button width");
     mouseInput.setMouseSensitivity(previousMouseSensitivity);
+    const auto previousMovement = movementStyle();
+    setMovementStyle(MovementStyle::Original);
+    string(block + 0x3800, "darkrecomp.movement_style");
+    call = ctx; call.r3.u64 = button; call.r4.u64 = block + 0x3200;
+    call.r5.u64 = block + 0x3000; call.r6.u64 = block + 0x3800;
+    sub_8239F0E0(call, base);
+    takeMovementStyleSaveRequest();
+    key(227);
+    check(movementStyle() == MovementStyle::Alternate && takeMovementStyleSaveRequest() &&
+          videoSettingLabel("darkrecomp.movement_style").find("ALTERNATE MOVEMENT") != std::string::npos,
+          "Original Controls dispatch must select and persist Alternate Movement");
+    check(videoSettingLabel("darkrecomp.movement_style").size() == 26, "Full alternate label retains eleven-cell hit width");
+    key(227 | 0x8000);
+    check(movementStyle() == MovementStyle::Alternate && !takeMovementStyleSaveRequest(), "release cycled movement twice");
+    key(228);
+    check(movementStyle() == MovementStyle::Original && takeMovementStyleSaveRequest(), "Confirm selects Original");
+    call = ctx; call.r3.u64 = button;
+    sub_823981D8(call, base);
+    check(movementStyle() == MovementStyle::Alternate && takeMovementStyleSaveRequest(), "Click selects Alternate");
+    key(226);
+    check(movementStyle() == MovementStyle::Original && takeMovementStyleSaveRequest(), "Left cycles movement backwards");
+    check(!changeVideoSetting("darkrecomp.movement_style", 0) && !takeMovementStyleSaveRequest(), "Invalid movement direction");
+    reportMovementStyleSave(false);
+    check(videoSettingLabel("darkrecomp.movement_style").find("SAVE FAILED") != std::string::npos &&
+          videoSettingLabel("darkrecomp.movement_style").size() == 26, "Movement save failure must retain menu width");
+    reportMovementStyleSave(true);
+    check(graphicsSettings() == beforeMouseGraphics && fieldOfViewSetting() == beforeMouseFov &&
+          !takeDisplaySettingsSaveRequest(), "Movement menu must not change display preferences");
+    setMovementStyle(previousMovement);
     string(block + 0x3500, "darkrecomp.antialiasing");
     call = ctx;
     call.r3.u64 = button; call.r4.u64 = block + 0x3200;
@@ -507,7 +537,14 @@ static void testVideoSettings(PPCContext& ctx) {
     changeVideoSetting("darkrecomp.fov", -1);
     check(fieldOfViewSetting() == 0, "FOV Original is unreachable");
     changeVideoSetting("darkrecomp.fov", -1);
-    check(fieldOfViewSetting() == 120, "FOV wrap failed");
+    check(fieldOfViewSetting() == 0, "FOV slider must clamp at Original instead of wrapping");
+    check(nativeMenuSliderPosition("darkrecomp.fov") == 0, "Original FOV must be the left endpoint");
+    changeVideoSetting("darkrecomp.fov", 1);
+    check(fieldOfViewSetting() > 86 && fieldOfViewSetting() < 88, "FOV slider must increase from original baseline");
+    check(setNativeMenuSliderPosition("darkrecomp.fov", 1) && fieldOfViewSetting() == 120,
+          "FOV slider maximum");
+    check(setNativeMenuSliderPosition("darkrecomp.fov", 0) && fieldOfViewSetting() == 0,
+          "FOV slider must restore untouched Original handling");
     reportDisplaySettingsSave(false);
     check(videoSettingLabel("darkrecomp.bloom").find("SAVE FAILED") != std::string::npos, "save failure is invisible in menu");
     reportDisplaySettingsSave(true);

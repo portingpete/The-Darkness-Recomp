@@ -2,11 +2,13 @@
 #include "native_mouse.h"
 #include "runtime/native/developer_tools.h"
 #include "runtime/native/input.h"
+#include <commctrl.h>
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cwchar>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -21,9 +23,15 @@ constexpr wchar_t kWindowClass[] = L"DarkRecompDeveloperToolsWindow";
 constexpr UINT_PTR kRefreshTimer = 1;
 constexpr int kMission = 1001, kLoad = 1002, kSpeed = 1003, kInvincible = 1004, kDefaults = 1005;
 constexpr int kNoclip = 1006, kUnlock = 1007, kMaxDarkness = 1008, kResolutionShortcut = 1009;
-constexpr std::array<float, 9> kSpeeds{.25f, .5f, .75f, 1.f, 1.25f, 1.5f, 2.f, 3.f, 4.f};
-constexpr std::array<const wchar_t*, 9> kSpeedNames{
-    L"0.25X", L"0.5X", L"0.75X", L"1X (NORMAL)", L"1.25X", L"1.5X", L"2X", L"3X", L"4X"};
+constexpr int kSpeedMinimum = 0, kSpeedDefault = 300, kSpeedMaximum = 600;
+float sliderSpeed(int position) {
+    position = std::clamp(position, kSpeedMinimum, kSpeedMaximum);
+    return position <= kSpeedDefault ? .25f + position / 400.f : 1.f + (position - kSpeedDefault) / 100.f;
+}
+int speedPosition(float speed) {
+    return std::clamp(int(std::lround(speed <= 1 ? (speed - .25f) * 400 : 300 + (speed - 1) * 100)),
+                      kSpeedMinimum, kSpeedMaximum);
+}
 
 std::wstring wide(std::string_view text) {
     if (text.empty()) return {};
@@ -72,8 +80,7 @@ bool DeveloperToolsWindow::handleMessage(MSG& message) {
     if (window_ && (message.hwnd == window_ || IsChild(window_, message.hwnd)) &&
         message.message == WM_KEYDOWN && message.wParam == VK_ESCAPE) {
         // Let a combo cancel its pending choice before Escape closes the panel.
-        if (SendMessageW(speed_, CB_GETDROPPEDSTATE, 0, 0) ||
-            SendMessageW(mission_, CB_GETDROPPEDSTATE, 0, 0)) return false;
+        if (SendMessageW(mission_, CB_GETDROPPEDSTATE, 0, 0)) return false;
         close();
         return true;
     }
@@ -144,6 +151,8 @@ void DeveloperToolsWindow::releaseInputGate() {
 }
 
 void DeveloperToolsWindow::createControls() {
+    INITCOMMONCONTROLSEX common{sizeof(common), ICC_BAR_CLASSES};
+    if (!InitCommonControlsEx(&common)) throw std::runtime_error("Cannot initialize developer speed slider");
     control(window_, L"STATIC", L"MISSION", 0, 16, 17, 330, 18);
     const DWORD comboStyle = CBS_DROPDOWNLIST | CBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP;
     mission_ = control(window_, L"COMBOBOX", L"", comboStyle, 16, 39, 327, 320, kMission);
@@ -153,9 +162,15 @@ void DeveloperToolsWindow::createControls() {
     }
     SendMessageW(mission_, CB_SETCURSEL, 0, 0);
     load_ = control(window_, L"BUTTON", L"LOAD", BS_PUSHBUTTON | WS_TABSTOP, 355, 39, 78, 26, kLoad);
-    control(window_, L"STATIC", L"PLAYER SPEED", 0, 16, 84, 180, 18);
-    speed_ = control(window_, L"COMBOBOX", L"", comboStyle, 16, 106, 180, 240, kSpeed);
-    for (const auto* text : kSpeedNames) SendMessageW(speed_, CB_ADDSTRING, 0, LPARAM(text));
+    speedLabel_ = control(window_, L"STATIC", L"PLAYER SPEED: 1.00X", 0, 16, 84, 180, 18);
+    speed_ = control(window_, TRACKBAR_CLASSW, L"", TBS_HORZ | TBS_BOTTOM | WS_TABSTOP, 16, 106, 180, 30, kSpeed);
+    SendMessageW(speed_, TBM_SETRANGEMIN, FALSE, kSpeedMinimum);
+    SendMessageW(speed_, TBM_SETRANGEMAX, FALSE, kSpeedMaximum);
+    SendMessageW(speed_, TBM_SETLINESIZE, 0, 1);
+    SendMessageW(speed_, TBM_SETPAGESIZE, 0, 20);
+    SendMessageW(speed_, TBM_CLEARTICS, FALSE, 0);
+    SendMessageW(speed_, TBM_SETTIC, 0, kSpeedDefault); // Persistent default line at the physical center.
+    SendMessageW(speed_, TBM_SETPOS, TRUE, kSpeedDefault);
     invincible_ = control(window_, L"BUTTON", L"INVINCIBLE", BS_AUTOCHECKBOX | WS_TABSTOP, 220, 106, 210, 26, kInvincible);
     noclip_ = control(window_, L"BUTTON", L"NOCLIP", BS_AUTOCHECKBOX | WS_TABSTOP, 16, 140, 416, 26, kNoclip);
     unlock_ = control(window_, L"BUTTON", L"UNLOCK ALL DARKNESS", BS_PUSHBUTTON | WS_TABSTOP, 16, 181, 203, 27, kUnlock);
@@ -181,11 +196,10 @@ void DeveloperToolsWindow::refresh() {
     EnableWindow(unlock_, snapshot.hasActivePlayer);
     EnableWindow(maxDarkness_, snapshot.hasActivePlayer);
     EnableWindow(resolutionShortcut_, bool(setResolutionShortcut_));
-    const auto speed = std::find(kSpeeds.begin(), kSpeeds.end(), snapshot.playerSpeed);
-    // CB_SETCURSEL also moves the popup's highlighted row. A refresh must not
-    // replace the user's pending mouse/keyboard choice every 250 milliseconds.
-    if (!speedDropDownOpen_ && !SendMessageW(speed_, CB_GETDROPPEDSTATE, 0, 0))
-        SendMessageW(speed_, CB_SETCURSEL, speed == kSpeeds.end() ? -1 : speed - kSpeeds.begin(), 0);
+    if (!speedDragging_) SendMessageW(speed_, TBM_SETPOS, TRUE, speedPosition(snapshot.playerSpeed));
+    wchar_t speedText[64]{};
+    std::swprintf(speedText, std::size(speedText), L"PLAYER SPEED: %.2fX", double(snapshot.playerSpeed));
+    SetWindowTextW(speedLabel_, speedText);
     SendMessageW(invincible_, BM_SETCHECK, snapshot.invincible ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(noclip_, BM_SETCHECK, snapshot.noclip ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(resolutionShortcut_, BM_SETCHECK, resolutionShortcutEnabled_ ? BST_CHECKED : BST_UNCHECKED, 0);
@@ -212,11 +226,8 @@ void DeveloperToolsWindow::loadMission() {
 void DeveloperToolsWindow::selectSpeed() {
     const auto snapshot = developerSnapshot();
     if (!snapshot.hasActivePlayer) { refresh(); return; }
-    const LRESULT selected = SendMessageW(speed_, CB_GETCURSEL, 0, 0);
-    // Popup acceptance may be followed by SELCHANGE after CLOSEUP. The bridge
-    // publishes a request synchronously, so do not queue the same speed twice.
-    if (selected >= 0 && size_t(selected) < kSpeeds.size() &&
-        snapshot.playerSpeed != kSpeeds[size_t(selected)]) requestDeveloperSpeed(kSpeeds[size_t(selected)]);
+    const auto selected = sliderSpeed(int(SendMessageW(speed_, TBM_GETPOS, 0, 0)));
+    if (snapshot.playerSpeed != selected) requestDeveloperSpeed(selected);
     refresh();
 }
 
@@ -278,21 +289,15 @@ LRESULT CALLBACK DeveloperToolsWindow::windowProc(HWND window, UINT message, WPA
 LRESULT DeveloperToolsWindow::message(UINT message, WPARAM key, LPARAM detail) {
     if (message == WM_CREATE) { createControls(); return 0; }
     if (message == WM_TIMER && key == kRefreshTimer) { refresh(); return 0; }
+    if (message == WM_HSCROLL && HWND(detail) == speed_) {
+        speedDragging_ = LOWORD(key) == TB_THUMBTRACK;
+        selectSpeed();
+        return 0;
+    }
     if (message == WM_COMMAND) {
         const int id = LOWORD(key), notification = HIWORD(key);
         if (id == IDCANCEL && notification == BN_CLICKED) close();
         else if (id == kLoad && notification == BN_CLICKED) loadMission();
-        else if (id == kSpeed) {
-            if (notification == CBN_DROPDOWN) speedDropDownOpen_ = true;
-            else if (notification == CBN_SELENDOK && (speedDropDownOpen_ ||
-                     SendMessageW(speed_, CB_GETDROPPEDSTATE, 0, 0))) selectSpeed();
-            else if (notification == CBN_SELCHANGE && !speedDropDownOpen_ &&
-                     !SendMessageW(speed_, CB_GETDROPPEDSTATE, 0, 0)) selectSpeed();
-            else if (notification == CBN_CLOSEUP) {
-                speedDropDownOpen_ = false;
-                refresh();
-            }
-        }
         else if (id == kInvincible && notification == BN_CLICKED) selectInvincibility();
         else if (id == kNoclip && notification == BN_CLICKED) selectNoclip();
         else if (id == kUnlock && notification == BN_CLICKED) unlockDarkness();
@@ -310,10 +315,10 @@ LRESULT DeveloperToolsWindow::message(UINT message, WPARAM key, LPARAM detail) {
         const bool restoreFocus = foreground == closed || foreground == owner_;
         KillTimer(closed, kRefreshTimer);
         SetWindowLongPtrW(closed, GWLP_USERDATA, 0);
-        window_ = mission_ = load_ = speed_ = invincible_ = noclip_ = unlock_ = maxDarkness_ =
+        window_ = mission_ = load_ = speed_ = speedLabel_ = invincible_ = noclip_ = unlock_ = maxDarkness_ =
                   resolutionShortcut_ = defaults_ = status_ = nullptr;
         displayedStatus_.clear();
-        speedDropDownOpen_ = false;
+        speedDragging_ = false;
         releaseInputGate();
         if (restoreFocus && IsWindow(owner_)) SetFocus(owner_);
         std::puts("[DeveloperTools] Panel closed; click the game to capture the mouse.");
@@ -410,9 +415,8 @@ bool DeveloperToolsWindow::handleTestCommand(std::string_view command) {
     } else if (action == "speed") {
         char* end = nullptr;
         const float multiplier = std::strtof(value.c_str(), &end);
-        const auto found = std::find(kSpeeds.begin(), kSpeeds.end(), multiplier);
-        if (end == value.c_str() || *end || !std::isfinite(multiplier) || found == kSpeeds.end()) return false;
-        selected = size_t(found - kSpeeds.begin());
+        if (end == value.c_str() || *end || !std::isfinite(multiplier) || multiplier < .25f || multiplier > 4.f) return false;
+        selected = size_t(speedPosition(multiplier));
     } else if (action == "invincible" || action == "noclip" || action == "resolution") {
         if (value != "on" && value != "off") return false;
     } else if (action == "darkness") {
@@ -427,9 +431,8 @@ bool DeveloperToolsWindow::handleTestCommand(std::string_view command) {
             SendMessageW(mission_, CB_SETCURSEL, selected, 0);
             SendMessageW(window_, WM_COMMAND, MAKEWPARAM(kLoad, BN_CLICKED), LPARAM(load_));
         } else if (action == "speed" && IsWindowEnabled(speed_)) {
-            SendMessageW(speed_, CB_SHOWDROPDOWN, FALSE, 0);
-            SendMessageW(speed_, CB_SETCURSEL, selected, 0);
-            SendMessageW(window_, WM_COMMAND, MAKEWPARAM(kSpeed, CBN_SELCHANGE), LPARAM(speed_));
+            SendMessageW(speed_, TBM_SETPOS, TRUE, selected);
+            SendMessageW(window_, WM_HSCROLL, MAKEWPARAM(TB_THUMBPOSITION, selected), LPARAM(speed_));
         } else if (action == "invincible" && IsWindowEnabled(invincible_)) {
             SendMessageW(invincible_, BM_SETCHECK, value == "on" ? BST_CHECKED : BST_UNCHECKED, 0);
             SendMessageW(window_, WM_COMMAND, MAKEWPARAM(kInvincible, BN_CLICKED), LPARAM(invincible_));

@@ -50,7 +50,7 @@ KeyboardBindings loadKeyboardBindings(const std::filesystem::path& path) noexcep
             for (const auto [action, key] : mouseDefaults) {
                 bool assigned = false;
                 for (size_t i = 0; i < loaded.keys.size(); ++i)
-                    if (!isDialogueBindingAction(KeyboardAction(i)))
+                    if (keyboardBindingContext(KeyboardAction(i)) == 0)
                         for (const auto existing : loaded.keys[i]) assigned = assigned || existing == key;
                 if (assigned) continue;
                 auto& slots = loaded.keys[size_t(action)];
@@ -68,7 +68,7 @@ KeyboardBindings loadKeyboardBindings(const std::filesystem::path& path) noexcep
             for (const auto [action, key] : wheelDefaults) {
                 bool assigned = false;
                 for (size_t i = 0; i < loaded.keys.size(); ++i)
-                    if (!isDialogueBindingAction(KeyboardAction(i)))
+                    if (keyboardBindingContext(KeyboardAction(i)) == 0)
                         for (const auto existing : loaded.keys[i]) assigned = assigned || existing == key;
                 if (assigned) continue;
                 auto& slots = loaded.keys[size_t(action)];
