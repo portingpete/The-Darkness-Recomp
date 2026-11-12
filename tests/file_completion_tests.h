@@ -83,7 +83,7 @@ static void testFileEventTyping(PPCContext& ctx, uint32_t file, uint32_t fixture
     const uint32_t pattern = fixture + 160, patternBytes = fixture + 512;
     const std::string folder = "file-event-typing-" + std::to_string(GetCurrentProcessId()) + "-" +
         std::to_string(GetTickCount64());
-    const auto root = memory->gameDirectory().parent_path() / "build_native/run/cache" / folder;
+    const auto root = memory->userDataPaths().guestCache / folder;
     uint32_t event = 0, dupEvent = 0, semaphore = 0, writeFile = 0, dirFile = 0;
     auto* original = PPC_LOOKUP_FUNC(base, PPC_CODE_BASE);
     PPC_LOOKUP_FUNC(base, PPC_CODE_BASE) = fileCompletionProbe;

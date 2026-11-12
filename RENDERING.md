@@ -742,10 +742,11 @@ CPU-bound resource jobs at Windows priority 9 took every core, and Windows' stri
 priority scheduling left the engine and application system threads (priority 8)
 ready but unscheduled until the jobs finished. The engine waits on the application
 system thread's per-frame work and on resource dependencies, so its frame took
-as long as the jobs did. In a 2427 ms stall (`claude-stall-w3-2-21837`), the four
-pool workers used 5.9 s of CPU while the engine was ready in 124 of 125 samples
-and ran 7.7 ms; the application system thread was ready in 124 of 125 and ran
-19 ms (`DARKRECOMP_STALL_WATCH`, below). `hostThreadPriority`
+as long as the jobs did. In a 2427 ms stall (`claude-stall-w3-2-21837`), the
+engine and application system thread were each ready in 124 of 125 samples.
+That earlier watcher also estimated CPU time from cycle counts; those estimates
+are not portable and should not be treated as measured milliseconds.
+`hostThreadPriority`
 (`runtime/native/thread_topology.h`) now caps resource-pool workers at the
 engine's priority. The guest-visible priority,
 affinity and guest processor identity are unchanged, and other workers keep the
@@ -778,14 +779,19 @@ that long, a time-critical watcher samples every 10 ms until the next engine
 frame. It records every process thread's
 Windows state and the reason it last stopped running (`WrDispatchInt` or
 `WrPreempted`: a higher-priority thread took the processor; `UserRequest`: an
-ordinary wait), the CPU cycles of registered threads, and the guest call stack
+ordinary wait), per-thread CPU time, and the guest call stack
 of the engine thread and of each worker started through `821FBB00`. The stack is
 walked through the back chain at `r1`, with the saved LR at back chain - 8. It
-then prints one `[StallWatch]` report per stall. Guest memory is read only after
-`VirtualQuery` shows a committed page without `PAGE_GUARD` or `PAGE_NOACCESS`:
-an unchecked read faulted on a broken chain, because clang-cl's `__try` does
-not cover loads inlined into the guarded block, and could consume a title guard
-page. Workers are registered from a `821FBB00` override, so the AOT inputs under
+then prints one `[StallWatch]` report per stall. CPU time uses `GetThreadTimes`
+in 100 ns OS accounting units, which may have coarser actual resolution, and
+covers the reported sample window beginning after the threshold, not the entire
+frame. Thread identity includes creation time; when the tracking limit is
+reached the report includes the peak omitted threads and omitted thread-samples.
+Guest memory is read with `ReadProcessMemory` only after `VirtualQuery` shows a
+committed, accessible page. A Windows probe confirmed that a read of an already
+guarded page fails without clearing its guard; concurrent protection changes and
+Proton behavior have not been established. Workers are registered from a
+`821FBB00` override, so the AOT inputs under
 `runtime/native` are untouched. With the variable unset, each hook is one
 relaxed atomic load.
 

@@ -7,7 +7,7 @@ static void testDirectoryRetry(PPCContext& ctx) {
     check(scratch!=0,"Directory retry fixture allocation failed");
     const uint32_t ios=scratch+64,out=scratch+1024,pattern=scratch+128;
     const std::string folder="directory-retry-"+std::to_string(GetCurrentProcessId())+"-"+std::to_string(GetTickCount64());
-    const auto root=memory->gameDirectory().parent_path()/"build_native/run/cache"/folder;
+    const auto root=memory->userDataPaths().guestCache/folder;
     check(std::filesystem::create_directories(root),"Directory retry fixture already exists");
     const std::wstring names[]{L"entry-a",L"entry-b-with-a-long-filename.dat",L"entry-c-\u00e9-\u20ac.dat"};
     for(const auto& name:names) {

@@ -9,6 +9,8 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <exception>
 #include <string>
 #include <vector>
 
@@ -42,7 +44,8 @@ std::array<Slot, slotLimit> slots;
 thread_local Slot* ownSlot = nullptr;
 
 std::atomic<bool> enabledFlag{false};
-std::atomic<uint64_t> lastFrame{0}, frames{0};
+std::atomic<uint64_t> lastFrame{0}, frames{0}; // frames is an even/odd publication sequence
+std::atomic_flag frameWriter = ATOMIC_FLAG_INIT;
 uint8_t* guestBase = nullptr;
 uint64_t thresholdTicks = 0, qpcFrequency = 0;
 HANDLE stopEvent = nullptr;
@@ -53,60 +56,89 @@ HANDLE watcherThread = nullptr;
 uint64_t qpc() noexcept { LARGE_INTEGER v{}; QueryPerformanceCounter(&v); return uint64_t(v.QuadPart); }
 double ms(uint64_t ticks) noexcept { return double(ticks) * 1000.0 / double(qpcFrequency); }
 
-// clang-cl's __try catches faults raised in called functions, not in loads it
-// has inlined into the guarded body; keep the load out of line.
-__declspec(noinline) uint32_t loadWord(const volatile uint32_t* address) noexcept { return *address; }
-bool guardedLoad(const uint8_t* host, uint32_t& value) noexcept {
-    __try {
-        value = _byteswap_ulong(loadWord(reinterpret_cast<const volatile uint32_t*>(host)));
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
-}
-// Check current protection first: reading a PAGE_GUARD page would consume the
-// title's guard, and uncommitted guest pages are common past a broken chain.
-struct ReadableRange { const uint8_t* begin = nullptr; const uint8_t* end = nullptr; };
-bool read32(const uint8_t* base, uint32_t address, uint32_t& value, ReadableRange* cache = nullptr) noexcept {
+// ReadProcessMemory rejects inaccessible pages without a direct user-mode load.
+// A self-process guard-page probe preserves the guard on Windows; concurrent
+// protection changes and other Windows implementations still need validation.
+bool read32(const uint8_t* base, uint32_t address, uint32_t& value) noexcept {
     if (!base || (address & 3) || address > 0xFFFFFFF0u) return false;
     const uint8_t* host = base + address;
-    if (!cache || host < cache->begin || host + 4 > cache->end) {
-        MEMORY_BASIC_INFORMATION info{};
-        if (!VirtualQuery(host, &info, sizeof(info)) || info.State != MEM_COMMIT ||
-            (info.Protect & (PAGE_GUARD | PAGE_NOACCESS)) || !(info.Protect & 0xEE)) return false;
-        const auto* begin = static_cast<const uint8_t*>(info.BaseAddress);
-        if (host + 4 > begin + info.RegionSize) return false;
-        if (cache) *cache = {begin, begin + info.RegionSize};
-    }
-    return guardedLoad(host, value);
+    MEMORY_BASIC_INFORMATION info{};
+    if (!VirtualQuery(host, &info, sizeof(info)) || info.State != MEM_COMMIT ||
+        (info.Protect & (PAGE_GUARD | PAGE_NOACCESS)) || !(info.Protect & 0xEE)) return false;
+    uint32_t word = 0;
+    SIZE_T read = 0;
+    if (!ReadProcessMemory(GetCurrentProcess(), host, &word, sizeof(word), &read) || read != sizeof(word)) return false;
+    value = _byteswap_ulong(word);
+    return true;
 }
 
 struct Stack { uint32_t lastFunction = 0, lr = 0, sp = 0; unsigned depth = 0; std::array<uint32_t, stackDepth> frames{}; };
 Stack captureStack(const PPCContext* ctx) noexcept {
     Stack s;
     if (!ctx) return s;
-    // Racy by design for a running thread; for a blocked thread these are the
-    // values at its host call. Only guarded guest-memory reads follow.
-    const auto* volatileCtx = reinterpret_cast<const volatile PPCContext*>(ctx);
-    s.lastFunction = volatileCtx->lastFunction;
-    s.lr = uint32_t(volatileCtx->lr);
-    s.sp = volatileCtx->r1.u32;
+    // The slot lock keeps ctx alive. A self-process copy avoids direct C++
+    // loads racing the guest writer, but is not an atomic point-in-time view.
+    PPCContext snapshot{};
+    SIZE_T bytes = 0;
+    if (!ReadProcessMemory(GetCurrentProcess(), ctx, &snapshot, sizeof(snapshot), &bytes) || bytes != sizeof(snapshot)) return s;
+    s.lastFunction = snapshot.lastFunction;
+    s.lr = uint32_t(snapshot.lr);
+    s.sp = snapshot.r1.u32;
     s.depth = walkGuestStack(guestBase, s.sp, s.frames.data(), unsigned(s.frames.size()));
     return s;
 }
 
 struct Track {
     uint32_t tid = 0;
-    int slot = -1;
-    bool seen = false;
+    uint64_t creationTime = 0;
+    bool registered = false, hasContext = false;
+    const char* role = nullptr;
+    uint32_t entry = 0, argument = 0;
+    bool seen = false, cpuSeen = false;
     std::array<uint16_t, 8> states{};
     std::array<uint16_t, waitReasons> waiting{}, ready{};
-    uint64_t time0 = 0, time1 = 0, cycles0 = 0, cycles1 = 0;
+    uint64_t time0 = 0, time1 = 0;
     ULONG switches0 = 0, switches1 = 0;
     LONG priority = 0, basePriority = 0;
     void* start = nullptr;
     Stack first, last;
 };
+
+uint64_t fileTimeTicks(const FILETIME& value) noexcept {
+    return (uint64_t(value.dwHighDateTime) << 32) | value.dwLowDateTime;
+}
+
+void recordCpu(Track& track, uint64_t time) noexcept {
+    // A reset is not a valid unsigned delta, even on unusual host runtimes.
+    if (!track.cpuSeen || time < track.time1) {
+        track.cpuSeen = true;
+        track.time0 = time;
+    }
+    track.time1 = time;
+}
+
+void snapshotMetadata(Track& track, const Slot& slot) noexcept {
+    track.registered = true;
+    track.hasContext = slot.ctx != nullptr;
+    track.role = slot.role;
+    track.entry = slot.entry;
+    track.argument = slot.argument;
+}
+
+struct FrameSnapshot { uint64_t sequence, time; };
+bool thresholdReached(uint64_t now, uint64_t frame, uint64_t threshold) noexcept {
+    return frame && now >= frame && now - frame >= threshold;
+}
+bool frameSnapshot(FrameSnapshot& snapshot) noexcept {
+    const uint64_t before = frames.load(std::memory_order_acquire);
+    // The watcher runs at higher priority than the producer. Never spin while
+    // the producer is publishing; let it run and retry on the next poll.
+    if (before & 1) return false;
+    const uint64_t time = lastFrame.load(std::memory_order_relaxed);
+    if (before != frames.load(std::memory_order_acquire)) return false;
+    snapshot = {before, time};
+    return true;
+}
 
 // KWAIT_REASON names. For a Ready thread the field keeps the reason it last
 // left the processor (WrDispatchInt / WrPreempted: a higher-priority thread
@@ -131,30 +163,49 @@ public:
         buffer.resize(4u << 20);
         tracks.reserve(trackLimit);
     }
+    static bool testTrackAccounting() {
+        Watcher watcher;
+        Track* first = watcher.track(7, 100);
+        if (!first) return false;
+        recordCpu(*first, 200);
+        recordCpu(*first, 250);
+        Track* reused = watcher.track(7, 101);
+        if (!reused || reused == first || reused->cpuSeen || first->time1 - first->time0 != 50) return false;
+        recordCpu(*reused, 5);
+        recordCpu(*reused, 3);
+        if (reused->time1 - reused->time0 != 0) return false;
+        for (unsigned i = 2; i < trackLimit; ++i)
+            if (!watcher.track(i + 100, i)) return false;
+        watcher.tracks.back().entry = 0x12345678;
+        watcher.noteOmitted(3);
+        watcher.noteOmitted(1);
+        return !watcher.track(99999, 99999) && watcher.tracks.back().entry == 0x12345678 &&
+            watcher.findTrack(7, 100) == first && watcher.findTrack(7, 101) == reused &&
+            watcher.peakOmittedThreads == 3 && watcher.omittedThreadSamples == 4;
+    }
     void run() {
         SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
         HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
-        tscStartQpc = qpc(); tscStart = __rdtsc();
         bool stalled = false;
-        uint64_t stallFrames = 0, stallBegin = 0, nextSample = 0, serial = 0;
+        uint64_t stallFrames = 0, stallBegin = 0, sampleBegin = 0, nextSample = 0, serial = 0;
         unsigned samples = 0;
         for (;;) {
             if (!sleepFor(timer, stalled ? 4 : 5)) break;
+            FrameSnapshot frame{};
+            if (!frameSnapshot(frame)) continue;
             const uint64_t now = qpc();
-            const uint64_t frameCount = frames.load(std::memory_order_acquire);
-            const uint64_t last = lastFrame.load(std::memory_order_acquire);
             if (!stalled) {
-                if (!last || now - last < thresholdTicks) continue;
-                stalled = true; stallFrames = frameCount; stallBegin = last; samples = 0;
-                tracks.clear();
+                if (!thresholdReached(now, frame.time, thresholdTicks)) continue;
+                stalled = true; stallFrames = frame.sequence; stallBegin = frame.time; sampleBegin = now; samples = 0;
+                tracks.clear(); omittedThreadSamples = 0; peakOmittedThreads = 0;
                 sample(true); ++samples;
                 nextSample = now + qpcFrequency / 100;
                 continue;
             }
-            if (frameCount != stallFrames) {
-                const uint64_t end = lastFrame.load(std::memory_order_acquire);
+            if (frame.sequence != stallFrames) {
                 sample(false); ++samples;
-                report(++serial, end - stallBegin, now - stallBegin, samples);
+                report(++serial, frame.time >= stallBegin ? frame.time - stallBegin : 0,
+                       qpc() - sampleBegin, samples);
                 stalled = false;
                 continue;
             }
@@ -169,7 +220,8 @@ private:
     QuerySystemInformation query;
     std::vector<uint8_t> buffer;
     std::vector<Track> tracks;
-    uint64_t tscStartQpc = 0, tscStart = 0;
+    uint64_t omittedThreadSamples = 0;
+    ULONG peakOmittedThreads = 0;
 
     static bool sleepFor(HANDLE timer, unsigned milliseconds) noexcept {
         if (timer) {
@@ -181,12 +233,21 @@ private:
         }
         return WaitForSingleObject(stopEvent, milliseconds) != WAIT_OBJECT_0;
     }
-    Track& track(uint32_t tid) {
-        for (auto& t : tracks) if (t.tid == tid) return t;
-        if (tracks.size() == trackLimit) return tracks.back();
+    Track* findTrack(uint32_t tid, uint64_t creationTime) noexcept {
+        for (auto& t : tracks) if (t.tid == tid && t.creationTime == creationTime) return &t;
+        return nullptr;
+    }
+    void noteOmitted(ULONG count) noexcept {
+        omittedThreadSamples += count;
+        peakOmittedThreads = (std::max)(peakOmittedThreads, count);
+    }
+    Track* track(uint32_t tid, uint64_t creationTime) {
+        if (auto* existing = findTrack(tid, creationTime)) return existing;
+        if (tracks.size() == trackLimit) return nullptr;
         tracks.push_back({});
         tracks.back().tid = tid;
-        return tracks.back();
+        tracks.back().creationTime = creationTime;
+        return &tracks.back();
     }
     const SystemThread* processThreads(ULONG& count) {
         if (!query) return nullptr;
@@ -212,15 +273,26 @@ private:
     }
     void sample(bool first) {
         ULONG count = 0;
+        ULONG omitted = 0;
         const SystemThread* threads = processThreads(count);
         for (ULONG i = 0; threads && i < count; ++i) {
             const auto& info = threads[i];
             const auto tid = uint32_t(uintptr_t(info.threadId));
             if (tid == GetCurrentThreadId()) continue;
-            Track& t = track(tid);
-            const uint64_t time = uint64_t(info.kernelTime.QuadPart + info.userTime.QuadPart);
-            if (!t.seen) { t.seen = true; t.time0 = time; t.switches0 = info.contextSwitches; t.start = info.startAddress; }
-            t.time1 = time; t.switches1 = info.contextSwitches;
+            Track* found = track(tid, uint64_t(info.createTime.QuadPart));
+            if (!found) { ++omitted; continue; }
+            Track& t = *found;
+            if (!t.seen) { t.seen = true; t.switches0 = info.contextSwitches; t.start = info.startAddress; }
+            t.switches1 = info.contextSwitches;
+            HANDLE thread = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, tid);
+            if (thread) {
+                FILETIME created{}, exited{}, kernel{}, user{};
+                if (GetThreadTimes(thread, &created, &exited, &kernel, &user)) {
+                    if (fileTimeTicks(created) == t.creationTime)
+                        recordCpu(t, fileTimeTicks(kernel) + fileTimeTicks(user));
+                }
+                CloseHandle(thread);
+            }
             t.priority = info.priority; t.basePriority = info.basePriority;
             const unsigned state = info.state < 8 ? info.state : 0;
             ++t.states[state];
@@ -228,6 +300,7 @@ private:
             if (state == 5) ++t.waiting[reason];
             else if (state == 1 || state == 7 || state == 3) ++t.ready[reason];
         }
+        noteOmitted(omitted);
         for (unsigned n = 0; n < slotLimit; ++n) {
             auto& slot = slots[n];
             int expected = 1;
@@ -241,12 +314,18 @@ private:
                 slot.state.store(0, std::memory_order_release);
                 continue;
             }
-            Track& t = track(slot.tid.load(std::memory_order_relaxed));
-            t.slot = int(n);
-            ULONG64 cycles = 0;
-            if (slot.handle) QueryThreadCycleTime(slot.handle, &cycles);
-            if (first || !t.cycles0) t.cycles0 = cycles;
-            t.cycles1 = cycles;
+            FILETIME created{}, exited{}, kernel{}, user{};
+            if (!GetThreadTimes(slot.handle, &created, &exited, &kernel, &user)) {
+                slot.state.store(1, std::memory_order_release);
+                continue;
+            }
+            Track* found = findTrack(slot.tid.load(std::memory_order_relaxed), fileTimeTicks(created));
+            if (!found) {
+                slot.state.store(1, std::memory_order_release);
+                continue;
+            }
+            Track& t = *found;
+            snapshotMetadata(t, slot);
             const Stack stack = captureStack(slot.ctx);
             if (first || !t.first.sp) t.first = stack;
             t.last = stack;
@@ -269,34 +348,29 @@ private:
         }
         return text.empty() ? "-" : text;
     }
-    void report(uint64_t serial, uint64_t engineTicks, uint64_t observedTicks, unsigned samples) {
-        const double tscPerQpc = double(__rdtsc() - tscStart) / double((std::max)(uint64_t(1), qpc() - tscStartQpc));
-        auto cycleMs = [&](uint64_t cycles) { return tscPerQpc > 0 ? ms(uint64_t(double(cycles) / tscPerQpc)) : 0.0; };
+    void report(uint64_t serial, uint64_t engineTicks, uint64_t sampleTicks, unsigned samples) {
         std::sort(tracks.begin(), tracks.end(), [&](const Track& a, const Track& b) {
-            const double ca = a.slot >= 0 ? cycleMs(a.cycles1 - a.cycles0) : (a.time1 - a.time0) / 1e4;
-            const double cb = b.slot >= 0 ? cycleMs(b.cycles1 - b.cycles0) : (b.time1 - b.time0) / 1e4;
-            return ca > cb;
+            return a.time1 - a.time0 > b.time1 - b.time0;
         });
         double totalMs = 0;
         for (const auto& t : tracks) totalMs += double(t.time1 - t.time0) / 1e4;
         std::string out;
         char line[1024];
-        std::snprintf(line, sizeof(line), "[StallWatch] stall=%llu engine_frame_ms=%.1f observed_ms=%.1f threshold_ms=%.1f samples=%u process_threads=%zu process_cpu_ms_ticks=%.1f\n",
-            static_cast<unsigned long long>(serial), ms(engineTicks), ms(observedTicks), ms(thresholdTicks), samples, tracks.size(), totalMs);
+        std::snprintf(line, sizeof(line), "[StallWatch] stall=%llu engine_frame_ms=%.1f sample_window_ms=%.1f threshold_ms=%.1f samples=%u tracked_thread_lifetimes=%zu peak_omitted_threads=%lu omitted_thread_samples=%llu sample_process_cpu_ms=%.1f\n",
+            static_cast<unsigned long long>(serial), ms(engineTicks), ms(sampleTicks), ms(thresholdTicks), samples, tracks.size(),
+            peakOmittedThreads, static_cast<unsigned long long>(omittedThreadSamples), totalMs);
         out += line;
         for (const auto& t : tracks) {
             const double tickMs = double(t.time1 - t.time0) / 1e4;
-            const double cpuMs = t.slot >= 0 ? cycleMs(t.cycles1 - t.cycles0) : tickMs;
-            const bool registered = t.slot >= 0;
+            const bool registered = t.registered;
             if (!registered && tickMs < 15.0) continue;
-            const Slot* slot = registered ? &slots[size_t(t.slot)] : nullptr;
-            std::snprintf(line, sizeof(line), "[StallWatch] stall=%llu tid=%u role=%s callback=%08X arg=%08X prio=%ld/%ld cpu_ms=%.1f switches=%lu run=%u ready=%u wait=%u other=%u ready_why=%s wait_why=%s start=%p\n",
-                static_cast<unsigned long long>(serial), t.tid, slot && slot->role ? slot->role : "host",
-                slot ? slot->entry : 0, slot ? slot->argument : 0, t.priority, t.basePriority, cpuMs,
+            std::snprintf(line, sizeof(line), "[StallWatch] stall=%llu tid=%u role=%s callback=%08X arg=%08X prio=%ld/%ld sample_cpu_ms=%.1f cpu_available=%u switches=%lu run=%u ready=%u wait=%u other=%u ready_why=%s wait_why=%s start=%p\n",
+                static_cast<unsigned long long>(serial), t.tid, t.role ? t.role : "host",
+                t.entry, t.argument, t.priority, t.basePriority, tickMs, unsigned(t.cpuSeen),
                 t.switches1 - t.switches0, t.states[2], t.states[1] + t.states[7] + t.states[3], t.states[5],
                 t.states[0] + t.states[4] + t.states[6], histogram(t.ready).c_str(), histogram(t.waiting).c_str(), t.start);
             out += line;
-            if (registered && slot->ctx) {
+            if (registered && t.hasContext) {
                 out += "[StallWatch]   first " + stackText(t.first) + "\n";
                 if (t.last.lastFunction != t.first.lastFunction || t.last.frames != t.first.frames)
                     out += "[StallWatch]   last  " + stackText(t.last) + "\n";
@@ -312,11 +386,10 @@ bool readGuestWord(const uint8_t* base, uint32_t address, uint32_t& value) noexc
 
 unsigned walkGuestStack(const uint8_t* base, uint32_t sp, uint32_t* out, unsigned capacity) noexcept {
     unsigned depth = 0;
-    ReadableRange cache;
     while (depth < capacity) {
         uint32_t back = 0, lr = 0;
-        if (!read32(base, sp, back, &cache) || back <= sp || back - sp > 0x100000u || back < 8) break;
-        if (!read32(base, back - 8, lr, &cache)) break;
+        if (!read32(base, sp, back) || back <= sp || back - sp > 0x100000u || back < 8) break;
+        if (!read32(base, back - 8, lr)) break;
         out[depth++] = lr;
         sp = back;
     }
@@ -341,6 +414,8 @@ void initializeFromEnvironment(uint8_t* base) noexcept {
     if (!qpcFrequency) return;
     thresholdTicks = uint64_t(threshold * double(qpcFrequency) / 1000.0);
     guestBase = base;
+    lastFrame.store(0, std::memory_order_relaxed);
+    frames.store(0, std::memory_order_relaxed);
     stopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     if (!stopEvent) return;
     watcherThread = CreateThread(nullptr, 0, watcherMain, nullptr, 0, nullptr);
@@ -349,18 +424,27 @@ void initializeFromEnvironment(uint8_t* base) noexcept {
     enabledFlag.store(true, std::memory_order_release);
 }
 
-void registerThread(const PPCContext* ctx, const char* role, uint32_t entry, uint32_t argument) noexcept {
-    if (!enabled() || ownSlot) return;
+static bool registerWithHandle(HANDLE handle, const PPCContext* ctx, const char* role, uint32_t entry, uint32_t argument) noexcept {
+    if (!handle) return false;
+    if (ownSlot) { CloseHandle(handle); return false; }
     for (auto& slot : slots) {
         int expected = 0;
         if (!slot.state.compare_exchange_strong(expected, 3, std::memory_order_acquire)) continue;
         slot.tid.store(GetCurrentThreadId(), std::memory_order_relaxed);
         slot.ctx = ctx; slot.role = role; slot.entry = entry; slot.argument = argument;
-        slot.handle = OpenThread(THREAD_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, GetCurrentThreadId());
+        slot.handle = handle;
         slot.state.store(1, std::memory_order_release);
         ownSlot = &slot;
-        return;
+        return true;
     }
+    CloseHandle(handle);
+    return false;
+}
+
+void registerThread(const PPCContext* ctx, const char* role, uint32_t entry, uint32_t argument) noexcept {
+    if (!enabled() || ownSlot) return;
+    registerWithHandle(OpenThread(THREAD_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, GetCurrentThreadId()),
+                       ctx, role, entry, argument);
 }
 
 void unregisterThread() noexcept {
@@ -380,17 +464,61 @@ void unregisterThread() noexcept {
 
 void engineFrame() noexcept {
     if (!enabled()) return;
-    lastFrame.store(qpc(), std::memory_order_release);
+    // Render hooks can be reached from multiple guest call paths. A competing
+    // writer drops its publication instead of spinning at guest priority.
+    if (frameWriter.test_and_set(std::memory_order_acquire)) return;
     frames.fetch_add(1, std::memory_order_acq_rel);
+    lastFrame.store(qpc(), std::memory_order_relaxed);
+    frames.fetch_add(1, std::memory_order_release);
+    frameWriter.clear(std::memory_order_release);
 }
 
 void shutdown() noexcept {
     if (!watcherThread) return;
     enabledFlag.store(false, std::memory_order_release);
     SetEvent(stopEvent);
-    WaitForSingleObject(watcherThread, 2000);
+    if (WaitForSingleObject(watcherThread, INFINITE) != WAIT_OBJECT_0) std::terminate();
     CloseHandle(watcherThread);
     watcherThread = nullptr;
+    CloseHandle(stopEvent);
+    stopEvent = nullptr;
+    unregisterThread();
+}
+
+bool testSlotLifecycle(const PPCContext* ctx) noexcept {
+    if (enabled() || ownSlot || registerWithHandle(nullptr, ctx, "failed", 1, 2) || ownSlot) return false;
+    unregisterThread();
+    auto openSelf = [] { return OpenThread(THREAD_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, GetCurrentThreadId()); };
+    if (!registerWithHandle(openSelf(), ctx, "first", 11, 22)) return false;
+    Slot* first = ownSlot;
+    int expected = 1;
+    if (!first->state.compare_exchange_strong(expected, 2, std::memory_order_acquire)) return false;
+    Track snapshot;
+    snapshotMetadata(snapshot, *first);
+    first->state.store(1, std::memory_order_release);
+    unregisterThread();
+    if (!registerWithHandle(openSelf(), nullptr, "second", 33, 44)) return false;
+    const bool ok = ownSlot == first && snapshot.registered && snapshot.hasContext &&
+        snapshot.role && std::strcmp(snapshot.role, "first") == 0 && snapshot.entry == 11 && snapshot.argument == 22;
+    unregisterThread();
+    return ok;
+}
+bool testFrameThreshold() noexcept {
+    if (enabled()) return false;
+    FrameSnapshot snapshot{};
+    lastFrame.store(123, std::memory_order_relaxed);
+    frames.store(1, std::memory_order_relaxed);
+    const bool rejectsInProgress = !frameSnapshot(snapshot);
+    frames.store(2, std::memory_order_release);
+    const bool acceptsPublished = frameSnapshot(snapshot) && snapshot.sequence == 2 && snapshot.time == 123;
+    frames.store(0, std::memory_order_relaxed);
+    lastFrame.store(0, std::memory_order_relaxed);
+    return rejectsInProgress && acceptsPublished && !thresholdReached(99, 100, 10) &&
+        !thresholdReached(109, 100, 10) && thresholdReached(110, 100, 10) &&
+        !thresholdReached(100, 0, 10);
+}
+bool testTrackAccounting() noexcept {
+    try { return Watcher::testTrackAccounting(); } catch (...) { return false; }
 }
 }
 

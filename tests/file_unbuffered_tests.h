@@ -10,7 +10,7 @@ static void testUnbufferedRequestValidation(PPCContext& ctx) {
     const uint32_t data = fixture + 4096;
     const std::string folder = "file-unbuffered-" + std::to_string(GetCurrentProcessId()) + "-" +
         std::to_string(GetTickCount64());
-    const auto root = memory->gameDirectory().parent_path() / "build_native/run/cache" / folder;
+    const auto root = memory->userDataPaths().guestCache / folder;
     const auto path = root / "writable.bin";
     const auto oraclePath = root / "native.bin";
     uint32_t file = 0, event = 0;

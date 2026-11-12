@@ -8,9 +8,9 @@ struct PPCContext;
 // long, a watcher thread samples every process thread's Windows scheduling
 // state (running / ready / waiting and why) and CPU time, plus the guest call
 // stack of each registered guest thread, until the next engine frame. It then
-// prints one [StallWatch] report. Observation only: no guest state, locks,
-// scheduling or pacing change, and with the variable unset every hook is a
-// relaxed atomic load.
+// prints one [StallWatch] report. Sampling runs at high host priority and can
+// perturb scheduling; with the variable unset each hook is a relaxed atomic
+// load.
 namespace DarkRecomp::Native::StallWatch {
 bool enabled() noexcept;
 void initializeFromEnvironment(uint8_t* base) noexcept;
@@ -25,6 +25,11 @@ void shutdown() noexcept;
 // [backChain - 8] (the PPC prologue's stw r12,-8(r1) before stwu). Returns the
 // number of return addresses written. Exposed for tests.
 unsigned walkGuestStack(const uint8_t* base, uint32_t sp, uint32_t* out, unsigned capacity) noexcept;
-// Exception-guarded big-endian guest word read.
+// Big-endian guest word read using the process memory API.
 bool readGuestWord(const uint8_t* base, uint32_t address, uint32_t& value) noexcept;
+// Exercises the same registration and metadata snapshot paths with a failed
+// handle and a recycled slot; only call while the watcher is disabled.
+bool testSlotLifecycle(const PPCContext* ctx) noexcept;
+bool testFrameThreshold() noexcept;
+bool testTrackAccounting() noexcept;
 }

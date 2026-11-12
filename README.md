@@ -315,7 +315,7 @@ slower engine frames in busy views). Build with
 For engine freezes that last longer than a frame, `DARKRECOMP_STALL_WATCH=80`
 adds a `[StallWatch]` report per stall over 80 ms. Each report gives every
 thread's Windows scheduling state (running, ready or waiting, and why), its CPU
-time during the stall and the guest call stacks (see `RENDERING.md`).
+time within the sampled window and the guest call stacks (see `RENDERING.md`).
 
 </details>
 
