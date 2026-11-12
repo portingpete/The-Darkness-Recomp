@@ -48,14 +48,6 @@ non_volatile_context_functions = [0x827CC6B8, 0x827CC910, 0x827CCBE8, 0x827FF8C8
 non_argument_local_ranges = [[0x820C0000, 0x82890000]]
 non_argument_context_functions = [0x824CD220, 0x824CD2A4]
 
-# CWObject_Light's shared color evaluator: after its periodic intensity
-# waveform, before intensity scaling. Keep original on/off checks and color
-# transitions; change only the evaluated multiplier, never serialized state.
-[[midasm_hook]]
-name = "ApplyLightFlickerReductionMidAsmHook"
-address = 0x82300AA0
-registers = ["f1"]
-
 # Stack probe: reads the requested frame size in r12 from every caller.
 [[register_sync]]
 target = 0x829B8B64
