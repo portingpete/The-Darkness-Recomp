@@ -724,13 +724,76 @@ one executable, five runs per mode in alternating order: process CPU 1.50 to
 1.26 cores, p99 frame interval 27.4 to 18.0 ms, frames over 33 ms 18.6 to 6.4
 per run. Frames over 50 ms (2.8 per run) and the rare 100-770 ms engine stalls
 (one per five runs in each mode) did not change; those stalls occur while
-walking into new areas and need separate work. Uncapped on four cores, single
+walking into new areas and are explained below. Uncapped on four cores, single
 runs varied from 229 to 262 FPS in both modes. On all 32 logical processors
 the modes matched: 458.8 and 462.0 FPS uncapped, 1.51 and 1.52 cores at
 60 FPS. Two alternatives were rejected: sleeping 0.5 ms between passes cut
 CPU further but added 100-780 ms stalls at 60 FPS in every run and cost about
 10% of uncapped four-core FPS; keeping a fast core out of the guest affinity
 map on small hosts showed no improvement.
+
+The 100 ms to 2.4 s engine stalls when walking into new areas were CPU
+starvation, not waiting on a slow resource. The title raises its four
+resource-pool workers (callback `821F11A0`) to guest priority +1. On the console
+that orders each worker only against other threads on its own hardware thread.
+The port mapped +1 to `THREAD_PRIORITY_ABOVE_NORMAL` and lets these workers use
+every allowed core (`KeSetAffinityThread` above). With four host cores, four
+CPU-bound resource jobs at Windows priority 9 took every core, and Windows' strict
+priority scheduling left the engine and application system threads (priority 8)
+ready but unscheduled until the jobs finished. The engine waits on the application
+system thread's per-frame work and on resource dependencies, so its frame took
+as long as the jobs did. In a 2427 ms stall (`claude-stall-w3-2-21837`), the
+engine and application system thread were each ready in 124 of 125 samples.
+That earlier watcher also estimated CPU time from cycle counts; those estimates
+are not portable and should not be treated as measured milliseconds.
+`hostThreadPriority`
+(`runtime/native/thread_topology.h`) now caps resource-pool workers at the
+engine's priority. The guest-visible priority,
+affinity and guest processor identity are unchanged, and other workers keep the
+direct mapping. `DARK_POOL_PRIORITY=guest` restores the title's +1 for
+comparison, and the log reports each priority change as `[Scheduling]`.
+
+Measured with `chinatown-tour` at 60 FPS on four i9-14900K E-cores (`start
+/affinity F0000`), one executable, ten runs per mode in ABBA order
+(`build_native/run/claude-stall-ab1-*`). With the title's +1, 6 of 10 runs had
+frames over 100 ms (12 frames, worst 269 ms); with the cap, none of 10 did
+(worst 94 ms). Frames over 50 ms fell from 2.7 to 1.7 per run and the time spent
+in them from 0.31 to 0.11 s per run; p99 went from 18.6 to 17.9 ms and p99.9
+from 38.1 to 34.8 ms. FPS (59.7 and 59.8) and process CPU (1.29 and 1.28 cores)
+did not change. On all 32 logical processors the modes matched, two runs per
+mode: 1.53 and 1.52 cores with p99 17.1 ms at 60 FPS, and 455.7 and 455.8 FPS
+uncapped. On three E-cores (three runs per mode) the cap removed the long
+freezes. With the title's +1 every run had frames over 100 ms (worst 3.56 s,
+2.40 s per run in frames over 50 ms); with the cap the worst frame was 116 ms
+and 0.49 s per run was spent in frames over 50 ms. Frames over 50 ms still rose
+from 5.0 to 7.0 per run there, because four equal-priority pool jobs then share
+three cores with the engine. With the cap on four cores
+(`claude-stall-fixwatch-1092`, watched at 50 ms), the remaining 65-143 ms engine
+frames showed engine, application system and pool threads ready together at
+equal priority, at times while the process itself used little CPU, consistent
+with other processes on the same four cores.
+
+`DARKRECOMP_STALL_WATCH=<ms>` (`app/windows/stall_watch.cpp`) diagnoses engine
+stalls that last longer than a frame. When the engine has finished no frame for
+that long, a time-critical watcher samples every 10 ms until the next engine
+frame. It records every process thread's
+Windows state and the reason it last stopped running (`WrDispatchInt` or
+`WrPreempted`: a higher-priority thread took the processor; `UserRequest`: an
+ordinary wait), per-thread CPU time, and the guest call stack
+of the engine thread and of each worker started through `821FBB00`. The stack is
+walked through the back chain at `r1`, with the saved LR at back chain - 8. It
+then prints one `[StallWatch]` report per stall. CPU time uses `GetThreadTimes`
+in 100 ns OS accounting units, which may have coarser actual resolution, and
+covers the reported sample window beginning after the threshold, not the entire
+frame. Thread identity includes creation time; when the tracking limit is
+reached the report includes the peak omitted threads and omitted thread-samples.
+Guest memory is read with `ReadProcessMemory` only after `VirtualQuery` shows a
+committed, accessible page. A Windows probe confirmed that a read of an already
+guarded page fails without clearing its guard; concurrent protection changes and
+Proton behavior have not been established. Workers are registered from a
+`821FBB00` override, so the AOT inputs under
+`runtime/native` are untouched. With the variable unset, each hook is one
+relaxed atomic load.
 
 The native delay import retains the original signed 100 ns interval using a
 Windows [high-resolution waitable timer](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-createwaitabletimerexw).

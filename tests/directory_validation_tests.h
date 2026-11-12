@@ -14,7 +14,7 @@ static void testDirectoryValidation(PPCContext& ctx) {
     const uint32_t ios = scratch + 64, callback = scratch + 128, pattern = scratch + 160;
     const uint32_t data = scratch + 4096, guard = scratch + 8192;
     const std::string folder = "directory-validation-" + std::to_string(GetCurrentProcessId()) + "-" + std::to_string(GetTickCount64());
-    const auto root = memory->gameDirectory().parent_path() / "build_native/run/cache" / folder;
+    const auto root = memory->userDataPaths().guestCache / folder;
     check(std::filesystem::create_directories(root), "Directory validation fixture already exists");
     for (const auto* name : {"entry-a", "entry-b"}) {
         std::ofstream stream(root / name); stream << name;

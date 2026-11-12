@@ -1,6 +1,7 @@
 #include <intrin.h>
 #include "runtime/native/runtime.h"
 #include "runtime/native/stall_profiler.h"
+#include "stall_watch.h"
 #include "runtime/native/startup_trace.h"
 #include "runtime/native/audio_driver.h"
 #include "runtime/native/input.h"
@@ -564,6 +565,11 @@ int wmain(int argc, wchar_t** argv) {
         // Present/input thread above normal: level loads saturate cores with
         // engine workers and previously starved presentation for seconds.
         configureGameThread("display",THREAD_PRIORITY_ABOVE_NORMAL);
+        StallWatch::initializeFromEnvironment(addressSpace.base());
+        struct StallWatchLifetime {
+            ~StallWatchLifetime() { StallWatch::shutdown(); }
+        } stallWatchLifetime;
+        StallWatch::registerThread(nullptr, "display");
         struct StartupSceneWorkers {
             SceneWorkPool* pool = nullptr;
             ~StartupSceneWorkers() { if (pool) pool->stopForStartupCancellation(); }
@@ -612,7 +618,9 @@ int wmain(int argc, wchar_t** argv) {
             FrameIoCounters::engineThreadId.store(GetCurrentThreadId(), std::memory_order_relaxed);
             // The guest context is thread-local for diagnostics and APC delivery.
             currentContext = &ctx;
+            StallWatch::registerThread(&ctx, "engine");
             guestStatus = runGuest(ctx, addressSpace.base());
+            StallWatch::unregisterThread();
             fprintf(stderr, "[STOP] Guest execution ended with status %d.\n", guestStatus);
             // Worker threads still own guest memory. A failed main entry must
             // use process teardown before the address space destructor runs.
