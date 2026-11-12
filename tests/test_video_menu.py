@@ -564,7 +564,11 @@ class VideoMenu(unittest.TestCase):
                     self.assertEqual(len(props["TEXT"][4:]), width * 2,
                                      "initial value must reserve the same glyph width as live values")
                     if props["SCRIPT_PRESSED"] == "darkrecomp.fov":
-                        self.assertFalse(props["TEXT"][4:].strip())
+                        # Original TEXT parsing must see visible glyphs while
+                        # it establishes the pointer/focus rectangle. Runtime
+                        # painting replaces the text with the native meter.
+                        self.assertIn("ORIGINAL", props["TEXT"])
+                        self.assertEqual(len(props["TEXT"][4:]), 16)
                     else:
                         self.assertTrue(props["TEXT"].startswith("sc, < ") and props["TEXT"].endswith(" >"))
                 # Retail option values paint inside their option button's region.

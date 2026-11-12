@@ -254,7 +254,10 @@ def replace_video_page(registry, translations=None):
         if key == "fov":
             properties.extend([
                 window("CubeText", "sc, FOV: ORIGINAL", f"1,{y},10,1", identifier="DARKRECOMP_FOV_CAPTION"),
-                window("CubeButton", "sc, " + " " * 16, f"11,{y},8,1", "darkrecomp.fov"),
+                # The retail TEXT property establishes the initial focus/hit
+                # rectangle. Spaces alone produce an empty control. The native
+                # paint hook hides this seed label after geometry is loaded.
+                window("CubeButton", "sc, < " + "ORIGINAL".center(12) + " >", f"11,{y},8,1", "darkrecomp.fov"),
                 r.make("WINDOW", "", [r.make("CLASSNAME", "CubeOptionMeter"),
                     r.make("ID", "DARKRECOMP_FOV_SLIDER"), r.make("ALWAYSPAINT", "1"),
                     r.make("RGN", f"11,{y},8,1")])])
