@@ -229,6 +229,34 @@ address = 0x823FD07C
 registers = ["r31", "r1", "f13", "f12"]
 
 # Original player-control movement values, after their authored state loads.
+# Alternative presets use the normal ground path before its collision queries,
+# then replace only its completed horizontal velocity delta.
+[[midasm_hook]]
+name = "ShapeAlternativeMovementWishMidAsmHook"
+address = 0x82135068
+registers = ["r31", "r21", "r1", "r16", "r24", "f25", "f24", "f27", "f26"]
+
+[[midasm_hook]]
+name = "PrepareAlternativeMovementMidAsmHook"
+address = 0x821354CC
+registers = ["r31", "r21", "r25", "r1", "r30", "f25", "f1"]
+
+[[midasm_hook]]
+name = "ApplyAlternativeMovementMidAsmHook"
+address = 0x82135BF8
+registers = ["r31", "r21", "r25", "r1", "r30"]
+
+[[midasm_hook]]
+name = "ApplyAlternativeJumpMidAsmHook"
+address = 0x821357A4
+registers = ["r31", "r21", "r25", "f0"]
+
+# After the normal head camera and collision work, level its horizon.
+[[midasm_hook]]
+name = "StabilizeAlternativeMovementCameraMidAsmHook"
+address = 0x821DC2D0
+registers = ["r27", "r29", "r30", "r31"]
+
 # Scale horizontal movement registers without changing state or elapsed time.
 [[midasm_hook]]
 name = "ApplyDeveloperHorizontalSpeedMidAsmHook"

@@ -92,6 +92,9 @@ public:
     DWORD getCapabilities(Memory& owner, uint32_t user, uint32_t flags, uint32_t output);
     DWORD setState(Memory& owner, uint32_t user, uint32_t flags, uint32_t input);
     InputCounters counters();
+    uint8_t movementModifiers() const noexcept {
+        return movementModifiers_.load(std::memory_order_acquire);
+    }
     // Lock-free render-boundary read; updated under the input mutex on polls.
     PromptInputSource promptSource() const noexcept {
         return promptSource_.load(std::memory_order_acquire);
@@ -166,6 +169,7 @@ private:
     std::array<bool, XUSER_MAX_COUNT> hostRumbling_{};
     InputCounters counters_{};
     std::atomic<PromptInputSource> promptSource_{PromptInputSource::KeyboardMouse};
+    std::atomic<uint8_t> movementModifiers_{0};
     std::array<XINPUT_GAMEPAD, XUSER_MAX_COUNT> lastPhysical_{};
     std::array<bool, XUSER_MAX_COUNT> physicalBaseline_{};
     struct AnalogAnchor { SHORT lx = 0, ly = 0, rx = 0, ry = 0; BYTE lt = 0, rt = 0; bool valid = false; };

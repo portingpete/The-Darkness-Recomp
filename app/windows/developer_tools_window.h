@@ -45,11 +45,11 @@ private:
 
     HWND owner_{};
     NativeMouseWindow& mouse_;
-    HWND window_{}, mission_{}, load_{}, speed_{}, invincible_{}, noclip_{}, unlock_{}, maxDarkness_{},
+    HWND window_{}, mission_{}, load_{}, speed_{}, speedLabel_{}, invincible_{}, noclip_{}, unlock_{}, maxDarkness_{},
          resolutionShortcut_{}, defaults_{}, status_{};
     std::function<void(bool)> setResolutionShortcut_;
     bool resolutionShortcutEnabled_ = false;
     bool inputGate_ = false;
-    bool speedDropDownOpen_ = false;
+    bool speedDragging_ = false;
     std::wstring displayedStatus_;
 };

@@ -166,5 +166,5 @@ bool menuPointerTreeHasControl(uint8_t* base, uint32_t root);
 // Run on the guest UI thread with a live root. Returns the actionable hit, or
 // zero for background/hidden/disabled controls. Uses the original tree/handlers.
 uint32_t dispatchMenuPointer(PPCContext& ctx, uint8_t* base, uint32_t root,
-                             MenuPointerPosition point, bool activate);
+                             MenuPointerPosition point, bool activate, bool sliderOnly = false);
 }

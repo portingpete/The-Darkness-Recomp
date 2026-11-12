@@ -1,6 +1,8 @@
 #pragma once
 #include "runtime/native/developer_player.h"
 #include "runtime/native/developer_tools.h"
+#include "runtime/native/movement.h"
+#include "runtime/native/movement_settings.h"
 #include "developer_player_lookup_tests.h"
 #include <array>
 #include <bit>
@@ -49,6 +51,7 @@ static void testDeveloperPlayer(PPCContext& ctx) {
         PPCContext& ctx;
         uint32_t block;
         ~Restore() {
+            setMovementStyle(MovementStyle::Original);
             updateDeveloperPlayer(ctx, nullptr, 0, 1, false, false);
             componentData = 0;
             memory->release(block);
@@ -176,6 +179,239 @@ static void testDeveloperPlayer(PPCContext& ctx) {
     for (unsigned i = 0; i < authored.size(); ++i)
         check(memory->read32(state + 10020 + i * 4) == authored[i], "Developer speed must leave saved/authored movement fields unchanged");
     check(memory->read32(server + 412) == elapsed, "Developer speed must leave world timing unchanged");
+
+    // Exercise the actual translated wish-vector path. The collision oracle
+    // above observes the new hook in the retail handler, not a model copy.
+    setMovementStyle(MovementStyle::Original); activate(1, false);
+    const auto scriptedOriginal = move(5, false, 1, 0.5f);
+    const auto freeOriginal = move(0, true, 1, 0.5f, 1);
+    for (const auto style : {MovementStyle::Alternate}) {
+        setMovementStyle(style); activate(1, false);
+        const auto forward = move(0, false, 1, 0);
+        const auto modeOne = move(0x10, false, 1, 0);
+        const auto diagonal = move(0, false, 1, 1);
+        const float maximum = 198.f / 30.f;
+        check(closeEnough(std::hypot(forward[0], forward[1]), maximum), "Preset wish speed in original handler");
+        check(closeEnough(std::hypot(modeOne[0], modeOne[1]), maximum),
+              "Ordinary retail control mode 1 must use the selected movement preset");
+        const auto diagonalSpeed = std::hypot(diagonal[0], diagonal[1]);
+        check(closeEnough(diagonalSpeed, maximum), "Alternate movement normalizes diagonals");
+        const auto crouch = move(0x20, false, 1, 0);
+        check(closeEnough(std::hypot(crouch[0], crouch[1]), maximum *
+              0.5f), "Preset crouch input crop");
+        const auto other = move(0, false, 1, 0, 0, lookup.cameraActor);
+        check(closeEnough(std::hypot(other[0], other[1]), 8.f), "Preset must not change NPC/camera movement");
+        const auto scripted = move(5, false, 1, 0.5f);
+        const auto free = move(0, true, 1, 0.5f, 1);
+        for (unsigned i = 0; i < 3; ++i)
+            check(closeEnough(scripted[i], scriptedOriginal[i]) && closeEnough(free[i], freeOriginal[i]),
+                  "Presets must retain scripted and free movement, including vertical speed");
+        activate(2);
+        const auto multiplied = move(0, false, 1, 0);
+        check(closeEnough(std::hypot(multiplied[0], multiplied[1]), maximum * 2), "Developer speed composes once with movement preset");
+    }
+    // The three hook opcodes prove that wish, platform and completed delta
+    // boundaries still match the original executable used by the generator.
+    check(memory->read32(0x82135068) == 0x3D4082A4 &&
+          memory->read32(0x821354CC) == 0x397F00E0 &&
+          memory->read32(0x82135BF8) == 0x81750184, "Alternative movement hook instruction proof");
+    setMovementStyle(MovementStyle::Alternate); activate(1, false);
+    PPCRegister ar{}, st{}, sp{}, mode{}, command{}, f{}, sideInput{}, wx{}, wy{}, sr{}, grounded{}, px{}, py{};
+    ar.u64 = actor; st.u64 = state; sp.u64 = block + 0x2000; command.u64 = input;
+    sr.u64 = server; grounded.u64 = 1; f.f64 = 1;
+    putFloat(sp.u32 + 528, 1); putFloat(sp.u32 + 532, 0);
+    putFloat(sp.u32 + 544, 0); putFloat(sp.u32 + 548, 1);
+    memory->write32(actor + 420, 0);
+    px.f64 = 5; py.f64 = -3;
+    putFloat(actor + 224, 5); putFloat(actor + 228, -3);
+    const auto prepare = [&] {
+        ShapeAlternativeMovementWishMidAsmHook(ar, st, sp, mode, command, f, sideInput, wx, wy);
+        PrepareAlternativeMovementMidAsmHook(ar, st, sr, sp, grounded, px, py);
+    };
+    putFloat(sp.u32 + 144, -100); putFloat(sp.u32 + 148, -101); putFloat(sp.u32 + 152, 7);
+    prepare(); ApplyAlternativeMovementMidAsmHook(ar, st, sr, sp, grounded);
+    check(closeEnough(getFloat(sp.u32 + 144), 198.f / 40.f) && closeEnough(getFloat(sp.u32 + 148), 0),
+          "Rust ABI must convert support-relative UPS and cancel retail 40*dt impulse gain");
+    check(getFloat(sp.u32 + 152) == 7, "Preset must not replace original vertical/jump delta");
+    // A collision/prediction query for another actor may be interleaved before
+    // the player's final correction. It must not erase the prepared command.
+    putFloat(sp.u32 + 144, -100); prepare();
+    PPCRegister otherActor{}, otherState{};
+    otherActor.u64 = lookup.cameraActor; otherState.u64 = lookup.cameraState;
+    ShapeAlternativeMovementWishMidAsmHook(otherActor, otherState, sp, mode, command, f, sideInput, wx, wy);
+    ApplyAlternativeMovementMidAsmHook(ar, st, sr, sp, grounded);
+    check(closeEnough(getFloat(sp.u32 + 144), 198.f / 40.f), "Unrelated actor query cannot interrupt player movement");
+    // At 198 UPS, 40*198*dt braking stops the actor within one host tick.
+    putFloat(actor + 224, 5.f + 198.f / 30.f); f.f64 = 0;
+    prepare(); ApplyAlternativeMovementMidAsmHook(ar, st, sr, sp, grounded);
+    check(closeEnough(getFloat(sp.u32 + 144), -198.f / 40.f),
+          "Reference braking must survive host displacement conversion and downstream gain");
+    putFloat(actor + 224, 5); f.f64 = 1;
+    putFloat(sp.u32 + 144, -100); ApplyAlternativeMovementMidAsmHook(ar, st, sr, sp, grounded);
+    check(getFloat(sp.u32 + 144) == -100, "Movement command applies once");
+    prepare(); setMovementStyle(MovementStyle::Original); setMovementStyle(MovementStyle::Alternate);
+    ApplyAlternativeMovementMidAsmHook(ar, st, sr, sp, grounded);
+    check(getFloat(sp.u32 + 144) == -100, "Preset switches invalidate pending commands");
+    putFloat(server + 412, 0); prepare(); ApplyAlternativeMovementMidAsmHook(ar, st, sr, sp, grounded);
+    check(getFloat(sp.u32 + 144) == -100, "Paused time must not apply alternative acceleration");
+    memory->write32(server + 412, elapsed);
+    check(memory->read32(0x821357A4) == 0xA17F0170, "Jump impulse hook instruction proof");
+    PPCRegister jump{}; jump.f64 = 11;
+    ApplyAlternativeJumpMidAsmHook(ar, st, sr, jump);
+    check(closeEnough(float(jump.f64), 245.f / 30.f), "Alternate jump uses the softer-gravity impulse");
+    const auto oldGravityFlags = memory->read32(state + 388);
+    const auto oldSpecialFlags = PPC_LOAD_U16(state + 9748);
+    memory->write32(state + 388, 0); PPC_STORE_U16(state + 9748, 0);
+    PPC_STORE_U16(flags, 1); PPC_STORE_U16(flags + 2, 0);
+    const auto gravity = [&](uint32_t body) {
+        auto call = ctx; call.r1.u64 = block + 0x3F000;
+        call.r3.u64 = output; call.r5.u64 = body; call.r6.u64 = server; call.r7.u64 = flags;
+        sub_821369E0(call, base);
+        return getFloat(output + 8);
+    };
+    putFloat(actor + 232, 245.f / 30.f);
+    check(closeEnough(gravity(actor), -800.f / 900.f), "Alternate gravity uses the softer 800-unit profile");
+    putFloat(actor + 232, -100.f / 30.f);
+    check(closeEnough(gravity(actor), -600.f / 900.f), "Descending gravity is softer than ascent");
+    putFloat(actor + 232, 0);
+    check(closeEnough(gravity(actor), -240.f / 900.f), "At the apex, gravity eases to the shared minimum");
+    putFloat(actor + 232, 20.f / 30.f);
+    check(closeEnough(gravity(actor), -520.f / 900.f), "Apex curve receives UPS rather than guest per-tick displacement");
+    putFloat(actor + 232, 0);
+    check(closeEnough(gravity(lookup.cameraActor), -800.f / 900.f), "Alternative gravity cannot affect another actor");
+    setMovementStyle(MovementStyle::Original);
+    check(closeEnough(gravity(actor), -800.f / 900.f), "Original gravity must remain retail");
+    setMovementStyle(MovementStyle::Alternate);
+    memory->write32(state + 388, oldGravityFlags); PPC_STORE_U16(state + 9748, oldSpecialFlags);
+    // Independent motor-unit oracle: -155 UPS plus 600 gravity for half a
+    // 30 Hz tick would become -165; the force must instead end at -160 UPS.
+    const auto fallForce = block + 0x4000;
+    putFloat(fallForce + 48, 7); putFloat(fallForce + 52, 11);
+    putFloat(actor + 232, -155.f / 30.f); putFloat(fallForce + 56, -600.f / 900.f);
+    limitAlternativeFall(actor, state, server, fallForce, 0.5f, false);
+    check(closeEnough(getFloat(fallForce + 56), -1.f / 3.f), "Fall cap cancels fractional motor gain in native units");
+    check(getFloat(fallForce + 48) == 7 && getFloat(fallForce + 52) == 11, "Fall cap cannot change horizontal force");
+    putFloat(actor + 232, 100.f / 30.f); putFloat(fallForce + 56, -800.f / 900.f);
+    limitAlternativeFall(actor, state, server, fallForce, 0.5f, false);
+    check(closeEnough(getFloat(fallForce + 56), -800.f / 900.f), "Fall cap leaves ascent unchanged");
+    putFloat(actor + 232, -155.f / 30.f); putFloat(fallForce + 56, -600.f / 900.f);
+    limitAlternativeFall(actor, state, server, fallForce, 0.5f, true);
+    check(closeEnough(getFloat(fallForce + 56), -600.f / 900.f), "Ground support retains original force");
+    limitAlternativeFall(lookup.cameraActor, lookup.cameraState, server, fallForce, 0.5f, false);
+    check(closeEnough(getFloat(fallForce + 56), -600.f / 900.f), "Fall limit cannot change another actor");
+    setMovementStyle(MovementStyle::Original);
+    limitAlternativeFall(actor, state, server, fallForce, 0.5f, false);
+    check(closeEnough(getFloat(fallForce + 56), -600.f / 900.f), "Original fall remains untouched");
+    setMovementStyle(MovementStyle::Alternate); putFloat(actor + 232, 0);
+    // The live camera follows a prediction clone, whose state +32 callback
+    // shares the original motor. Its timing world is the client, not server.
+    const auto predictedActor = block + 0x10000, predictedState = block + 0x12000;
+    memory->write32(predictedActor + 396, predictedState);
+    PPC_STORE_U16(predictedActor + 368, PPC_LOAD_U32(lookup.client + 536));
+    memory->write32(predictedState, memory->read32(state));
+    memory->write32(predictedState + 16, predictedActor);
+    memory->write32(predictedState + 56, lookup.client);
+    putFloat(lookup.client + 412, 1.f / 60.f);
+    PPCRegister predictionActor{}, predictionStateRegister{}, predictionWorld{};
+    predictionActor.u64 = predictedActor; predictionStateRegister.u64 = predictedState;
+    predictionWorld.u64 = lookup.client;
+    const auto shapePrediction = [&] {
+        wx.f64 = -100;
+        ShapeAlternativeMovementWishMidAsmHook(predictionActor, predictionStateRegister, sp, mode,
+                                             command, f, sideInput, wx, wy);
+        return float(wx.f64);
+    };
+    check(shapePrediction() == -100, "Unscoped clone retains original handling");
+    {
+        MovementPredictionScope prediction(base, lookup.client, predictedActor, predictedState);
+        check(closeEnough(shapePrediction(), 198.f / 60.f), "Local prediction uses client timestep and alternate speed");
+        jump.f64 = -100;
+        ApplyAlternativeJumpMidAsmHook(predictionActor, predictionStateRegister, predictionWorld, jump);
+        check(closeEnough(float(jump.f64), 245.f / 60.f), "Local prediction uses the same jump impulse");
+        putFloat(predictedActor + 232, -155.f / 60.f);
+        putFloat(fallForce + 56, -600.f / 3600.f);
+        limitAlternativeFall(predictedActor, predictedState, lookup.client, fallForce, 0.5f, false);
+        check(closeEnough((getFloat(predictedActor + 232) + getFloat(fallForce + 56) * 0.5f) * 60, -160.f),
+              "Prediction clone cannot outrun authoritative fall cap");
+        {
+            MovementPredictionScope unrelated(base, lookup.client, lookup.cameraActor, lookup.cameraState);
+            check(shapePrediction() == -100, "Nested NPC callback cannot borrow local prediction eligibility");
+        }
+        check(closeEnough(shapePrediction(), 198.f / 60.f), "Nested prediction restores caller eligibility");
+        setMovementStyle(MovementStyle::Original); setMovementStyle(MovementStyle::Alternate);
+        check(shapePrediction() == -100, "Preset change invalidates prediction scope");
+    }
+    check(shapePrediction() == -100, "Prediction callback cannot leak clone eligibility");
+    check(memory->read32(0x821DC2D0) == 0x48000068, "Post-head camera hook instruction proof");
+    PPCRegister cameraClient{}, cameraActor{}, cameraState{}, cameraMatrix{};
+    cameraClient.u64 = lookup.client; cameraActor.u64 = actor; cameraState.u64 = state;
+    cameraMatrix.u64 = block + 0x3000;
+    const auto oldId = PPC_LOAD_U16(actor + 368);
+    PPC_STORE_U16(actor + 368, PPC_LOAD_U32(lookup.client + 536));
+    const auto checkCamera = [&](bool expected, const char* message) {
+        // Independent camera with forward +X and 30-degree head roll. A level
+        // horizon must retain forward/pitch, eye position and matrix padding.
+        const std::array<float, 16> pose{0, -0.8660254f, 0.5f, 0,
+            0, 0.5f, 0.8660254f, 0, 1, 0, 0, 0, 7, 11, 35, 1};
+        for (unsigned i = 0; i < pose.size(); ++i) putFloat(cameraMatrix.u32 + i * 4, pose[i]);
+        StabilizeAlternativeMovementCameraMidAsmHook(cameraClient, cameraActor, cameraState, cameraMatrix);
+        check(closeEnough(getFloat(cameraMatrix.u32 + 8), expected ? 0.f : pose[2]), message);
+        for (unsigned i : {3u, 7u, 8u, 9u, 10u, 11u, 12u, 13u, 14u, 15u})
+            check(getFloat(cameraMatrix.u32 + i * 4) == pose[i], "Camera stabilization retains forward axis, collision-resolved eye and padding");
+        if (expected) {
+            check(closeEnough(getFloat(cameraMatrix.u32 + 4), -1) &&
+                  closeEnough(getFloat(cameraMatrix.u32 + 24), 1), "Camera horizon is level with unchanged handedness");
+        }
+    };
+    checkCamera(true, "Local preset camera levels animated roll");
+    memory->write32(actor + 420, 0x2000);
+    checkCamera(true, "Crouch retains its original eye/collision while leveling roll");
+    memory->write32(actor + 420, 0x4000);
+    checkCamera(false, "Free movement camera retains original path");
+    memory->write32(actor + 420, 0);
+    PPC_STORE_U16(state + 8300, 1);
+    checkCamera(false, "Scripted camera target retains original path");
+    PPC_STORE_U16(state + 8300, 0);
+    cameraActor.u64 = lookup.cameraActor; cameraState.u64 = lookup.cameraState;
+    checkCamera(false, "Another camera actor cannot select preset camera");
+    cameraActor.u64 = actor; cameraState.u64 = state;
+    setMovementStyle(MovementStyle::Original);
+    checkCamera(false, "Original retains animated camera");
+    setMovementStyle(MovementStyle::Alternate);
+    PPC_STORE_U16(actor + 368, oldId);
+    // Sustained air control skips the ground support hook in retail. Exercise
+    // the common completion hook directly, without calling Prepare.
+    grounded.u64 = 0; putFloat(actor + 224, 0); putFloat(actor + 228, 0);
+    ShapeAlternativeMovementWishMidAsmHook(ar, st, sp, mode, command, f, sideInput, wx, wy);
+    ApplyAlternativeMovementMidAsmHook(ar, st, sr, sp, grounded);
+    check(closeEnough(getFloat(sp.u32 + 144), 52.8f / 40.f) && closeEnough(getFloat(sp.u32 + 148), 0),
+          "Sustained airborne branch must reach alternate air acceleration");
+    putFloat(actor + 224, 198.f / 30.f); f.f64 = 0;
+    ShapeAlternativeMovementWishMidAsmHook(ar, st, sp, mode, command, f, sideInput, wx, wy);
+    ApplyAlternativeMovementMidAsmHook(ar, st, sr, sp, grounded);
+    check(closeEnough(getFloat(sp.u32 + 144), 0) && getFloat(sp.u32 + 152) == 7,
+          "Airborne neutral input must retain horizontal momentum and original vertical output");
+    setMovementStyle(MovementStyle::Original); activate(1, false);
+    check(closeEnough(std::hypot(move(0, false, 1, 0)[0], move(0, false, 1, 0)[1]), 8.f),
+          "Selecting Original restores retail movement immediately");
+    activate(1.5f);
+    const auto fasterOriginal = move(0, false, 1, 0);
+    check(closeEnough(std::hypot(fasterOriginal[0], fasterOriginal[1]), 12.f),
+          "Developer speed slider scales Original horizontal movement");
+    {
+        MovementPredictionScope prediction(base, lookup.client, predictedActor, predictedState);
+        check(closeEnough(movementHorizontalSpeedScale(predictedActor, predictedState), 1.5f),
+              "Original speed slider also scales the scoped prediction clone");
+        check(movementHorizontalSpeedScale(lookup.cameraActor, lookup.cameraState) == 1,
+              "Speed slider cannot change another actor");
+    }
+    setMovementStyle(MovementStyle::Alternate); activate(1.5f);
+    const auto fasterAlternate = move(0, false, 1, 0);
+    check(closeEnough(std::hypot(fasterAlternate[0], fasterAlternate[1]), 297.f / 30.f),
+          "Speed slider composes with alternate movement once");
+    jump.f64 = 0; ApplyAlternativeJumpMidAsmHook(ar, st, sr, jump);
+    check(closeEnough(float(jump.f64), 245.f / 30.f), "Horizontal speed slider does not change jump impulse");
+    setMovementStyle(MovementStyle::Original); activate(1, false);
     memory->write32(server, 0x82080F80);
     puts("Developer player: original ground/crouch/free movement handler, vertical and NPC isolation, restoration and unchanged saved state passed.");
 }

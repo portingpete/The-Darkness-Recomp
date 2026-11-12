@@ -4,6 +4,8 @@
 #include "developer_invincibility.h"
 #include "developer_darkness.h"
 #include "developer_player_lookup.h"
+#include "movement_settings.h"
+#include "movement.h"
 #include "ppc_recomp_shared.h"
 #include <algorithm>
 #include <atomic>
@@ -58,7 +60,7 @@ void publish(uint64_t request, bool canLoad, bool hasPlayer, std::string_view st
 }
 
 bool developerToolsNeedsUpdate() noexcept {
-    return needsUpdate.load(std::memory_order_acquire);
+    return needsUpdate.load(std::memory_order_acquire) || movementStyle() != MovementStyle::Original || movementProbeEnabled();
 }
 
 void setDeveloperToolsVisible(bool visible) {

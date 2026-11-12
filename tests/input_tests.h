@@ -2,6 +2,7 @@
 // messages below are test input, not a claim of interactive gameplay.
 #include "runtime/native/input.h"
 #include "runtime/native/keyboard_menu.h"
+#include "runtime/native/movement_settings.h"
 #include "renderer/engine/prompt_bindings.h"
 
 namespace {
@@ -354,6 +355,17 @@ static void testInputContract(PPCContext& ctx) {
         SendMessageW(window, WM_KEYUP, key, 0);
     }
     input.setMouseLookEnabled(true);
+    setMovementStyle(MovementStyle::Alternate);
+    SendMessageW(window,WM_KEYDOWN,VK_MENU,0); state();
+    check(input.movementModifiers() == 1, "Alt must publish the remappable Walk modifier");
+    SendMessageW(window,WM_KEYUP,VK_MENU,0);
+    SendMessageW(window,WM_KEYDOWN,VK_SHIFT,0); state();
+    check(input.movementModifiers() == 0 && PPC_LOAD_U16(output+4) == XINPUT_GAMEPAD_RIGHT_THUMB,
+          "Alternate movement retains Shift Zoom");
+    setMovementStyle(MovementStyle::Original); state();
+    check(input.movementModifiers() == 0 && PPC_LOAD_U16(output+4) == XINPUT_GAMEPAD_RIGHT_THUMB,
+          "Original must retain its existing Shift Zoom binding");
+    SendMessageW(window,WM_KEYUP,VK_SHIFT,0);
     SendMessageW(window,WM_KEYDOWN,VK_SPACE,0);
     check(state()==ERROR_SUCCESS && PPC_LOAD_U16(output+4)==XINPUT_GAMEPAD_Y,"Captured Space did not jump");
     SendMessageW(window,WM_KEYUP,VK_SPACE,0);

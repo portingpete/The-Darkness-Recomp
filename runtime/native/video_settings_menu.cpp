@@ -7,6 +7,7 @@
 #include "keyboard_menu.h"
 #include "keyboard_menu_guest.h"
 #include "input.h"
+#include "movement_settings.h"
 #include "runtime.h"
 #include "ppc_recomp_shared.h"
 #include <algorithm>
@@ -51,6 +52,12 @@ template<size_t N> unsigned step(unsigned value, int direction, const std::array
 
 bool changeVideoSetting(std::string_view action, int direction) noexcept {
     if (direction != -1 && direction != 1) return false;
+    if (action == "darkrecomp.movement_style") {
+        const auto next = (int(movementStyle()) + direction + 2) % 2;
+        if (!setMovementStyle(MovementStyle(next))) return false;
+        requestMovementStyleSave();
+        return true;
+    }
     if (action == "darkrecomp.mouse_sensitivity") {
         auto& input = nativeInput();
         const float current = input.mouseSensitivity();
@@ -93,8 +100,10 @@ bool changeVideoSetting(std::string_view action, int direction) noexcept {
         settings.frameRateLimit = step(settings.frameRateLimit, direction, std::array{0u, 30u, 60u, 90u, 120u, 144u, 165u, 240u, 360u});
     else if (action == "darkrecomp.fov") {
         const auto value = fieldOfViewSetting();
-        const float next = direction > 0 ? (value == 0 ? 60.f : value >= 120 ? 0.f : std::floor(value) + 1.f)
-                                        : (value == 0 ? 120.f : value <= 60 ? 0.f : std::ceil(value) - 1.f);
+        const float original = float(guestFovToHorizontal16By9(70, 4.0 / 3.0));
+        float next = direction > 0 ? (value <= original ? std::ceil(original) : std::floor(value) + 1.f)
+                                   : (value <= std::ceil(original) ? 0.f : std::ceil(value) - 1.f);
+        next = std::min(next, 120.f);
         setFieldOfViewSetting(next);
     } else return false;
     setGraphicsSettings(settings);
@@ -102,10 +111,41 @@ bool changeVideoSetting(std::string_view action, int direction) noexcept {
     return true;
 }
 
+bool isNativeMenuSlider(std::string_view action) noexcept {
+    return action == "darkrecomp.fov";
+}
+float nativeMenuSliderPosition(std::string_view action) noexcept {
+    if (action != "darkrecomp.fov") return 0;
+    const auto value = fieldOfViewSetting();
+    if (!value) return 0.f;
+    const float original = float(guestFovToHorizontal16By9(70, 4.0 / 3.0));
+    return std::clamp((value - original) / (120 - original), 0.f, 1.f);
+}
+bool setNativeMenuSliderPosition(std::string_view action, float position) noexcept {
+    if (!isNativeMenuSlider(action) || !std::isfinite(position)) return false;
+    position = std::clamp(position, 0.f, 1.f);
+    {
+        const float original = float(guestFovToHorizontal16By9(70, 4.0 / 3.0));
+        const auto value = original + (120 - original) * position;
+        setFieldOfViewSetting(position < .0125f ? 0.f : std::clamp(float(std::lround(value)), std::ceil(original), 120.f));
+        requestDisplaySettingsSave();
+    }
+    return true;
+}
+std::string nativeMenuSliderCaption(std::string_view action) {
+    if (action != "darkrecomp.fov") return {};
+    if (displaySettingsSaveFailed()) return "FOV: SAVE FAILED";
+    if (!fieldOfViewSetting()) return std::string(nativeMenuText("FOV")) + ": " + std::string(nativeMenuText("ORIGINAL"));
+    char value[32]{};
+    std::snprintf(value, sizeof(value), "%g", double(fieldOfViewSetting()));
+    return std::string(nativeMenuText("FOV")) + ": " + value;
+}
+
 std::string videoSettingLabel(std::string_view action) {
     const auto settings = graphicsSettings();
     std::string result;
-    if (action == "darkrecomp.mouse_sensitivity") {
+    if (action == "darkrecomp.movement_style") result = movementStyleName(movementStyle());
+    else if (action == "darkrecomp.mouse_sensitivity") {
         char value[32]{};
         std::snprintf(value, sizeof(value), "%.4gx", double(nativeInput().mouseSensitivity()));
         result = value;
@@ -139,15 +179,18 @@ std::string videoSettingLabel(std::string_view action) {
     }
     if (!result.empty()) {
         // The original TEXT callback sizes the button from its first label.
-        // Keep the arrows sixteen small glyphs apart for every value, so its
-        // native hit rectangle remains eight cells wide without overriding it.
-        if (action == "darkrecomp.mouse_sensitivity" ? mouseSensitivitySaveFailed.load() : displaySettingsSaveFailed())
+        // Keep each value column a fixed width across its choices, so the
+        // native hit rectangle does not change when a label changes.
+        if (action == "darkrecomp.movement_style" ? movementStyleSaveFailed() :
+            action == "darkrecomp.mouse_sensitivity" ? mouseSensitivitySaveFailed.load() : displaySettingsSaveFailed())
             result = "Save failed";
         // Match the retail menu typography for every live setting value.
         for (char& glyph : result)
             if (glyph >= 'a' && glyph <= 'z') glyph = char(glyph - 'a' + 'A');
         result = nativeMenuText(result);
-        const size_t padding = result.size() < 12 ? 12 - result.size() : 0;
+        // Movement uses eleven cells so its full eighteen-glyph name fits.
+        const size_t width = action == "darkrecomp.movement_style" ? 18 : 12;
+        const size_t padding = result.size() < width ? width - result.size() : 0;
         result = "sc, < " + std::string(padding / 2, ' ') + result +
                  std::string(padding - padding / 2, ' ') + " >";
     }
@@ -187,10 +230,42 @@ void replaceLabel(PPCContext& ctx, uint8_t* base, uint32_t window, const std::st
 }
 void refreshLabel(PPCContext& ctx, uint8_t* base, uint32_t button) {
     const auto action = actionForButton(base, button);
+    if (DarkRecomp::Native::isNativeMenuSlider(action)) {
+        replaceLabel(ctx, base, button, "sc, " + std::string(16, ' '));
+        return;
+    }
     auto text = DarkRecomp::Native::keyboardMenuLabel(action);
     if (text.empty()) text = DarkRecomp::Native::videoSettingLabel(action);
     replaceLabel(ctx, base, button, text);
 }
+}
+
+namespace DarkRecomp::Native {
+bool setNativeMenuSliderPointer(uint8_t* base, uint32_t button, int32_t absoluteX) {
+    const auto action = actionForButton(base, button);
+    if (!isNativeMenuSlider(action)) return false;
+    const float left = float(int32_t(PPC_LOAD_U32(button + 128)));
+    const float width = float(int32_t(PPC_LOAD_U32(button + 136)) - int32_t(PPC_LOAD_U32(button + 128)));
+    if (!(width > 0)) return false;
+    const float cell = width / 8.f;
+    return setNativeMenuSliderPosition(action, (absoluteX - left - cell) / (width - 2 * cell));
+}
+bool isNativeMenuSliderButton(uint8_t* base, uint32_t button) {
+    return button && isNativeMenuSlider(actionForButton(base, button));
+}
+}
+
+// Native CubeOptionMeter already draws the track and thumb. Supply only its
+// normalized value; unrelated option meters retain their original getter.
+extern "C" PPC_FUNC(__imp__sub_8239A9D8);
+PPC_FUNC(sub_8239A9D8) {
+    const auto meter = ctx.r3.u32;
+    const auto identifier = byteString(base, meter + 168);
+    if (PPC_LOAD_U32(meter) == 0x82074368 && identifier == "DARKRECOMP_FOV_SLIDER") {
+        ctx.f1.f64 = DarkRecomp::Native::nativeMenuSliderPosition("darkrecomp.fov");
+        return;
+    }
+    __imp__sub_8239A9D8(ctx, base);
 }
 
 // Original CubeButton rendering, focus, typography and hit rectangles remain
@@ -210,7 +285,10 @@ PPC_FUNC(sub_8239A4E8) {
     const auto window = ctx.r3.u32;
     if (PPC_LOAD_U32(window) == 0x82074100) {
         const auto identifier = byteString(base, window + 168);
-        if (identifier == "DARKRECOMP_KEYBOARD_STATUS")
+        if (identifier == "DARKRECOMP_FOV_CAPTION") {
+            auto caption = DarkRecomp::Native::nativeMenuSliderCaption("darkrecomp.fov");
+            replaceLabel(ctx, base, window, "sc, " + caption);
+        } else if (identifier == "DARKRECOMP_KEYBOARD_STATUS")
             replaceLabel(ctx, base, window,
                 DarkRecomp::Native::keyboardMenuLabel("darkrecomp.keyboard.status"));
         else if (identifier == "DARKRECOMP_SUBTITLE_SIZE" || identifier == "DARKRECOMP_SUBTITLE_HELP") {

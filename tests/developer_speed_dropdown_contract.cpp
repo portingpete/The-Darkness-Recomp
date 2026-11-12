@@ -2,6 +2,8 @@
 #include "app/windows/native_mouse.h"
 #include "runtime/native/developer_tools.h"
 #include <array>
+#include <commctrl.h>
+#include <cmath>
 #include <cstdio>
 #include <stdexcept>
 #include <string>
@@ -17,7 +19,7 @@ void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
 }
 
-// Exercise real Win32 popup behavior without showing a window on the user's
+// Exercise real Win32 slider behavior without showing a window on the user's
 // desktop, taking their foreground focus, or injecting any global input.
 struct PrivateDesktop {
     HDESK previous = GetThreadDesktop(GetCurrentThreadId());
@@ -88,7 +90,7 @@ struct DeveloperToolsWindowTestFixture {
         type.hInstance = GetModuleHandleW(nullptr);
         type.lpszClassName = L"DarkRecompDeveloperSpeedTest";
         require(RegisterClassW(&type) != 0, "Cannot register fixture panel");
-        const auto window = CreateWindowExW(WS_EX_CONTROLPARENT, type.lpszClassName, L"Speed dropdown contract",
+        const auto window = CreateWindowExW(WS_EX_CONTROLPARENT, type.lpszClassName, L"Speed slider contract",
             WS_POPUP, 0, 0, 450, 452, owner, nullptr, type.hInstance, &panel);
         require(window != nullptr, "Cannot create production developer panel");
         panel.refresh();
@@ -102,148 +104,66 @@ struct DeveloperToolsWindowTestFixture {
         UnregisterClassW(L"DarkRecompDeveloperSpeedTest", GetModuleHandleW(nullptr));
     }
 
-    HWND speed() const { return panel.speed_; }
-    LRESULT selected() const { return SendMessageW(speed(), CB_GETCURSEL, 0, 0); }
-    bool dropped() const { return SendMessageW(speed(), CB_GETDROPPEDSTATE, 0, 0) != 0; }
 
+    HWND speed() const { return panel.speed_; }
+    LRESULT selected() const { return SendMessageW(speed(), TBM_GETPOS, 0, 0); }
+    void refresh() { panel.refresh(); }
+    void slide(int position, unsigned notification = TB_THUMBTRACK) {
+        SendMessageW(speed(), TBM_SETPOS, TRUE, position);
+        SendMessageW(panel.window_, WM_HSCROLL, MAKEWPARAM(notification, position), LPARAM(speed()));
+    }
     void pump(unsigned milliseconds) {
         const auto end = GetTickCount64() + milliseconds;
         do {
             MSG message{};
             while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
-                if (message.hwnd == panel.window_ && message.message == WM_TIMER && message.wParam == 1)
-                    ++timerTicks;
-                if (!panel.handleMessage(message)) {
-                    TranslateMessage(&message);
-                    DispatchMessageW(&message);
-                }
+                if (message.hwnd == panel.window_ && message.message == WM_TIMER) ++timerTicks;
+                if (!panel.handleMessage(message)) { TranslateMessage(&message); DispatchMessageW(&message); }
             }
             MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         } while (GetTickCount64() < end);
     }
-
-    HWND openList() {
-        SendMessageW(speed(), CB_SHOWDROPDOWN, TRUE, 0);
-        require(dropped(), "Native combo did not open");
-        COMBOBOXINFO combo{sizeof(combo)};
-        require(GetComboBoxInfo(speed(), &combo) != FALSE && IsWindow(combo.hwndList),
-            "Native combo list unavailable");
-        return combo.hwndList;
-    }
-
-    static LPARAM rowPoint(HWND list, int row) {
-        RECT item{};
-        require(SendMessageW(list, LB_GETITEMRECT, row, LPARAM(&item)) != LB_ERR,
-            "Cannot locate native popup row");
-        return MAKELPARAM((item.left + item.right) / 2, (item.top + item.bottom) / 2);
-    }
-
-    void hover(HWND list, int row) {
-        SendMessageW(list, WM_MOUSEMOVE, 0, rowPoint(list, row));
-        require(SendMessageW(list, LB_GETCURSEL, 0, 0) == row,
-            "Mouse hover did not highlight requested native row");
-    }
-
-    void click(HWND list, int row) {
-        const auto point = rowPoint(list, row);
-        SendMessageW(list, WM_LBUTTONDOWN, MK_LBUTTON, point);
-        SendMessageW(list, WM_LBUTTONUP, 0, point);
-        require(!dropped(), "Mouse acceptance did not close popup");
-    }
-
-    void escape() {
-        MSG message{};
-        message.hwnd = speed(); message.message = WM_KEYDOWN; message.wParam = VK_ESCAPE;
-        require(!panel.handleMessage(message), "Escape closed panel instead of canceling popup");
-        DispatchMessageW(&message);
-        require(panel.isOpen() && !dropped(), "Escape did not cancel only the popup");
-    }
 };
-
-namespace {
-void mouseSelectionAcrossRefresh(DeveloperToolsWindowTestFixture& fixture) {
-    require(fixture.selected() == 3 && snapshot.playerSpeed == 1,
-        "Fixture did not begin at normal speed");
-    for (const auto [row, value] : std::array<std::pair<int, float>, 2>{{{6, 2.f}, {8, 4.f}}}) {
-        const auto requests = speedRequests;
-        const auto ticks = fixture.timerTicks;
-        const auto list = fixture.openList();
-        fixture.hover(list, row);
-        fixture.pump(800);
-        require(fixture.timerTicks >= ticks + 3, "Did not exercise repeated production refresh timer ticks");
-        require(SendMessageW(list, LB_GETCURSEL, 0, 0) == row,
-            "Refresh timer reset mouse-highlighted speed to the current game speed");
-        require(speedRequests == requests, "Hover applied an unaccepted speed");
-        fixture.click(list, row);
-        require(snapshot.playerSpeed == value && fixture.selected() == row && speedRequests == requests + 1,
-            "Mouse acceptance failed to apply selected speed exactly once");
-        fixture.pump(300);
-        require(snapshot.playerSpeed == value && fixture.selected() == row,
-            "Accepted speed did not survive the next refresh");
-    }
-}
-
-void canceledSelection(DeveloperToolsWindowTestFixture& fixture) {
-    const auto requests = speedRequests;
-    const auto list = fixture.openList();
-    fixture.hover(list, 3);
-    fixture.pump(300);
-    fixture.escape();
-    fixture.pump(300);
-    require(snapshot.playerSpeed == 4 && fixture.selected() == 8 && speedRequests == requests,
-        "Cancel changed speed or retained an unaccepted row");
-}
-
-void keyboardAndDiagnostics(DeveloperToolsWindowTestFixture& fixture) {
-    const auto requests = speedRequests;
-    SendMessageW(fixture.speed(), WM_KEYDOWN, VK_UP, 0);
-    SendMessageW(fixture.speed(), WM_KEYUP, VK_UP, 0);
-    require(snapshot.playerSpeed == 3 && fixture.selected() == 7 && speedRequests == requests + 1,
-        "Closed-dropdown keyboard selection stopped applying immediately");
-    fixture.pump(300);
-    require(snapshot.playerSpeed == 3 && fixture.selected() == 7, "Keyboard speed did not survive refresh");
-
-    fixture.openList();
-    SendMessageW(fixture.speed(), WM_KEYDOWN, VK_UP, 0);
-    SendMessageW(fixture.speed(), WM_KEYUP, VK_UP, 0);
-    fixture.pump(300);
-    require(snapshot.playerSpeed == 3 && fixture.selected() == 6 && speedRequests == requests + 1,
-        "Open-dropdown keyboard preview applied early or reset during refresh");
-    SendMessageW(fixture.speed(), WM_KEYDOWN, VK_RETURN, 0);
-    SendMessageW(fixture.speed(), WM_KEYUP, VK_RETURN, 0);
-    require(!fixture.dropped() && snapshot.playerSpeed == 2 && fixture.selected() == 6 &&
-            speedRequests == requests + 2, "Open-dropdown keyboard acceptance failed");
-
-    const auto list = fixture.openList();
-    fixture.hover(list, 0);
-    require(fixture.panel.handleTestCommand("dev speed 0.5"), "Existing speed diagnostic rejected valid command");
-    require(!fixture.dropped() && snapshot.playerSpeed == .5f && fixture.selected() == 1,
-        "Scripted speed change did not close pending popup and apply");
-
-    snapshot.hasActivePlayer = false;
-    const auto unavailableRequests = speedRequests;
-    require(fixture.panel.handleTestCommand("dev speed 2"), "Unavailable diagnostic command rejected");
-    require(!IsWindowEnabled(fixture.speed()) && speedRequests == unavailableRequests,
-        "Unavailable player control applied a speed");
-    snapshot.hasActivePlayer = true;
-    fixture.pump(300);
-    require(IsWindowEnabled(fixture.speed()) && fixture.selected() == 1,
-        "Player readiness refresh failed to restore accepted speed");
-}
-}
 
 int main() {
     try {
         PrivateDesktop desktop;
         DeveloperToolsWindowTestFixture fixture;
-        mouseSelectionAcrossRefresh(fixture);
-        canceledSelection(fixture);
-        keyboardAndDiagnostics(fixture);
-        require(!toolsVisible, "Hidden fixture marked game developer tools visible");
-        std::puts("Developer speed dropdown: native mouse hover across refresh, acceptance, cancellation, closed/open keyboard selection, diagnostics and availability verified.");
+        wchar_t type[64]{};
+        GetClassNameW(fixture.speed(), type, 64);
+        require(std::wstring_view(type) == TRACKBAR_CLASSW, "Speed control is not a native slider");
+        require(fixture.selected() == 300 && snapshot.playerSpeed == 1, "Default speed is not centered");
+        require(SendMessageW(fixture.speed(), TBM_GETTIC, 0, 0) == 300, "Default center line is missing");
+        auto before = speedRequests;
+        fixture.slide(600);
+        require(snapshot.playerSpeed == 4 && speedRequests == before + 1, "Drag did not apply maximum speed");
+        fixture.pump(800);
+        require(fixture.timerTicks >= 3 && fixture.selected() == 600 && snapshot.playerSpeed == 4,
+                "Refresh interrupted the active drag");
+        fixture.slide(600, TB_ENDTRACK);
+        require(speedRequests == before + 1, "Drag completion duplicated the request");
+        fixture.slide(0, TB_THUMBPOSITION);
+        require(snapshot.playerSpeed == .25f, "Slider minimum changed");
+        SendMessageW(fixture.speed(), WM_KEYDOWN, VK_RIGHT, 0);
+        SendMessageW(fixture.speed(), WM_KEYUP, VK_RIGHT, 0);
+        require(snapshot.playerSpeed > .25f && snapshot.playerSpeed < .26f && fixture.selected() == 1,
+                "Keyboard adjustment did not use the slider callback");
+        require(fixture.panel.handleTestCommand("dev speed 0.5") && snapshot.playerSpeed == .5f && fixture.selected() == 100,
+                "Existing diagnostic preset did not use the slider");
+        require(fixture.panel.handleTestCommand("dev speed 1.1") && std::abs(snapshot.playerSpeed - 1.1f) < .001f,
+                "Slider diagnostics still require the retired dropdown presets");
+        require(!fixture.panel.handleTestCommand("dev speed nan") && !fixture.panel.handleTestCommand("dev speed 5"),
+                "Invalid slider input was accepted");
+        require(fixture.panel.handleTestCommand("dev defaults") && snapshot.playerSpeed == 1 && fixture.selected() == 300,
+                "Defaults did not restore the marked center");
+        snapshot.hasActivePlayer = false; fixture.refresh(); before = speedRequests;
+        require(!IsWindowEnabled(fixture.speed()), "Speed slider enabled without an active player");
+        fixture.panel.handleTestCommand("dev speed 2");
+        require(speedRequests == before, "Unavailable control applied speed");
+        require(!toolsVisible, "Hidden fixture marked developer tools visible");
+        std::puts("Developer speed slider: native trackbar, centered default line, drag/refresh, keyboard, diagnostics and availability passed.");
         return 0;
     } catch (const std::exception& error) {
-        std::fprintf(stderr, "DeveloperSpeedDropdownContract: %s\n", error.what());
-        return 1;
+        std::fprintf(stderr, "DeveloperSpeedSliderContract: %s\n", error.what()); return 1;
     }
 }

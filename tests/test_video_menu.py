@@ -99,7 +99,9 @@ class VideoMenu(unittest.TestCase):
                         continue
                     width = int(rp["RGN"].split(",")[2]) * (2 if token == "sc" else 1)
                     self.assertLessEqual(len(ru_text), width, name)
-                    if text.startswith("< "):
+                    if not text.strip() or text == "|":
+                        self.assertEqual(ru_text, text)
+                    elif text.startswith("< "):
                         value = text[2:-2].strip()
                         expected = translations.get(value, value)
                         self.assertEqual(ru_text, "< " + expected.center(12) + " >")
@@ -205,7 +207,7 @@ class VideoMenu(unittest.TestCase):
                 edited, = [n for n in after.roots if after.decode(n) == ("WINDOW", name)]
                 previous = [tree(before, n) for n in original.children]
                 added = [n for n in edited.children if tree(after, n) not in previous]
-                self.assertEqual(len(added), 4 if name == "options_controller" else 1)
+                self.assertEqual(len(added), 6 if name == "options_controller" else 1)
                 self.assertEqual([tree(after, n) for n in edited.children if n not in added], previous)
                 entry, = [n for n in added if dict(after.decode(c) for c in n.children).get("SCRIPT_PRESSED") ==
                           ("darkrecomp.keybindings" if name == "options_controller"
@@ -236,7 +238,7 @@ class VideoMenu(unittest.TestCase):
                         if after.decode(n)[0] == "WINDOW"]
             label, = [c for c in controls if c.get("TEXT") == "sc, MOUSE SENSITIVITY"]
             button, = [c for c in controls if c.get("SCRIPT_PRESSED") == "darkrecomp.mouse_sensitivity"]
-            help_text, = [c for c in controls if c.get("TEXT") == "sc, LEFT/RIGHT: CHANGE; CONFIRM: NEXT"]
+            help_text, = [c for c in controls if c.get("TEXT") == "sc, ALTERNATE MOVEMENT IS EXPERIMENTAL"]
             self.assertEqual(label["RGN"], "1,17,10,1")
             self.assertEqual(button["RGN"], "11,17,8,1")
             self.assertEqual(button["CLASSNAME"], "CubeButton")
@@ -257,7 +259,12 @@ class VideoMenu(unittest.TestCase):
                     self.assertTrue(x + width <= ox or ox + ow <= x or y + height <= oy or oy + oh <= y,
                                     f"mouse setting overlaps {other}")
             actions = [c for c in controls if c.get("CLASSNAME") in ("CubeButton", "CubeOptionButton")]
-            self.assertEqual(actions[-1], button)
+            movement, = [c for c in actions if c.get("SCRIPT_PRESSED") == "darkrecomp.movement_style"]
+            self.assertEqual(actions[-2:], [button, movement])
+            self.assertNotIn("darkrecomp.movement_speed", [c.get("SCRIPT_PRESSED") for c in actions])
+            self.assertEqual(movement["RGN"], "9,18,11,1")
+            self.assertEqual(movement["ALWAYSPAINT"], "1")
+            self.assertEqual(movement["TEXT"], "sc, < " + "ORIGINAL".center(18) + " >")
             keyboard, = [c for c in actions if c.get("SCRIPT_PRESSED") == "darkrecomp.keybindings"]
             invert, = [c for c in actions if c.get("OPTION") == "OPT\\CONTROLLER_INVERTYAXIS"]
             self.assertLess(actions.index(keyboard), actions.index(invert))
@@ -282,10 +289,12 @@ class VideoMenu(unittest.TestCase):
                         self.assertEqual(text, text.upper(), name)
 
     def test_keyboard_pages_cover_both_slots_and_preserve_same_level_navigation(self):
-        self.assertEqual(len(KEYBOARD_ACTIONS), 26)
-        self.assertEqual(KEYBOARD_ACTIONS[24:], ("PREV DIALOGUE", "NEXT DIALOGUE"))
-        self.assertEqual(KEYBOARD_PRIMARY[24:], ("3", "4"))
-        self.assertEqual(KEYBOARD_SECONDARY[24:], ("WHEEL UP", "WHEEL DN"))
+        self.assertEqual(len(KEYBOARD_ACTIONS), 27)
+        self.assertEqual(KEYBOARD_ACTIONS[24:26], ("PREV DIALOGUE", "NEXT DIALOGUE"))
+        self.assertEqual(KEYBOARD_PRIMARY[24:26], ("3", "4"))
+        self.assertEqual(KEYBOARD_SECONDARY[24:26], ("WHEEL UP", "WHEEL DN"))
+        self.assertEqual(KEYBOARD_ACTIONS[26:], ("WALK (ALTERNATE)",))
+        self.assertEqual(KEYBOARD_PRIMARY[26:], ("ALT",))
         for registry, _ in registries(self.output):
             covered = []
             keyboard_pages = [n for n in registry.roots if registry.decode(n)[1].startswith("darkrecomp_keyboard_")]
@@ -309,7 +318,7 @@ class VideoMenu(unittest.TestCase):
                     header, = [c for c in controls if c.get("TEXT") == text]
                     self.assertEqual((header["CLASSNAME"], header["RGN"]), ("CubeText", region))
                 bindings = [c for c in controls if c.get("SCRIPT_PRESSED", "").startswith("darkrecomp.keyboard.bind.")]
-                expected = list(range((page_number - 1) * 6, min(page_number * 6, 26)))
+                expected = list(range((page_number - 1) * 6, min(page_number * 6, 27)))
                 self.assertEqual([c["SCRIPT_PRESSED"] for c in bindings],
                     [f"darkrecomp.keyboard.bind.{action}.{slot}" for action in expected for slot in range(2)])
                 for row, action in enumerate(expected):
@@ -339,8 +348,8 @@ class VideoMenu(unittest.TestCase):
                 self.assertFalse(any(c.get("ID") == "DARKRECOMP_KEYBOARD_STATUS" for c in controls))
                 self.assertNotIn("darkrecomp.keyboard.status", scripts)
                 self.assertIn(f"sc, PAGE {page_number}/5", [c.get("TEXT") for c in controls])
-            self.assertEqual(covered, [(action, slot) for action in range(26) for slot in range(2)])
-            self.assertEqual(len(covered), 52)
+            self.assertEqual(covered, [(action, slot) for action in range(27) for slot in range(2)])
+            self.assertEqual(len(covered), 54)
 
     def test_keyboard_columns_and_footer_fit_the_original_cell_grid(self):
         for registry, _ in registries(self.output):
@@ -554,7 +563,10 @@ class VideoMenu(unittest.TestCase):
                     self.assertEqual((x, width), (11, 8))
                     self.assertEqual(len(props["TEXT"][4:]), width * 2,
                                      "initial value must reserve the same glyph width as live values")
-                    self.assertTrue(props["TEXT"].startswith("sc, < ") and props["TEXT"].endswith(" >"))
+                    if props["SCRIPT_PRESSED"] == "darkrecomp.fov":
+                        self.assertFalse(props["TEXT"][4:].strip())
+                    else:
+                        self.assertTrue(props["TEXT"].startswith("sc, < ") and props["TEXT"].endswith(" >"))
                 # Retail option values paint inside their option button's region.
                 overlay = props["CLASSNAME"] == "CubeOptionMeter" or (
                     props["CLASSNAME"] == "CubeText" and props.get("GROUP") == "colorprofile")
@@ -629,8 +641,8 @@ class VideoMenu(unittest.TestCase):
                             if registry.decode(prop)[0] == "SCRIPT_PRESSED"
                             and registry.decode(prop)[1].startswith("darkrecomp.keyboard.bind.")]
         self.assertEqual(dialogue_scripts, [f"darkrecomp.keyboard.bind.{action}.{slot}"
-                                          for action in (24, 25) for slot in range(2)],
-                         "startup cache must include both slots for the independent dialogue bindings")
+                                      for action in (24, 25, 26) for slot in range(2)],
+                         "startup cache must include dialogue and movement modifier bindings")
         profiles = [dict(registry.decode(prop) for prop in child.children)
                     for child in page.children if registry.decode(child)[0] == "WINDOW"
                     and dict(registry.decode(prop) for prop in child.children).get("GROUP") == "colorprofile"]

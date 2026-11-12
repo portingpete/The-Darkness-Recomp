@@ -15,6 +15,7 @@
 #include "keyboard_settings.h"
 #include "mouse_settings.h"
 #include "runtime/native/keyboard_menu.h"
+#include "runtime/native/movement_settings.h"
 #include "display_options.h"
 #include "display_window.h"
 #include "display_settings.h"
@@ -335,6 +336,7 @@ int wmain(int argc, wchar_t** argv) {
         }
         const auto& settingsPath = dataPaths.settings;
         initializeGameLanguageSetting(loadGameLanguage(settingsPath));
+        setMovementStyle(loadMovementStyle(settingsPath));
         if (overrideLanguage) overrideGameLanguageForRun(commandLineLanguage);
         setFieldOfViewSetting(overrideFov ? commandLineFov : DarkRecomp::loadFieldOfView(settingsPath));
         setDrawDistanceSetting(overrideDrawDistance ? commandLineDrawDistance : DarkRecomp::loadDrawDistance(settingsPath));
@@ -724,6 +726,13 @@ int wmain(int argc, wchar_t** argv) {
             KeyboardMenuSaveRequest keyboardSave;
             {
             StallProfiler::Scope requests(StallProfiler::Section::Other, "native input settings requests");
+            if (takeMovementStyleSaveRequest()) {
+                const auto style = movementStyle();
+                const bool saved = saveMovementStyle(settingsPath, style);
+                reportMovementStyleSave(saved);
+                std::printf("[MovementSettings] Style=%.*s save=%u\n", int(movementStyleName(style).size()),
+                    movementStyleName(style).data(), unsigned(saved));
+            }
             if (takeMouseSensitivitySaveRequest()) {
                 StallProfiler::Scope save(StallProfiler::Section::FileIO, "native mouse sensitivity save");
                 const auto value = nativeInput().mouseSensitivity();
