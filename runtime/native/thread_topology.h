@@ -27,6 +27,21 @@ inline bool applicationSystemThreadRole(uint32_t entry, uint32_t vtable, uint32_
         callback == applicationSystemThreadCallback;
 }
 
+// Windows thread priority for a guest KeSetBasePriorityThread value. The title
+// raises its four resource-pool workers to +1, which on the console only orders
+// them against other threads on their own hardware thread. Windows applies
+// priority across every core the process may use (these workers also escape
+// their guest affinity), so on a four-core host CPU-bound pool jobs at
+// ABOVE_NORMAL kept the engine and application system threads (NORMAL) ready
+// but unscheduled during area loads, stalling engine frames for 100 ms-2.4 s.
+// Pool workers therefore run at most at the engine's priority; the
+// guest-visible value is unchanged. keepGuestPriority (DARK_POOL_PRIORITY=guest)
+// restores the direct mapping.
+inline int hostThreadPriority(int32_t guestPriority,bool resourcePoolWorker,bool keepGuestPriority=false) noexcept {
+    const int priority=std::clamp(guestPriority,-2,2);
+    return resourcePoolWorker && !keepGuestPriority ? (std::min)(priority,0) : priority;
+}
+
 // Guest processor numbers are synchronization identities, not Windows logical
 // processor indices. Prefer different physical cores over SMT siblings. On an
 // eight-P-core host, leave two performance cores free for the native engine

@@ -331,6 +331,11 @@ static void testStallWatchStackWalk() {
 }
 static void testWorkerScheduling(PPCContext& ctx, uint32_t scratch) {
     auto* base = memory->base();
+    check(hostThreadPriority(1, true) == 0 && hostThreadPriority(2, true) == 0 &&
+          hostThreadPriority(-1, true) == -1 && hostThreadPriority(-7, true) == -2 &&
+          hostThreadPriority(1, false) == 1 && hostThreadPriority(9, false) == 2 &&
+          hostThreadPriority(1, true, true) == 1,
+          "Resource-pool host priority policy is wrong");
     check(memory->read32(resourcePoolThreadVtable + 48) == resourcePoolThreadCallback,
           "Resource pool scheduling fixture does not match the retail callback");
     check(resourcePoolThreadRole(resourcePoolThreadEntry, resourcePoolThreadVtable, resourcePoolThreadCallback) &&
@@ -400,9 +405,11 @@ static void testWorkerScheduling(PPCContext& ctx, uint32_t scratch) {
         check(base[processorByte] == (fixture.initialMask == 32 ? 5 : 4),
               "Worker creation changed its guest PCR identity");
         const int priority = fixture.initialMask == 32 ? 0 : 1;
+        // Resource-pool workers keep the guest value but never run above the engine.
+        const int hostPriority = fixture.resource ? 0 : priority;
         ctx.r3.u64 = threadObject; ctx.r4.s64 = priority;
         __imp__KeSetBasePriorityThread(ctx, base);
-        check(ctx.r3.s32 == 0 && GetThreadPriority(native->handle) == priority,
+        check(ctx.r3.s32 == 0 && GetThreadPriority(native->handle) == hostPriority && native->priority == priority,
               "Resource policy priority fixture failed");
         // Mutating the argument after creation must not reclassify the worker.
         const bool qualified = fixture.resource || fixture.application;
@@ -419,7 +426,7 @@ static void testWorkerScheduling(PPCContext& ctx, uint32_t scratch) {
             check(GetThreadGroupAffinity(native->handle, &actual), "Cannot inspect resource worker affinity");
             const DWORD_PTR expected = qualified ? allowed : nativeGuestAffinity(guestMask, allowed, actual.Group);
             check(actual.Mask == expected && native->priority == priority &&
-                  GetThreadPriority(native->handle) == priority,
+                  GetThreadPriority(native->handle) == hostPriority,
                   "Resource scheduling repinned a qualified worker, broadened another worker, or changed priority");
             previous = guestMask;
         }

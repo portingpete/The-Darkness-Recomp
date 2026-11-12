@@ -3593,8 +3593,21 @@ PPC_FUNC(__imp__KeSetBasePriorityThread) {
     if (!thread) PPC_RECOMP_FAILURE(ctx, ctx.r3.u32, "unknown thread object in priority change");
     int32_t previous = thread->priority;
     int32_t priority = ctx.r4.s32;
-    if (!SetThreadPriority(thread->handle, std::clamp(priority, -2, 2)))
+    static const bool keepGuestPriority = [] {
+        const char* value = std::getenv("DARK_POOL_PRIORITY");
+        const bool keep = value && std::strcmp(value, "guest") == 0;
+        std::fprintf(stderr, "[Scheduling] resource-pool priority=%s (DARK_POOL_PRIORITY=guest keeps the title's +1)\n",
+            keep ? "guest" : "engine");
+        return keep;
+    }();
+    const int host = hostThreadPriority(priority, thread->resourcePoolWorker, keepGuestPriority);
+    if (!SetThreadPriority(thread->handle, host))
         PPC_RECOMP_FAILURE(ctx, ctx.r3.u32, "Windows thread priority change failed");
+    static std::atomic<unsigned> reports{};
+    if (reports.fetch_add(1, std::memory_order_relaxed) < 32)
+        std::fprintf(stderr, "[Scheduling] tid=%lu guestPriority=%d hostPriority=%d resourcePool=%u applicationSystem=%u\n",
+            GetThreadId(thread->handle), priority, host, unsigned(thread->resourcePoolWorker),
+            unsigned(thread->applicationSystemWorker));
     thread->priority = priority;
     ctx.r3.s64 = previous;
 }
