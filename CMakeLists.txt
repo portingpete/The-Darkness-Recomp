@@ -70,6 +70,7 @@ target_sources(DarkRuntime PRIVATE runtime/native/draw_distance.cpp)
 target_sources(DarkRuntime PRIVATE runtime/native/graphics_settings.cpp runtime/native/video_settings_menu.cpp)
 target_sources(DarkRuntime PRIVATE runtime/native/light_flicker.cpp)
 target_sources(DarkRuntime PRIVATE runtime/native/mouse_look.cpp)
+target_sources(DarkRuntime PRIVATE runtime/native/application_poll.cpp)
 
 target_sources(DarkRuntime PRIVATE runtime/native/movement.cpp runtime/native/movement_settings.cpp)
 target_sources(DarkRuntime PRIVATE runtime/native/menu_pointer.cpp runtime/native/keyboard_bindings.cpp)
