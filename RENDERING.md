@@ -732,6 +732,23 @@ CPU further but added 100-780 ms stalls at 60 FPS in every run and cost about
 10% of uncapped four-core FPS; keeping a fast core out of the guest affinity
 map on small hosts showed no improvement.
 
+`DARKRECOMP_STALL_WATCH=<ms>` (`app/windows/stall_watch.cpp`) diagnoses engine
+stalls that last longer than a frame. When the engine has finished no frame for
+that long, a time-critical watcher samples every 10 ms until the next engine
+frame. It records every process thread's
+Windows state and the reason it last stopped running (`WrDispatchInt` or
+`WrPreempted`: a higher-priority thread took the processor; `UserRequest`: an
+ordinary wait), the CPU cycles of registered threads, and the guest call stack
+of the engine thread and of each worker started through `821FBB00`. The stack is
+walked through the back chain at `r1`, with the saved LR at back chain - 8. It
+then prints one `[StallWatch]` report per stall. Guest memory is read only after
+`VirtualQuery` shows a committed page without `PAGE_GUARD` or `PAGE_NOACCESS`:
+an unchecked read faulted on a broken chain, because clang-cl's `__try` does
+not cover loads inlined into the guarded block, and could consume a title guard
+page. Workers are registered from a `821FBB00` override, so the AOT inputs under
+`runtime/native` are untouched. With the variable unset, each hook is one
+relaxed atomic load.
+
 The native delay import retains the original signed 100 ns interval using a
 Windows [high-resolution waitable timer](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-createwaitabletimerexw).
 Negative intervals remain relative and positive intervals remain absolute UTC

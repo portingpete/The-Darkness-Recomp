@@ -4,6 +4,7 @@
 #include "runtime/native/native_timed_wait.h"
 #endif
 #include "runtime/native/stall_profiler.h"
+#include "app/windows/stall_watch.h"
 #include "engine_performance.h"
 #include "prompt_origin.h"
 #include "simple_mesh.h"
@@ -1824,7 +1825,7 @@ PPC_FUNC(sub_82867620) {
         DarkRecomp::Native::previewEndFrame();
         // World frames finish at the original SDK swap entry. Count this
         // producer stream separately from host presentation/queue retries.
-        DarkRecomp::Native::StallProfiler::frameBoundary("guest");
+        DarkRecomp::Native::StallProfiler::frameBoundary("guest"); DarkRecomp::Native::StallWatch::engineFrame();
     }
     _mm_setcsr(mxcsr);
     __imp__sub_82867620(ctx,base);
@@ -1839,7 +1840,7 @@ PPC_FUNC(sub_82241A68) {
     // Boundaries are entry-to-entry: original pageflip/SDK waits remain counted.
     if(!DarkRecomp::Native::previewWorldActive()) {
         DarkRecomp::Native::previewEndFrame();
-        DarkRecomp::Native::StallProfiler::frameBoundary("guest");
+        DarkRecomp::Native::StallProfiler::frameBoundary("guest"); DarkRecomp::Native::StallWatch::engineFrame();
     }
     __imp__sub_82241A68(ctx, base);
 }

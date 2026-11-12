@@ -5,6 +5,7 @@
 #include "runtime/native/application_poll.h"
 #include "runtime/native/objects.h"
 #include "renderer/engine/simple_mesh.h"
+#include "app/windows/stall_watch.h"
 #include "ppc_recomp_shared.h"
 #include <atomic>
 #include <memory>
@@ -296,6 +297,38 @@ static void testInflate(PPCContext& ctx, const char* fixturePath) {
     PPC_LOOKUP_FUNC(base, PPC_CODE_BASE + 4) = freeOriginal;
     puts("Original game decompressor matches independent stored, fixed and dynamic DEFLATE fixtures.");
 }
+// DARKRECOMP_STALL_WATCH walks other threads' guest stacks while they run. A
+// broken back chain must stop the walk without faulting or consuming a guard.
+static void testStallWatchStackWalk() {
+    auto* base = memory->base();
+    const uint32_t stack = memory->allocate(3 * 4096, 4096);
+    check(stack != 0, "Stack walk fixture allocation failed");
+    memset(base + stack, 0, 3 * 4096);
+    const uint32_t sp0 = stack + 0x100, sp1 = stack + 0x200, sp2 = stack + 0x300;
+    memory->write32(sp0, sp1); memory->write32(sp1 - 8, 0x82000010);
+    memory->write32(sp1, sp2); memory->write32(sp2 - 8, 0x82000020);
+    memory->write32(sp2, 0);
+    uint32_t frames[8]{};
+    check(StallWatch::walkGuestStack(base, sp0, frames, 8) == 2 && frames[0] == 0x82000010 &&
+          frames[1] == 0x82000020, "Stack walk did not follow the back chain");
+    check(StallWatch::walkGuestStack(base, sp0, frames, 1) == 1, "Stack walk exceeded its capacity");
+    const uint32_t page = stack + 0x2000;
+    memory->write32(sp2, page + 0x10);
+    for (const DWORD protection : {DWORD(PAGE_READWRITE | PAGE_GUARD), DWORD(PAGE_NOACCESS)}) {
+        DWORD saved = 0, ignored = 0;
+        check(VirtualProtect(base + page, 4096, protection, &saved), "Cannot protect stack walk fixture");
+        check(StallWatch::walkGuestStack(base, sp0, frames, 8) == 2, "Stack walk read a protected guest page");
+        MEMORY_BASIC_INFORMATION info{};
+        check(VirtualQuery(base + page, &info, sizeof(info)) && info.Protect == protection,
+              "Stack walk consumed a guest PAGE_GUARD");
+        check(VirtualProtect(base + page, 4096, saved, &ignored), "Cannot restore stack walk fixture");
+    }
+    uint32_t word = 0;
+    check(!StallWatch::readGuestWord(base, stack + 2, word) && !StallWatch::readGuestWord(base, 0xFFFFFFFC, word),
+          "Unaligned or out-of-range guest word was read");
+    memory->release(stack);
+    puts("Stall watchdog stack walk stops at broken chains without faults or consumed guards.");
+}
 static void testWorkerScheduling(PPCContext& ctx, uint32_t scratch) {
     auto* base = memory->base();
     check(memory->read32(resourcePoolThreadVtable + 48) == resourcePoolThreadCallback,
@@ -536,6 +569,7 @@ static void testSynchronization(PPCContext& ctx, uint32_t scratch) {
     check(memory->allocatedBytes() == allocatedBefore, "Closed and terminated thread leaked its guest allocation");
     PPC_LOOKUP_FUNC(base, probeAddress) = original;
     testWorkerScheduling(ctx, scratch);
+    testStallWatchStackWalk();
 }
 static void testVsnprintf(PPCContext& ctx) {
     auto* base = memory->base();
