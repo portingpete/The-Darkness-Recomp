@@ -2,6 +2,7 @@
 #include "runtime/native/audio_driver.h"
 #include "runtime/native/display_mode.h"
 #include "runtime/native/thread_topology.h"
+#include "runtime/native/application_poll.h"
 #include "runtime/native/objects.h"
 #include "renderer/engine/simple_mesh.h"
 #include "ppc_recomp_shared.h"
@@ -440,6 +441,14 @@ static void testSynchronization(PPCContext& ctx, uint32_t scratch) {
         check(mapGuestProcessors({{0,0,0,0},{0,1,0,0},{0,2,1,0},{0,3,1,0}},0,15)==
               std::array<unsigned,6>{0,2,0,2,0,2},"Small host did not prefer different physical cores");
         check(guestProcessorMask(63,mapGuestProcessors({},0,0))==0,"Empty host topology produced a processor mask");
+        // Issue #162: only the unpaced pump pass inside 825A4278 yields; 0 restores the original loop.
+        check(applicationPollModeFrom(nullptr)==ApplicationPollMode::yield &&
+              applicationPollModeFrom("0")==ApplicationPollMode::original &&
+              applicationPollModeFrom("1")==ApplicationPollMode::yield &&
+              applicationPollModeFrom("00")==ApplicationPollMode::yield,"Application poll mode parsing changed");
+        check(applicationPollPass(true,0x825A4388) && !applicationPollPass(false,0x825A4388) &&
+              !applicationPollPass(true,0x825A42A0) && !applicationPollPass(true,0x825A42E4),
+              "Application poll yields outside the unpaced pump pass");
     }
     auto* base = memory->base();
     auto wait = [&](uint32_t handle) {

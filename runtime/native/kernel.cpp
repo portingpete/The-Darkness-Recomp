@@ -3620,8 +3620,8 @@ PPC_FUNC(__imp__KeSetAffinityThread) {
     InterlockedExchange8(reinterpret_cast<volatile CHAR*>(base + thread->guestAddress - Memory::threadObjectOffset + 0x10c), CHAR(processor));
     static std::atomic<unsigned> reports{};
     if(reports.fetch_add(1,std::memory_order_relaxed)<32)
-        std::fprintf(stderr,"[Scheduling] guestMask=%02X nativeMask=%llX group=%u guestProcessor=%u resourcePool=%u applicationSystem=%u\n",
-            ctx.r4.u32,static_cast<unsigned long long>(selected),unsigned(group.Group),unsigned(processor),
+        std::fprintf(stderr,"[Scheduling] tid=%lu guestMask=%02X nativeMask=%llX group=%u guestProcessor=%u resourcePool=%u applicationSystem=%u\n",
+            GetThreadId(thread->handle),ctx.r4.u32,static_cast<unsigned long long>(selected),unsigned(group.Group),unsigned(processor),
             unsigned(thread->resourcePoolWorker),unsigned(thread->applicationSystemWorker));
     ctx.r3.u64 = 0;
 }

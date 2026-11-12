@@ -703,6 +703,35 @@ route holds 120 FPS with worst 5s windows under 18ms
 (`stutter-diag4-20260915-120956`). Guest timing is unaffected (priority only
 changes scheduling, and the engine's own priority is untouched).
 
+The title's application system thread (callback `820DE068`, unpinned since the
+stall-profiler change) calls `825A4278` once per frame. While bit 0 of the
+object's `[[+8]+4]` word stays set, that function reads the clock, checks its
+own timeout, releases the object lock, pumps `822360B8` (two more guest locks)
+and relocks, with no delay; its sibling loop above sleeps 10 ms per pass. In
+this port the loop ran about 1.8 million passes per second and kept a host
+core busy at any frame cap. On a four-core CPU without SMT (issue #162, i5-7400) it competed
+with the engine, display and worker threads for every core and for those
+locks. `runtime/native/application_poll.cpp` now calls `SwitchToThread` after
+each pump returns at `825A4388`, where the thread holds none of the locks:
+threads ready on that processor run first, and with nothing ready the call
+returns at once. The predicate, timeout, lock order and pump calls are
+unchanged. `DARK_APP_POLL=0` restores the original loop, and the log reports
+`[ApplicationPoll]` waits, passes and yields every 30 seconds.
+
+Measured with `chinatown-tour` at 60 FPS, the process restricted to four
+i9-14900K E-cores (`start /affinity F0000`) to approximate the reporter's CPU,
+one executable, five runs per mode in alternating order: process CPU 1.50 to
+1.26 cores, p99 frame interval 27.4 to 18.0 ms, frames over 33 ms 18.6 to 6.4
+per run. Frames over 50 ms (2.8 per run) and the rare 100-770 ms engine stalls
+(one per five runs in each mode) did not change; those stalls occur while
+walking into new areas and need separate work. Uncapped on four cores, single
+runs varied from 229 to 262 FPS in both modes. On all 32 logical processors
+the modes matched: 458.8 and 462.0 FPS uncapped, 1.51 and 1.52 cores at
+60 FPS. Two alternatives were rejected: sleeping 0.5 ms between passes cut
+CPU further but added 100-780 ms stalls at 60 FPS in every run and cost about
+10% of uncapped four-core FPS; keeping a fast core out of the guest affinity
+map on small hosts showed no improvement.
+
 The native delay import retains the original signed 100 ns interval using a
 Windows [high-resolution waitable timer](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-createwaitabletimerexw).
 Negative intervals remain relative and positive intervals remain absolute UTC
