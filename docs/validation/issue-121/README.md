@@ -50,7 +50,40 @@ vsync off and FOV 108. The camera probe confirmed the FOV setting. Both processe
 loaded System32 D3D11/DXGI. Mission loading and the power unlock were setup; no
 original assets were changed.
 
-The baseline reproduced large orange lower-edge flashes at **99.833 seconds**,
+### Green markings from the report
+
+Cycling forward twice selected green markings; the first advance selected blue.
+With those green markings, clean main reproduced large diffuse flashes along the
+bottom at **329.717 seconds**. A comparable candidate view at **113.567 seconds**
+retained the bright green head markings without the detached diffuse patches.
+The baseline included interactive pauses while selecting the power; the candidate
+replayed the completed input tape from startup. Their camera/animation poses are
+similar, not identical, and the video timestamps are not synchronized.
+
+- [Green baseline clip, source seconds 329..331](green-before.mp4).
+- [Green candidate clip, source seconds 113..115](green-after.mp4).
+
+![Green baseline: diffuse patches at the bottom](green-before.png)
+
+![Green candidate: bright head markings without the detached patches](green-after.png)
+
+The green candidate inspection recorded both corrected HDR Gaussian passes.
+An identical green-color screen checked 1,525 baseline frames in seconds
+318..343.4 and 1,201 candidate frames in seconds 108..128. The baseline contained
+multiple qualifying groups. The candidate contained one qualifying frame,
+described below; these are search aids rather than perceived-flash counts.
+
+### Remaining event — issue stays open
+
+The candidate still shows sharp green shapes at the lower left during an extreme
+camera sweep at **124.567 seconds**: [full frame](remaining-green-event.png),
+[source seconds 124..126](remaining-green-event.mp4). Its source has not been
+established. The atlas correction does not establish a fix for this remaining
+event, and **issue 121 remains open**.
+
+### Orange control
+
+The baseline also reproduced large orange lower-edge flashes at **99.833 seconds**,
 following an earlier independent witness at 99.867 seconds. The candidate kept
 the bright head markings and world lighting without the detached bottom patch.
 
@@ -76,9 +109,9 @@ provide visual evidence for the reproduced bright orange flash.
 
 Both game and recorder exited normally. Before/after membership, size and
 SHA256 checks confirmed real settings and all three saves were unchanged.
-This completed comparison used orange markings. Green markings have now been
-acquired by cycling forward twice; that separate comparison is in progress.
-The correction operates on the common HDR bloom pass.
+The correction operates on the common HDR bloom pass. The evidence supports the
+atlas-fringe correction in orange and green views, while retaining the remaining
+event above for further investigation.
 
 [Machine-readable identities and results](proof.json) identify the frozen builds.
 Original-derived command, geometry, texture and GPU dumps remain private and are
