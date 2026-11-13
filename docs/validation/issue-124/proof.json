@@ -1,0 +1,155 @@
+{
+  "issue": 124,
+  "date": "2026-11-13",
+  "tested_by": "gpt-6.1-terra, ultra reasoning",
+  "current_source_commit": "cf4120722d8e1d704efce244790b158a85f44988",
+  "current_exe_sha256": "476d189416835ba555d68aa7c9cefeebd22f3f0673c3a73a43857b90c3ab6c7f",
+  "current_native_fingerprint": "2378ebf58002ccd5063ffb0da5e11d64c1ea41056eb00c98b933ce2ac695e216",
+  "old_tag": "v0.1.7",
+  "old_source_commit": "91ff24708cc2cb326da580fab78d1202751f75b5",
+  "old_exe_sha256": "875d4381115e32886aaa260bf35e35c12cdcfd07fcf3278c25a6bb29fcaa16a1",
+  "controller_sha256": "41c90e08c0680526b860afcf0da4a784a36187f2f112e8aef38461bc63503c0e",
+  "scheduling_fixes": [
+    {
+      "pr": 163,
+      "commit": "ac21312bdab444409fc55d158d9a4e33e0922114"
+    },
+    {
+      "pr": 164,
+      "commit": "2b8a4570bfb914b609e64f6c27ee7da41a296f25"
+    }
+  ],
+  "release_status": "Fixes are on main; v0.1.10 does not contain either scheduling fix.",
+  "platform": "Native Windows; Intel i9-14900K; NVIDIA RTX 5080",
+  "game_affinity": "0x30000 (logical processors 16 and 17, two E-cores)",
+  "process_priority": "Normal; no Task Manager priority change or high-priority stall watcher",
+  "graphics": "Live process inventories confirm System32 D3D11 and DXGI; no local d3d11 proxy",
+  "settings": {
+    "output": "1280x720 windowed",
+    "render": "1280x720",
+    "fps": 60,
+    "vsync": false,
+    "fov": "Original (0)",
+    "draw_distance": "Original/unlimited (current --draw-distance 0)",
+    "scene_workers": 0,
+    "movement": "Original default"
+  },
+  "route": {
+    "mission": "NY1_Chinatown:ny1+layer1",
+    "setup": "Developer mission load, active-player verification, invincibility, menu close, 2s settle; excluded from controller phase",
+    "traversal": "Subway stairs to sidewalk, brick corner, right strafe, crosswalk",
+    "input": "W 4000ms; W 3000ms; D 1600ms; W 3000ms; 25s controller observation",
+    "position_start": [
+      -1848,
+      3440,
+      -120
+    ],
+    "limit": "Identical initial replay and position; input polling and path diverge after starvation. No full-route equal-workload FPS claim."
+  },
+  "isolation": "Fresh identical 33-byte settings seed, no saves or app shader cache at start, private full game-data copy. Real save/settings membership, sizes and SHA256 unchanged. No process-memory writes.",
+  "cases": [
+    {
+      "case": "clean-current-2core-01",
+      "csv": "default-no-video.csv",
+      "sha256": "c20914dff4fdb7ce369c084f99dc66bbd82352742b62e9bfd7ed13b4796d4d00",
+      "source_sha256": "c20914dff4fdb7ce369c084f99dc66bbd82352742b62e9bfd7ed13b4796d4d00",
+      "phase_timeline_ms": [
+        64237.4246,
+        89316.6412
+      ],
+      "population": "world=1 and endpoint t_ms within inclusive controller phase",
+      "endpoints": 1388,
+      "max_interval_ms": 120.514,
+      "intervals_ge_1000ms": 0,
+      "wholly_in_phase_intervals_ge_1000ms": 0,
+      "environment": {},
+      "timeline_rows": 4779,
+      "trailer": [
+        "# rows=4779 dropped=0 unmatched_gpu_results=1"
+      ],
+      "game_exit_code": 0,
+      "controller_exit_code": 0
+    },
+    {
+      "case": "video-clean-current-2core-01",
+      "csv": "default-video.csv",
+      "sha256": "dd2e9658007b2c4eae74b6e4b5f13efb06a0647d15a15ff4d9c56e94c1d0c113",
+      "source_sha256": "dd2e9658007b2c4eae74b6e4b5f13efb06a0647d15a15ff4d9c56e94c1d0c113",
+      "phase_timeline_ms": [
+        64588.9116,
+        89668.5766
+      ],
+      "population": "world=1 and endpoint t_ms within inclusive controller phase",
+      "endpoints": 1365,
+      "max_interval_ms": 119.614,
+      "intervals_ge_1000ms": 0,
+      "wholly_in_phase_intervals_ge_1000ms": 0,
+      "environment": {},
+      "timeline_rows": 4745,
+      "trailer": [
+        "# rows=4745 dropped=0 unmatched_gpu_results=1"
+      ],
+      "game_exit_code": 0,
+      "controller_exit_code": 0
+    },
+    {
+      "case": "combined-old-scheduling-2core-01",
+      "csv": "legacy-scheduling.csv",
+      "sha256": "1a1c0ffba22f82d33c13243066f72f24a4a0557bbbffc8c7be8f54de53eeca8e",
+      "source_sha256": "1a1c0ffba22f82d33c13243066f72f24a4a0557bbbffc8c7be8f54de53eeca8e",
+      "phase_timeline_ms": [
+        64219.776,
+        89299.6612
+      ],
+      "population": "world=1 and endpoint t_ms within inclusive controller phase",
+      "endpoints": 430,
+      "max_interval_ms": 6007.493,
+      "intervals_ge_1000ms": 5,
+      "wholly_in_phase_intervals_ge_1000ms": 4,
+      "environment": {
+        "DARK_POOL_PRIORITY": "guest",
+        "DARK_APP_POLL": "0"
+      },
+      "timeline_rows": 4001,
+      "trailer": [
+        "# rows=4001 dropped=0 unmatched_gpu_results=1"
+      ],
+      "game_exit_code": 0,
+      "controller_exit_code": 0
+    }
+  ],
+  "historical_trace": {
+    "no_video_outlier_ms": 6537.496,
+    "video_outlier_ms": 6732.063,
+    "source": "old-build-outliers.txt",
+    "limit": "Rate-limited sparse trace, not a complete interval record. Buffered log clocks cannot establish exact video/pose alignment."
+  },
+  "video": {
+    "file": "old-vs-main.mp4",
+    "sha256": "de384c1395181099655ffa9c4d88ab7c37b9ca57629371c8dc20a572cdea297a",
+    "duration_s": 24,
+    "fps": 30,
+    "audio": false,
+    "source_capture": "Owned-window Windows Graphics Capture (FFmpeg gfxcapture), NVENC; recorder affinity 0xfffcffff excludes game cores",
+    "source_old_sha256": "09978a2165ca82f5bef0988f62e4904bee76c1200c95a9d08bd1a5f4025e926d",
+    "source_current_sha256": "f971d48366e3d87fed14517d5e7c6b80df5bcb5dad5a7182faada665a1864236",
+    "source_start_s": {
+      "old": 105.7891951,
+      "current": 97.7849833
+    },
+    "alignment": "Approximate controller-start alignment estimated from recorder QPC/progress receipt; latency is not bounded. CFR may duplicate captured frames. Independent game telemetry and read-only poses corroborate old loss of progress.",
+    "old_stream_duration_s": 130.233333,
+    "current_stream_duration_s": 122.966667,
+    "coverage": "24-second excerpts; approximate old mapping does not cover the final ~0.64s of its full 25s controller phase. Not physical scanout."
+  },
+  "limitations": [
+    "Reporter hardware and exact room are unknown. This reproduces a scheduling-sensitive freeze under deliberately restricted CPU capacity, not that exact machine.",
+    "The CPU0 affinity workaround was not tested; both game tests already exclude CPU0 by using E16/E17.",
+    "One combined scheduling intervention changes two mechanisms; neither individual effect is isolated.",
+    "OS and driver caches uncontrolled. Observer overhead unmeasured. Current timeline adds GPU queries/logging absent from the historic build.",
+    "Default vs restored-scheduling no-video comparison uses the same executable, timeline, controller, seed and data; one intervention case, two clean default cases.",
+    "Accepted software frame intervals are not physical display timing. Some shorter hitches remain.",
+    "An earlier current run with an unverified local SCSKiller proxy was excluded; its files are preserved locally.",
+    "No Proton or other hardware validation; no release artifacts published."
+  ]
+}
