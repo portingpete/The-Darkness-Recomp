@@ -28,10 +28,12 @@ The executable and original game content were unchanged during the comparison.
 Process inspection used read-only access; no process memory was written.
 No original game binaries, extracted data or decompiled code are included here.
 
-Automated coverage exercises all five animation modes through the original
-guest color evaluator, compares the default output with the original waveform,
-checks live restoration, disabled lights, color fades and source-state
-preservation, and verifies settings persistence and both menu layouts.
+Automated coverage exercises the original guest color evaluator, compares the
+default output with the original waveform, and holds its four periodic modes
+steady. Mode 4 is a one-shot burnout used by destroyed lamps and retains its
+original transition to permanent darkness (issue #165). Coverage also checks
+live restoration, disabled lights, color fades, unrelated waveform callers,
+source-state preservation, settings persistence and both menu layouts.
 
 This gameplay evidence covers this room on native Windows. It does not establish
 that every flashing effect is suppressed, or validate a Proton release. Detailed

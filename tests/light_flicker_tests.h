@@ -61,8 +61,8 @@ static void testLightFlicker(PPCContext& ctx) {
             check(evaluate(false, mode, seconds) == normal,
                   "default setting changed original light animation");
             originalAnimated |= normal != first;
-            check(evaluate(true, mode, seconds) == evaluate(false, 0, seconds),
-                  "enabled reduction did not produce steady original light color");
+            check(evaluate(true, mode, seconds) == (mode == 4 ? normal : evaluate(false, 0, seconds)),
+                  "reduction changed burnout or failed to steady a periodic light");
             check(evaluate(false, mode, seconds) == normal,
                   "disabling reduction did not immediately restore the original phase");
             check(evaluate(true, mode, seconds, false) == std::array{0u, 0u, 0u},
@@ -72,20 +72,40 @@ static void testLightFlicker(PPCContext& ctx) {
         for (uint32_t color : {0u, 0x40201000u})
             for (double seconds : {0.0, 0.2, 0.8, 1.0, 2.0})
                 check(evaluate(true, mode, seconds, true, 100, color) ==
-                      evaluate(false, 0, seconds, true, 100, color),
+                      evaluate(false, mode == 4 ? 4 : 0, seconds, true, 100, color),
                       "flicker reduction changed authored color interpolation");
     }
     check(originalAnimated, "light oracle did not exercise a varying waveform");
+    // Destruction selects burnout mode while the enabled flag remains set.
+    // The old unconditional multiplier override relit precisely this state.
+    for (double seconds : {1.0, 2.71, 10.0}) {
+        check(evaluate(false, 4, seconds) == std::array{0u, 0u, 0u},
+              "burnout oracle did not reach permanent darkness");
+        check(evaluate(true, 4, seconds) == std::array{0u, 0u, 0u},
+              "Reduce flicker relit a destroyed lamp with its enabled flag set");
+        check(evaluate(false, 4, seconds) == std::array{0u, 0u, 0u},
+              "toggling flicker reduction revived a burned-out lamp");
+    }
+    for (double seconds : {-0.1, 0.0, 0.013, 0.2, 0.37, 0.8, 0.999})
+        check(evaluate(true, 4, seconds) == evaluate(false, 4, seconds),
+              "flicker reduction changed the one-shot burnout transition");
+    for (unsigned mode : {0u, 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u, 14u, 15u})
+        check(evaluate(true, mode, 0.37) == evaluate(false, mode, 0.37),
+              "flicker reduction changed a non-periodic light mode");
     // The shared waveform utility also serves non-light effects. Its direct
     // callers must remain identical with the option On and Off.
-    auto waveform = [&](bool reduce) {
+    auto waveform = [&](bool reduce, unsigned mode, double seconds) {
         auto settings = saved; settings.reduceLightFlicker = reduce;
         setGraphicsSettings(settings);
         auto call = ctx;
-        call.r6.u64 = 1; call.f1.f64 = 0.37; call.f2.f64 = 2.0; call.f3.f64 = 0.5;
+        call.lr = 0x12345678; // An unrelated caller, not CWObject_Light.
+        call.r6.u64 = mode - 1; call.f1.f64 = seconds; call.f2.f64 = 2.0; call.f3.f64 = 0.5;
         sub_822FDF20(call, base);
         return std::bit_cast<uint64_t>(call.f1.f64);
     };
-    check(waveform(false) == waveform(true), "unrelated effect waveform changed");
-    puts("Light flicker: original oracle, five steady modes, live restore, disabled lights, fades and state preservation passed.");
+    for (unsigned mode = 1; mode <= 5; ++mode)
+        for (double seconds : {0.0, 0.37, 1.0, 2.71})
+            check(waveform(false, mode, seconds) == waveform(true, mode, seconds),
+                  "unrelated effect waveform changed");
+    puts("Light flicker: four periodic modes, original burnout/destroyed lights, live restore, fades, caller isolation and state preservation passed.");
 }
