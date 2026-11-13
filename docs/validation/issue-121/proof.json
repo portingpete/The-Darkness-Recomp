@@ -1,0 +1,68 @@
+{
+  "issue": "https://github.com/portingpete/The-Darkness-Recomp/issues/121",
+  "status": "orange comparison passed; separate green comparison in progress",
+  "base_commit": "bde4837e2f57b4c92671f2938ab88382e21186bb",
+  "baseline_exe_sha256": "476d189416835ba555d68aa7c9cefeebd22f3f0673c3a73a43857b90c3ab6c7f",
+  "candidate_exe_sha256": "cc754112bb87aa896929ae9c951bcf7d21504c030e925cc3a5c5227ba652a426",
+  "candidate_native_fingerprint": "e651f3a87a0f646910c3d1f8a2d44191155655a5dfa840a816c2ca788b787b45",
+  "captured_state": {
+    "guest_buffer": [960, 540],
+    "bloom_reduction": [120, 67],
+    "authored_gaussian_uv_max_y": "67/540",
+    "last_valid_texel_center_y": "66.5/540",
+    "center_fetch_also_requires_clamp": true,
+    "original_data_modified": false
+  },
+  "regression": {
+    "initial_unchanged_renderer_case": "960x540; active gray 0.25; bright HDR exterior",
+    "initial_hardware_result": "failed",
+    "initial_maximum_error": 0.749996,
+    "final_fixture": "spatial interior light, independent bilinear Gaussian oracle, orthographic and uniform far-plane perspective projections, 1280x720 control, cached geometry transitions in both directions",
+    "native_scales": [1, 2, 3],
+    "repeat_short_path_environment": "unset; default enabled",
+    "final_ctest_passed": 6,
+    "final_ctest_failed": 0,
+    "final_ctest_seconds": 14.97,
+    "final_maximum_rgb_error_hardware": 0.000738,
+    "final_maximum_rgb_error_warp": 0.000601,
+    "checks": [
+      "WorldBloomResolutionContract",
+      "WorldBloomResolutionWarpContract",
+      "WorldPostCopyFilterContract",
+      "WorldPostCopyFilterWarpContract",
+      "DarknessArmBloomContract",
+      "DarknessArmBloomWarpContract"
+    ]
+  },
+  "gameplay": {
+    "tester": "gpt-6.1-terra; ultra reasoning",
+    "mission": "NY1_Pier19:ny1+layer1",
+    "initial_orange_patch_witness": "baseline-01 video at 99.867 seconds; fresh paired-baseline-01 at 99.833 seconds",
+    "reported_green_variant_reproduced": false,
+    "green_markings_acquired": true,
+    "green_comparison_pending": true,
+    "paired_results": {
+      "baseline_patch_witness_seconds": 99.833,
+      "candidate_comparable_still_seconds": 100.58333333333333,
+      "still_alignment": "upper-image similarity; approximate pose, not a pixel-matched replay",
+      "baseline_clip_seconds": [99, 101],
+      "candidate_clip_seconds": [100, 102],
+      "candidate_clamp_passes_in_end_inspection": 2,
+      "candidate_uniform_depth_boundary_used": true,
+      "candidate_video_scan_intervals_seconds": [[97, 106], [112, 120]],
+      "candidate_scanned_frames": 1022,
+      "candidate_orange_patch_heuristic_hits": 0,
+      "heuristic_scope": "bottom 160 video rows, every fourth x; R>120, G>40, R>1.3G, R>2B; at least 30 selected pixels; candidate finder, not a perceptual guarantee",
+      "candidate_game_exit_code": 0,
+      "candidate_recorder_exit_code": 0,
+      "real_settings_and_saves_unchanged": true,
+      "render_size": [1920, 1080],
+      "video_size": [1920, 1060],
+      "fps_limit": 60,
+      "bloom": true,
+      "fov_setting": 108,
+      "fov_camera_probe_confirmed": true
+    }
+  },
+  "private_capture_data": "Original-derived command, geometry, texture and GPU readbacks are retained locally and excluded from publication."
+}

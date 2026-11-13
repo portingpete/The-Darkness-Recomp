@@ -474,11 +474,118 @@ static void bloomRetailChainContract(WorldRendererD3D11& renderer,unsigned scale
         scale,actual(672*scale,360*scale,0),maximum,comparisons,mismatches);
     require(mismatches==0,"Retail Final5 halo differs from independent HDR/atlas/LUT oracle");
 }
+static void bloomAtlasFringeContract(WorldRendererD3D11& renderer,unsigned scale) {
+    // The native 1080p mode uses a 960x540 guest buffer. Its integer 8x
+    // reduction is 120x67, whereas the original normalized .125 UV extent
+    // reaches 67.5 rows. The rest of this shared target can still contain
+    // bright scene geometry; it is not part of the reduced bloom image.
+    for(const auto size:{std::array{960u,540u},std::array{1280u,720u}})for(bool perspective:{false,true}) {
+        const auto width=size[0],height=size[1],activeWidth=width/8,activeHeight=height/8;
+        auto seed=colorGradeDraw(colorGradeQuad(activeWidth,activeHeight,width,height),4951,width,height);
+        seed.fragmentName="XREngine_CCFuser";seed.fragmentConstants[0]={1,1,1,1};
+        auto image=std::make_shared<ColorImage>();image->width=activeWidth;image->height=activeHeight;
+        image->authoredMips=true;image->pixels.resize(size_t(activeWidth)*activeHeight*4);
+        BloomImage logical{activeWidth,activeHeight,{}};logical.pixels.resize(size_t(activeWidth)*activeHeight);
+        for(unsigned y=0;y<activeHeight;++y)for(unsigned x=0;x<activeWidth;++x) {
+            const bool light=std::abs(int(x)-int(activeWidth/2))<3 && std::abs(int(y)-int(activeHeight/2))<3;
+            const uint8_t value=light?255:64;
+            auto* pixel=image->pixels.data()+(size_t(y)*activeWidth+x)*4;
+            pixel[0]=pixel[1]=pixel[2]=value;pixel[3]=255;
+            const double stored=bloomRetailStored(double(value)/255);
+            logical.pixels[size_t(y)*activeWidth+x]={stored,stored,stored,1};
+        }
+        seed.textures[1]=image;seed.samplers[1]=colorGradeSampler(false,2);
+        WorldClear clear;clear.targets=seed.targets;clear.viewport=seed.viewport;
+        clear.flags=1;clear.color={16,0,4,1};renderer.clear(clear);
+        require(renderer.draw(seed),"Bloom active-region seed rejected");
+        const auto source=colorGradeResolve(renderer,seed,4952,width,height,26,4);
+        for(bool vertical:{false,true}) {
+            auto geometry=colorGradeQuad(activeWidth,activeHeight,width,height);
+            for(unsigned v=0;v<4;++v)for(unsigned lane=0;lane<2;++lane) {
+                auto* at=geometry->vertices.data()+v*20+12+lane*4;
+                const uint32_t bits=uint32_t(at[0])<<24|uint32_t(at[1])<<16|uint32_t(at[2])<<8|at[3];
+                put(at,std::bit_cast<uint32_t>(std::bit_cast<float>(bits)*.125f));
+            }
+            auto draw=bloomGaussianDraw(width,height,"XREngine_GaussClamped");
+            draw.geometry={geometry,geometry,0,6};draw.targets[0]=4953;
+            if(perspective) {
+                // The live engine's uniform postprocess plane is close enough
+                // to the far clip boundary to fail a conservative inside-depth
+                // proof. Its XY footprint is still the same integer rectangle.
+                constexpr float z=4784,fx=.726542592048645f,fy=-1.2916311025619507f;
+                for(unsigned v=0;v<4;++v) {
+                    auto* at=geometry->vertices.data()+v*20;
+                    for(unsigned lane=0;lane<2;++lane) {
+                        const auto* p=at+lane*4;
+                        const uint32_t bits=uint32_t(p[0])<<24|uint32_t(p[1])<<16|uint32_t(p[2])<<8|p[3];
+                        put(at+lane*4,std::bit_cast<uint32_t>(std::bit_cast<float>(bits)*z/(lane?fy:fx)));
+                    }
+                    put(at+8,std::bit_cast<uint32_t>(z));
+                }
+                draw.constants.vectors[0]={fx,0,0,0};draw.constants.vectors[1]={0,fy,0,0};
+                draw.constants.vectors[2]={0,0,1.0003751516342163f,-1.8006751537322998f};
+                draw.constants.vectors[3]={0,0,1,0};draw.depthRange={1,0,0,0};
+            }
+            draw.textureObjects[0]=source;
+            draw.fragmentConstants[0]={0,0,0,1};draw.fragmentConstants[1]={1,1,1,1};
+            draw.fragmentConstants[2]={1,1,1,0};
+            draw.fragmentConstants[4]={.125f-.5f/width,.125f-.5f/height,.125f-.5f/width,.125f-.5f/height};
+            if(vertical)for(unsigned pair=0;pair<4;++pair) {
+                const auto offsets=draw.fragmentConstants[8+pair];
+                draw.fragmentConstants[8+pair]={0,offsets[0]*width/height,0,offsets[2]*width/height};
+            }
+            bloomDraw(renderer,draw);
+            const auto pixels=renderer.readSurface(draw.targets[0],false);
+            require(pixels.size()==size_t(width*scale)*height*scale*8,"Bloom fringe output extent differs");
+            auto oracle=draw;
+            const double xRatio=double(width)/activeWidth,yRatio=double(height)/activeHeight;
+            for(unsigned lane=0;lane<4;++lane) {
+                const auto dimension=lane%2?activeHeight:activeWidth;
+                oracle.fragmentConstants[3][lane]=.5f/dimension;
+                oracle.fragmentConstants[4][lane]=1-.5f/dimension;
+            }
+            for(unsigned pair=0;pair<4;++pair)for(unsigned lane=0;lane<4;++lane)
+                oracle.fragmentConstants[8+pair][lane]*=float(lane%2?yRatio:xRatio);
+            double maximum=0,peak=0;
+            for(unsigned y=0;y<activeHeight*scale;++y)for(unsigned x=0;x<activeWidth*scale;++x) {
+                const double u=std::clamp((x/scale+.5)/activeWidth*.125*xRatio,.5/activeWidth,1-.5/activeWidth);
+                const double v=std::clamp((y/scale+.5)/activeHeight*.125*yRatio,.5/activeHeight,1-.5/activeHeight);
+                const auto wanted=bloomGaussianOracle(logical,oracle,u,v);
+                for(unsigned lane=0;lane<3;++lane) {
+                    uint16_t raw=0;std::memcpy(&raw,pixels.data()+(size_t(y)*width*scale+x)*8+lane*2,2);
+                    require(std::isfinite(materialHalf(raw)),"Bloom fringe produced a nonfinite pixel");
+                    maximum=(std::max)(maximum,std::abs(materialHalf(raw)-wanted[lane]));
+                    peak=(std::max)(peak,materialHalf(raw));
+                }
+            }
+            std::printf("BloomAtlasFringe: %ux%u scale=%u vertical=%u perspective=%u maxDelta=%.6f\n",
+                width,height,scale,unsigned(vertical),unsigned(perspective),maximum);
+            require(maximum<.003,"Bloom sampled bright scene pixels outside the active reduction");
+            require(peak>.45,"Bloom atlas lost its spatially varying interior light");
+            if(width==960) {
+                auto triangle=draw;triangle.geometry.indexCount=3;
+                WorldClear output;output.targets=draw.targets;output.viewport=draw.viewport;output.flags=1;
+                for(bool reverse:{false,true}) {
+                    const auto& anchor=reverse?draw:triangle;
+                    const auto& next=reverse?triangle:draw;
+                    renderer.clear(output);
+                    require(renderer.draw(anchor) && renderer.draw(next),"Bloom complete repeat reference rejected");
+                    const auto expected=renderer.readSurface(draw.targets[0],false);
+                    renderer.clear(output);const auto shortDraws=renderer.shortPathDraws();
+                    require(renderer.draw(anchor) && renderer.draw(anchor,&next.geometry,true),"Bloom geometry repeat rejected");
+                    require(renderer.readSurface(draw.targets[0],false)==expected,"Bloom repeat skipped atlas classification");
+                    require(renderer.shortPathDraws()==shortDraws,"Irregular bloom atlas entered the geometry-only shortcut");
+                }
+            }
+        }
+    }
+}
 static void bloomResolutionContract(ID3D11Device* device,ID3D11DeviceContext* context) {
     for(unsigned scale:{1u,2u,3u}) {
         context->ClearState();WorldRendererD3D11 renderer(device,context,scale);
         bloomShrinkContract(renderer,scale);bloomGaussianContract(renderer,scale);
         bloomWideContract(renderer,scale);bloomFinalContract(renderer,scale);bloomRetailChainContract(renderer,scale);
+        bloomAtlasFringeContract(renderer,scale);
     }
     context->ClearState();
     std::puts("BloomResolution passed: RGBA8/UNORM16-exponent4 sources; 8x shrink fine-pixel phases; original Gaussian; retail radiance16 atlas/negative-bias/Final14 halo; physical scene, hurt, CPU and point sources at scales1/2/3.");

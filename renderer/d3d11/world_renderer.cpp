@@ -72,7 +72,8 @@ struct FlatPostQuad {
     std::array<double,4> screen{};
     std::array<std::array<double,2>,4> uv{}; // x/y corner bits, not index order.
 };
-std::optional<FlatPostQuad> flatPostQuad(const Native::WorldDraw& draw,unsigned scale,const Native::WorldGeometry* repeat=nullptr) {
+std::optional<FlatPostQuad> flatPostQuad(const Native::WorldDraw& draw,unsigned scale,const Native::WorldGeometry* repeat=nullptr,
+                                       bool uniformDepthBoundary=false) {
     const auto& g=repeat?*repeat:draw.geometry;const auto& o=draw.options;
     if(!g || g.vertices->vertexCount!=4 || g.indexCount!=6 ||
        g.firstIndex>g.indices->indices.size() || g.indices->indices.size()-g.firstIndex<6 ||
@@ -92,9 +93,16 @@ std::optional<FlatPostQuad> flatPostQuad(const Native::WorldDraw& draw,unsigned 
     for(float x:m[7])if(!normalOrZero(x))return {};
     std::vector<Native::WorldVertex> vertices;
     if(!Native::decodeWorldVertices(*g.vertices,vertices) || vertices.size()!=4)return {};
+    if(uniformDepthBoundary) {
+        // Equal mathematical sums alone do not guarantee equal GPU rounding.
+        // Require identical Z/W operands and no XY contribution to clip Z.
+        if(m[2][0] || m[2][1])return {};
+        for(unsigned v=1;v<4;++v)if(vertices[v].position[2]!=vertices[0].position[2] ||
+                                    vertices[v].position[3]!=vertices[0].position[3])return {};
+    }
     FlatPostQuad result;
     std::array<std::array<double,2>,4> screen{};
-    double commonW=0;std::array<double,2> screenError{};
+    double commonW=0,commonZ=0;std::array<double,2> screenError{};
     constexpr double epsilon=0x1p-23;
     for(unsigned v=0;v<4;++v) {
         std::array<double,4> clip{},clipError{};double depthMagnitude=0;
@@ -114,12 +122,18 @@ std::optional<FlatPostQuad> flatPostQuad(const Native::WorldDraw& draw,unsigned 
            clip[3]<0x1p-12 || clip[3]>0x1p20 || clip[3]<=clipError[3])return {};
         if(v && clip[3]!=commonW)return {};
         commonW=clip[3];
+        // Atlas sampling only needs the quad's XY extent. At uniform Z/W,
+        // hardware depth clipping keeps the entire quad or rejects all of it;
+        // uncertainty at the far plane cannot cut a partial XY footprint.
+        // Ordinary copy-footprint proofs retain their stricter depth margin.
+        if(v && uniformDepthBoundary && clip[2]!=commonZ)return {};
+        commonZ=clip[2];
         const double nativeZ=double(draw.depthRange[0])*clip[3]+double(draw.depthRange[1]-draw.depthRange[0])*clip[2];
         const double depthDelta=double(draw.depthRange[1]-draw.depthRange[0]);
         const double zError=std::abs(double(draw.depthRange[0]))*clipError[3]+std::abs(depthDelta)*clipError[2]+
             4*epsilon*(std::abs(double(draw.depthRange[0])*clip[3])+std::abs(depthDelta*clip[2]));
-        if(!std::isfinite(nativeZ) || !std::isfinite(zError) || nativeZ-zError<0 ||
-           nativeZ+zError>clip[3]-clipError[3])return {};
+        if(!std::isfinite(nativeZ) || !std::isfinite(zError) ||
+           (!uniformDepthBoundary && (nativeZ-zError<0 || nativeZ+zError>clip[3]-clipError[3])))return {};
         for(unsigned c=0;c<2;++c) {
             double low=INFINITY,high=-INFINITY;
             for(int numerator:{-1,1})for(int denominator:{-1,1}) {
@@ -178,6 +192,35 @@ std::optional<FlatPostQuad> flatPostQuad(const Native::WorldDraw& draw,unsigned 
     for(unsigned c=0;c<2;++c)
         if(result.uv[0][c]+result.uv[3][c]!=result.uv[1][c]+result.uv[2][c])return {};
     return result;
+}
+std::optional<Native::EngineVector> bloomAtlasMaximum(const Native::WorldDraw& draw,const FlatPostQuad& quad) {
+    const auto& texture=draw.textureObjects[0];
+    const auto width=texture.width,height=texture.height;
+    // The original full-atlas UVs assume an exact eighth of the video mode.
+    // Native modes such as 960x540 truncate the drawn reduction to 120x67;
+    // row67 still belongs to the shared scene, not to that bloom image.
+    // Recognize only this opaque HDR atlas pass, including its original UV
+    // bounds. Full-image/exposure/damage Gaussian filters retain their inputs.
+    if(draw.fragmentName!="XREngine_GaussClamped" || draw.fragmentFlags ||
+       texture.format!=26 || texture.exponent!=4 || texture.faces!=1 ||
+       !width || !height || (!(width%8) && !(height%8)) ||
+       draw.viewport!=std::array<uint32_t,4>{0,0,width,height} ||
+       quad.rectangle!=BlurRect{0,0,width/8,height/8})return {};
+    const auto* a=draw.attributes.data();
+    const auto flags=uint32_t(a[92])<<24|uint32_t(a[93])<<16|uint32_t(a[94])<<8|a[95];
+    if((flags&(1u|6u|8u|0x800u|0x4000u|0x40000u)) || a[97]!=8 ||
+       (flags&0x01100000u)!=0x01100000u)return {};
+    const auto closeTo=[](double x,double y) {return std::isfinite(x) && std::abs(x-y)<1e-7;};
+    for(unsigned corner=0;corner<4;++corner)for(unsigned axis=0;axis<2;++axis)
+        if(!closeTo(quad.uv[corner][axis],(corner&(1u<<axis))?.125:0))return {};
+    auto maximum=draw.fragmentConstants[4];
+    for(unsigned lane=0;lane<4;++lane) {
+        const auto dimension=lane%2?height:width;
+        if(!closeTo(draw.fragmentConstants[3][lane],.5/dimension) ||
+           !closeTo(maximum[lane],.125-.5/dimension))return {};
+        maximum[lane]=(float(dimension/8)-.5f)/dimension;
+    }
+    return maximum;
 }
 bool blurCopyFootprint(const FlatPostQuad& quad,const BlurRect& known,unsigned width,unsigned height,unsigned scale) {
     if(blurRectEmpty(known) || !width || !height || scale<2)return false;
@@ -646,7 +689,7 @@ float4 blurCopyPixelMain(Fragment input) {
         const bool logicalBloom=std::string_view(source.name)=="XRUtil_ShrinkTexture8" ||
             std::string_view(source.name)=="XREngine_GaussClamped";
         if(logicalBloom)nativeSource+=R"(
-cbuffer NativeBloom : register(b4) {float bloomRenderScale;uint bloomSnap;uint2 bloomPadding;};
+cbuffer NativeBloom : register(b4) {float bloomRenderScale;uint bloomSnap;uint bloomClamp;uint bloomPadding;};
 float4 bloomPixelMain(Fragment input) {
     // Evaluate the original filter once per guest output texel. Its taps and
     // atlas clamps retain their original pitch even at 1440p and 4K.
@@ -655,6 +698,8 @@ float4 bloomPixelMain(Fragment input) {
         float2 offset=(floor(input.position.xy/bloomRenderScale)+0.5)*bloomRenderScale-input.position.xy;
         input.tex[0]+=dx*offset.x+dy*offset.y;
     }
+    // The original center fetch is not covered by the offset-tap clamps.
+    if(bloomClamp)input.tex[0].xy=clamp(input.tex[0].xy,env[3].xy,env[4].xy);
     return originalPixelMain(input);
 }
 #define originalPixelMain bloomPixelMain
@@ -2367,8 +2412,9 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw,const Native::WorldG
         if(!postQuadChecked) {postQuad=flatPostQuad(draw,scale_,repeat);postQuadChecked=true;}
         return postQuad?&*postQuad:nullptr;
     };
-    struct BloomControl {float renderScale;uint32_t snap;uint32_t padding[2];};
-    BloomControl bloomControl{float(scale_),0,{0,0}};
+    struct BloomControl {float renderScale;uint32_t snap;uint32_t clamp;uint32_t padding;};
+    BloomControl bloomControl{float(scale_),0,0,0};
+    std::optional<decltype(draw.fragmentConstants)> atlasFragmentConstants;
     static_assert(sizeof(bloomControl)==sizeof(uploadedBloom_));
     struct ShadowControl {uint32_t scale;uint32_t padding[3];};
     ShadowControl shadowControl{1,{0,0,0}};
@@ -2508,6 +2554,28 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw,const Native::WorldG
         // their captured sampling and high-resolution detail.
         const bool bloomInput=(bloomFilter && slot==0) ||
             (fragmentName=="XREngine_Final5" && (fragmentFlags&8) && slot==1);
+        if(slot==0 && fragmentName=="XREngine_GaussClamped" && texture.object && resolved!=resolved_.end() &&
+           !cube && texture.mipLevels==1 && texture.firstMip==0 &&
+           captured.valid && captured.minLinear && captured.magLinear && captured.anisotropy==1 &&
+           captured.address[0]==2 && captured.address[1]==2 && captured.bias==0 &&
+           captured.minLevel==0 && (captured.maxLevel==0 || captured.baseOnly)) {
+            std::optional<FlatPostQuad> boundaryQuad;
+            const auto* quad=checkedPostQuad();
+            if(!quad) {
+                boundaryQuad=flatPostQuad(draw,scale_,repeat,true);
+                if(boundaryQuad)quad=&*boundaryQuad;
+            }
+            if(quad)if(const auto maximum=bloomAtlasMaximum(draw,*quad)) {
+                atlasFragmentConstants.emplace(draw.fragmentConstants);
+                (*atlasFragmentConstants)[4]=*maximum;
+                bloomControl.clamp=1;
+                if(captureFrame_)std::fprintf(stderr,
+                    "[BloomAtlasClamp] inspection=%u draw=%u source=%ux%u active=%ux%u originalMax=%g,%g nativeMax=%g,%g centerClamped=1 uniformDepthBoundary=%u\n",
+                    inspection_,smokeOrdinal,texture.width,texture.height,quad->rectangle[2],quad->rectangle[3],
+                    double(draw.fragmentConstants[4][0]),double(draw.fragmentConstants[4][1]),
+                    double((*maximum)[0]),double((*maximum)[1]),unsigned(bool(boundaryQuad)));
+            }
+        }
         if(scale_>1 && bloomInput && texture.object && resolved!=resolved_.end() &&
            !cube && texture.faces==1 && texture.mipLevels==1 && texture.firstMip==0 &&
            captured.valid && captured.minLinear && captured.magLinear && captured.anisotropy==1 &&
@@ -2940,12 +3008,13 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw,const Native::WorldG
             std::memcpy(uploadedAlpha_.data(),&alpha,sizeof(alpha));
         }
         const auto materialColor=darknessArmBloomColor(draw,bloom_);
+        const auto& fragmentConstants=atlasFragmentConstants?*atlasFragmentConstants:draw.fragmentConstants;
         if(!pixelConstantsUploaded_ || std::memcmp(&uploadedFragment_[0],&materialColor,sizeof(materialColor)) ||
-           std::memcmp(uploadedFragment_.data()+1,draw.fragmentConstants.data()+1,
-               sizeof(draw.fragmentConstants)-sizeof(materialColor))) {
+           std::memcmp(uploadedFragment_.data()+1,fragmentConstants.data()+1,
+               sizeof(fragmentConstants)-sizeof(materialColor))) {
             // Captured decals can supply more than16 fragment vectors. The remaining
             // bank is permanently zero; don't rebuild/compare it every draw.
-            std::copy(draw.fragmentConstants.begin(),draw.fragmentConstants.end(),uploadedFragment_.begin());
+            std::copy(fragmentConstants.begin(),fragmentConstants.end(),uploadedFragment_.begin());
             uploadedFragment_[0]=materialColor;
             updateConstants(context_.Get(),fragmentConstants_.Get(),uploadedFragment_.data(),sizeof(uploadedFragment_));
         }
@@ -3139,6 +3208,9 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw,const Native::WorldG
     // A later element may be a quad even when this anchor was a triangle.
     // Substituted prompts must prepare their own geometry-dependent transform.
     if(repeatShortPath && bindingsValid_ && !promptSlots && !screenFog && !fogVerify && !fogVerifyOpen_ && !measure && !inspectLighting &&
+       // An unmatched anchor may be followed by an atlas quad, or vice versa.
+       // Reclassify both directions, including scale1 where bloomSnap is off.
+       !(fragmentName=="XREngine_GaussClamped" && (draw.viewport[2]%8 || draw.viewport[3]%8)) &&
        !inspectFrame_ && !captureFrame_ && !std::memcmp(&viewportValues[1],identityQuad.data(),sizeof(identityQuad)) &&
        (!hasColor || !colorWriteMask || (blurRectEmpty(colorSurface->logicalBlurRegion) &&
         !(fragmentName=="XREngine_GaussClamped" && bloomControl.snap)))) {
