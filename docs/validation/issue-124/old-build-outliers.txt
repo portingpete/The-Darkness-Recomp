@@ -1,0 +1,5 @@
+controlled-old-2core-01
+[FrameOutlier] elapsedMs=81010.697 serial=3760 intervalMs=6537.496 loops=156 miss=155 world=1 presentOk=1 occluded=0 failed=0 other=0 pumpSum=40.139 pumpMax=38.814 takeSum=6488.793 takeMax=317.901 renderSum=7.741 renderMax=2.135 postSum=0.087 postMax=0.017 pacerSum=0.006 pacerMax=0.000 presentSum=0.134 presentMax=0.134 tailSum=0.580 tailMax=0.215 residualMs=0.016 emitted=27 suppressed=200 elapsedNotCpu=1
+
+video-old-2core-01
+[FrameOutlier] elapsedMs=87736.449 serial=4020 intervalMs=6732.063 loops=178 miss=177 world=1 presentOk=1 occluded=0 failed=0 other=0 pumpSum=46.687 pumpMax=45.422 takeSum=6667.486 takeMax=272.228 renderSum=17.280 renderMax=9.064 postSum=0.130 postMax=0.034 pacerSum=0.007 pacerMax=0.000 presentSum=0.152 presentMax=0.152 tailSum=0.308 tailMax=0.209 residualMs=0.011 emitted=28 suppressed=175 elapsedNotCpu=1
