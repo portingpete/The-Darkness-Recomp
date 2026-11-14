@@ -1,0 +1,57 @@
+wait world
+wait 2500
+dev open
+wait menu
+dev mission NY1_Pier19:ny1+layer1
+wait 35000
+dev open
+wait player
+dev darkness unlock
+dev darkness max
+wait 12000
+dev status
+dev close
+wait 3000
+81 1000
+wait 5000
+capture
+52 250
+wait 1500
+capture
+52 250
+wait 1500
+capture
+mouse 250 0
+mouse -500 0
+mouse 500 0
+mouse -500 0
+mouse 250 0
+mouse 250 0
+mouse -500 0
+mouse 250 0
+mouse 250 0
+mouse -500 0
+mouse 500 0
+mouse -500 0
+mouse 250 0
+mouse 250 0
+mouse -500 0
+mouse 250 0
+mouse 250 0
+mouse -500 0
+mouse 500 0
+mouse -500 0
+mouse 250 0
+mouse 250 0
+mouse -500 0
+mouse 250 0
+mouse 250 0
+mouse -500 0
+mouse 500 0
+mouse -500 0
+mouse 250 0
+mouse 250 0
+mouse -500 0
+mouse 250 0
+wait 5000
+quit
