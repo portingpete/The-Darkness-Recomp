@@ -2,6 +2,7 @@
 #include "stall_profile_d3d11.h"
 #include "world_render_state.h"
 #include "world_darkness_bloom.h"
+#include "world_eye_glow.h"
 #include "shader_bytecode_cache.h"
 #include "screen_fog_sample_positions.h"
 #include "texture_budget_policy.h"
@@ -704,7 +705,46 @@ float4 bloomPixelMain(Fragment input) {
 }
 #define originalPixelMain bloomPixelMain
 )";
-        nativeSource+=R"(
+        if(std::string_view(source.name)=="XRUtil_RenderSurface" && source.flags==8)nativeSource+=R"(
+#undef pixelMain
+cbuffer NativeAlphaTest : register(b2) {uint alphaFunction;float alphaReference;uint eyeFade;float eyeProjection;float4 eyeRay;};
+float4 pixelMain(Fragment input) : SV_Target {
+    float angleGain=1;
+    if(eyeFade & 2u) {
+        // Reciprocal perspective depth is an affine plane in screen space.
+        // Reconstruct its camera normal before any alpha discard.
+        float q=input.position.z+eyeProjection-1.0;
+        float2 ray=input.position.xy*eyeRay.xy+eyeRay.zw;
+        float2 slope=float2(ddx(input.position.z),ddy(input.position.z))/eyeRay.xy;
+        float3 normal=float3(slope,q-dot(slope,ray));
+        float lengthSquared=dot(normal,normal)*(1.0+dot(ray,ray));
+        if(isfinite(lengthSquared) && lengthSquared>0) {
+            float facing=abs(q)*rsqrt(lengthSquared);
+            if(isfinite(facing))angleGain=smoothstep(0.5,0.75,facing);
+        }
+        // Farther eye volumes retain their original glow at every angle.
+        float nearDistance=eyeProjection/max(q,1e-6);
+        angleGain=lerp(angleGain,1.0,smoothstep(1.5,2.5,nearDistance));
+    }
+    float4 color=originalPixelMain(input);
+    bool alphaPasses=alphaFunction==8 ||
+        (alphaFunction==2 && color.a<alphaReference) ||
+        (alphaFunction==3 && color.a==alphaReference) ||
+        (alphaFunction==4 && color.a<=alphaReference) ||
+        (alphaFunction==5 && color.a>alphaReference) ||
+        (alphaFunction==6 && color.a!=alphaReference) ||
+        (alphaFunction==7 && color.a>=alphaReference);
+    if(!alphaPasses)discard;
+    if(eyeFade & 1u) {
+        // Fade only the eye's layered light volume within one near-plane
+        // distance of the camera. Opaque head pixels and authored alpha stay.
+        float margin=saturate(eyeProjection/max(input.position.z+eyeProjection-1.0,1e-6)-1.0);
+        color.rgb*=margin*margin*(3.0-2.0*margin)*angleGain;
+    }
+    return color;
+}
+)";
+        else nativeSource+=R"(
 #undef pixelMain
 cbuffer NativeAlphaTest : register(b2) {uint alphaFunction;float alphaReference;uint2 alphaPadding;};
 float4 pixelMain(Fragment input) : SV_Target {
@@ -795,8 +835,9 @@ float4 pixelMain(float4 p:SV_Position):SV_Target {
     check(d->CreateBuffer(&buffer,nullptr,&fragmentConstants_),"fragment constants");
     buffer.ByteWidth=256;check(d->CreateBuffer(&buffer,nullptr,&textureScales_),"texture scales");
     buffer.ByteWidth=32;check(d->CreateBuffer(&buffer,nullptr,&viewportConstants_),"viewport constants");
-    buffer.ByteWidth=16;
+    buffer.ByteWidth=32;
     check(d->CreateBuffer(&buffer,nullptr,&alphaTestConstants_),"alpha test constants");
+    buffer.ByteWidth=16;
     check(d->CreateBuffer(&buffer,nullptr,&colorLookupConstants_),"color lookup constants");
     check(d->CreateBuffer(&buffer,nullptr,&bloomConstants_),"bloom constants");
     check(d->CreateBuffer(&buffer,nullptr,&shadowConstants_),"shadow constants");
@@ -2121,6 +2162,11 @@ struct WorldBindingSnapshot {
     std::array<ID3D11ShaderResourceView*,16> views; std::array<ID3D11SamplerState*,16> samplers;
     bool pixelBuffers,clipBuffer; uint64_t constantUpdates;
 };
+float WorldRendererD3D11::eyeProjection(const Native::WorldDraw& draw,const Native::WorldGeometry& g) const noexcept {
+    if(!g || draw.fragmentFlags!=8 || draw.fragmentName!="XRUtil_RenderSurface" || draw.options.weights!=8)return 0;
+    const auto found=indices_.find(g.indices.get());
+    return found==indices_.end()?0:WorldEyeGlow::projection(draw,g,found->second.eyeLayers);
+}
 bool WorldRendererD3D11::drawRepeat(const Native::WorldDraw& draw,const Native::WorldGeometry& g) {
     Native::setRenderSamplePhase(Native::RenderSamplePhase::geometry);
     if(!g || !boundVertex_ || g.vertices->formats!=shortPathFormats_)return false;
@@ -2150,7 +2196,7 @@ bool WorldRendererD3D11::drawRepeat(const Native::WorldDraw& draw,const Native::
 }
 bool WorldRendererD3D11::draw(const Native::WorldDraw& draw,const Native::WorldGeometry* repeat,bool continues) {
     if(continues && repeat && repeatShortPath && shortPathDraw_==&draw && bindingsValid_ && !inspectFrame_ &&
-       !captureFrame_ && !diagnostics_) {
+       !captureFrame_ && !diagnostics_ && eyeProjection(draw,*repeat)==boundEyeProjection_) {
         if(repeatShortPath==1) {
             if(drawRepeat(draw,*repeat))return true;
         } else {
@@ -2854,6 +2900,7 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw,const Native::WorldG
         if (storedIndices && !budgetFor(bytes)) return rejected(12);
         const auto uploadStart=Clock::now();
         Indices native;native.source=ownerOf(g.indices);native.maximum=*std::max_element(indices.begin(),indices.end());
+        native.eyeLayers=WorldEyeGlow::layeredIndices(indices);
         D3D11_BUFFER_DESC ib{};ib.ByteWidth=UINT(bytes);ib.BindFlags=D3D11_BIND_INDEX_BUFFER;ib.Usage=D3D11_USAGE_IMMUTABLE;
         if(!g.indices->address && !g.indices->id)
             native.transientCapacity=transientBuffers_.upload(indices.data(),ib.ByteWidth,ib.BindFlags,native.buffer);
@@ -3000,8 +3047,12 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw,const Native::WorldG
     auto* pixel=!fragFound?nullptr:frag->shader.Get();
     if(!bindingsValid_ || boundPixel_!=pixel) {context_->PSSetShader(pixel,nullptr,0);boundPixel_=pixel;}
     if(fragFound) {
-        struct AlphaTest {uint32_t function;float reference;uint32_t padding[2];};
-        const AlphaTest alpha{(flags&1)?8u:unsigned(a[97]),float((unsigned(a[98])<<8)|a[99])/255.0f,{0,0}};
+        struct AlphaTest {uint32_t function;float reference;uint32_t eyeFade;float eyeProjection;Native::EngineVector eyeRay;};
+        const float eye=eyeProjection(draw,g);
+        const auto ray=eye?WorldEyeGlow::ray(draw,scale_):Native::EngineVector{};
+        const AlphaTest alpha{(flags&1)?8u:unsigned(a[97]),float((unsigned(a[98])<<8)|a[99])/255.0f,
+            unsigned(eye!=0)|(ray[0]!=0?2u:0u),eye?eye:1.0f,ray};
+        boundEyeProjection_=eye;
         static_assert(sizeof(alpha)==sizeof(uploadedAlpha_));
         if(!pixelConstantsUploaded_ || std::memcmp(uploadedAlpha_.data(),&alpha,sizeof(alpha))) {
             updateConstants(context_.Get(),alphaTestConstants_.Get(),&alpha,sizeof(alpha));
