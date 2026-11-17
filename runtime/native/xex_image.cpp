@@ -126,7 +126,16 @@ XexImage decodeVerifiedXex(std::span<const uint8_t> bytes, std::span<const GameR
     const auto revision = std::find_if(revisions.begin(), revisions.end(), [&](const GameRevision& item) {
         return fileHash == item.xexSha256;
     });
-    require(revision != revisions.end(), "default.xex differs from the supported AOT revision");
+    if (revision == revisions.end()) {
+        std::string message = "default.xex differs from the supported AOT revision\n"
+            "Received SHA256: " + fileHash + " (" + std::to_string(bytes.size()) + " bytes)\n"
+            "Supported default.xex revisions:\n";
+        for (const auto& supported : revisions)
+            message += std::string("  ") + supported.name + ": " + supported.xexSha256 + "\n";
+        message += "A different revision does not by itself mean the dump is corrupt. "
+            "Include this diagnostic and your disc/media ID when reporting it; do not upload game files.";
+        throw std::runtime_error(message);
+    }
     auto decoded = decodeXex(bytes);
     require(digest(decoded.image) == revision->imageSha256,
             "Game image differs from the verified AOT revision");

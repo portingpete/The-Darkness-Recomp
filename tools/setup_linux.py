@@ -82,7 +82,8 @@ def no_links(path: Path) -> None:
 
 def validate_install(install: Path, source: Path, game: Path) -> None:
     if re.match(r'^/mnt/[a-z](?:/|$)', str(install), re.IGNORECASE):
-        raise SetupError('Install on the Linux filesystem, not a Windows /mnt/<drive> folder.')
+        raise SetupError('Install on the Linux filesystem, not a Windows /mnt/<drive> folder. '
+                         'Choose a folder in your Linux home directory or on an ext4-formatted drive.')
     if install == Path('/') or install == Path.home():
         raise SetupError('Choose a private installation subdirectory.')
     for origin in (source, game):
@@ -110,7 +111,8 @@ def validate_install(install: Path, source: Path, game: Path) -> None:
             if under(parent, mount):
                 matches.append((len(str(mount)), after.split()[0]))
         if matches and max(matches)[1] in ('9p', 'drvfs', 'ntfs', 'ntfs3', 'fuseblk'):
-            raise SetupError('The installation must use the Linux filesystem, not a Windows-backed mount.')
+            raise SetupError('The installation must use the Linux filesystem, not a Windows-backed mount. '
+                             'Choose a folder in your Linux home directory or on an ext4-formatted drive.')
 
 
 def names_in(directory: Path) -> dict[str, Path]:
