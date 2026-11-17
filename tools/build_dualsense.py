@@ -19,4 +19,3 @@ if not output.is_file() or hashlib.sha256(output.read_bytes()).digest()!=hashlib
     try:shutil.copyfile(library,temporary);os.replace(temporary,output)
     finally:temporary.unlink(missing_ok=True)
 (output.parent/'inputs.json').write_text(json.dumps({'fingerprint':digest,'inputs':hashes},indent=2)+'\n')
-
