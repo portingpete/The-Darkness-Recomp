@@ -1,9 +1,8 @@
-//! Recover the extra horizontal camera lag allowed by retail wall collision.
+//! Timing helpers for controller look and camera collision recovery.
 
-/// The gameplay look caller passes a frame-sized minimum. Comparing two
-/// separately sampled clocks against that full interval skips otherwise valid
-/// input updates. Retain a small scaled minimum to bound command traffic while
-/// accepting normal 30–360 Hz updates, including ordinary clock jitter.
+/// The guest can defer a turn until elapsed time exceeds its look minimum.
+/// Lower that threshold for native frame rates while preserving elapsed-time
+/// integration and leaving a small minimum to bound command traffic.
 #[no_mangle]
 pub extern "C" fn dark_controller_look_minimum(requested: f64, clock_scale: f32) -> f64 {
     if !requested.is_finite()

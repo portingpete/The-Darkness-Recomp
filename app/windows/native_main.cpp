@@ -528,6 +528,10 @@ int wmain(int argc, wchar_t** argv) {
         unsigned videoCaptureCount = 0;
         unsigned colorCaptureCount = 0, worldCaptureCount = 0;
         const auto inputTestEpoch=GetTickCount64();
+        // Anchor opt-in input dispatch to the same clock as the frame timeline.
+        LARGE_INTEGER inputTestFrequency{};
+        if (!testInputPath.empty() || testStart || testSkipIntros)
+            QueryPerformanceFrequency(&inputTestFrequency);
         ULONGLONG nextIntroSkip=inputTestEpoch+3000,worldInputStart=0,keyRelease=0;
         unsigned testKey=0;bool startSent=false;
         ULONGLONG testKeyHoldMs=kTestInputMenuHoldMs;
@@ -861,10 +865,16 @@ int wmain(int argc, wchar_t** argv) {
                 MSG keyMessage{window, WM_KEYUP, WPARAM(testKey), 0};
                 if (!nativeInput().windowMessage(window,WM_KEYUP,testKey,0) &&
                     !resolutionShortcut.handle(WM_KEYUP, testKey, 0)) developerTools.handleMessage(keyMessage);
+                LARGE_INTEGER releasedAt{};
+                QueryPerformanceCounter(&releasedAt);
                 nativeInput().windowMessage(window,WM_ACTIVATEAPP,GetForegroundWindow()==window,0);
                 const auto released=nativeInput().counters();
-                std::printf("[InputTest] released key=%u elapsed=%llu polls=+%llu nonneutral=+%llu changes=+%llu\n",testKey,inputNow-inputTestEpoch,
-                    released.polls-testKeyBase.polls,released.nonneutral-testKeyBase.nonneutral,released.changes-testKeyBase.changes);testKey=0;
+                std::printf("[InputTest] released key=%u elapsed=%llu polls=+%llu nonneutral=+%llu changes=+%llu qpc=%llu hz=%llu\n",
+                    testKey, inputNow-inputTestEpoch, released.polls-testKeyBase.polls,
+                    released.nonneutral-testKeyBase.nonneutral, released.changes-testKeyBase.changes,
+                    static_cast<unsigned long long>(releasedAt.QuadPart),
+                    static_cast<unsigned long long>(inputTestFrequency.QuadPart));
+                testKey=0;
                 if(liveKey){inputCaptureAt=inputNow+1000;captureInputCount=liveInputCount;liveKey=false;}
             }
             if(!worldInputStart && previewWorldActive())worldInputStart=inputNow;
@@ -1005,9 +1015,14 @@ int wmain(int argc, wchar_t** argv) {
                 MSG keyMessage{window, WM_KEYDOWN, WPARAM(testKey), 0};
                 if (!nativeInput().windowMessage(window,WM_KEYDOWN,testKey,0) &&
                     !resolutionShortcut.handle(WM_KEYDOWN, testKey, 0)) developerTools.handleMessage(keyMessage);
+                LARGE_INTEGER pressedAt{};
+                QueryPerformanceCounter(&pressedAt);
                 testKeyBase=nativeInput().counters();
                 keyRelease=inputNow+testKeyHoldMs;
-                std::printf("[InputTest] pressed key=%u hold=%llums elapsed=%llu\n",testKey,testKeyHoldMs,inputNow-inputTestEpoch);
+                std::printf("[InputTest] pressed key=%u hold=%llums elapsed=%llu qpc=%llu hz=%llu\n",
+                    testKey, testKeyHoldMs, inputNow-inputTestEpoch,
+                    static_cast<unsigned long long>(pressedAt.QuadPart),
+                    static_cast<unsigned long long>(inputTestFrequency.QuadPart));
             }
             }
             if (outlierOn) {
