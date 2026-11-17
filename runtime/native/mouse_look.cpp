@@ -34,6 +34,13 @@ bool probeEnabled() {
     }();
     return enabled;
 }
+bool controllerLookCadenceEnabled() {
+    static const bool enabled = [] {
+        const char* setting = std::getenv("DARK_CONTROLLER_LOOK_CADENCE");
+        return !(setting && setting[0] == '0' && setting[1] == '\0');
+    }();
+    return enabled;
+}
 struct ScopedMathMode {
     unsigned saved = _mm_getcsr();
     ScopedMathMode() { _mm_setcsr(saved & ~(_MM_ROUND_MASK | _MM_FLUSH_ZERO_MASK | _MM_DENORMALS_ZERO_MASK)); }
@@ -74,9 +81,21 @@ void ApplyNativeMouseLookMidAsmHook(PPCRegister& client, PPCRegister& stack,
 
 extern "C" PPC_FUNC(__imp__sub_823FC650);
 extern "C" PPC_FUNC(__imp__sub_823FCF68);
+extern "C" double dark_controller_look_minimum(double, float);
 PPC_FUNC(sub_823FC650) {
     DarkRecomp::Native::StallProfiler::Scope stallProfile(DarkRecomp::Native::StallProfiler::Section::Guest, __func__, 0x823FC650u, uint32_t(ctx.lr));
     const uint32_t client = ctx.r3.u32, caller = uint32_t(ctx.lr);
+    // The camera update at 823F9B4C uses a 1/120 s minimum on the shared look
+    // clock. Lower its threshold for a normal player view and leave the 50 ms
+    // periodic caller at 823FC99C on the original path.
+    if (caller == 0x823F9B50 && controllerLookCadenceEnabled() && memory && base == memory->base() && client &&
+        uint64_t(client) + 8980 <= PPC_MEMORY_SIZE &&
+        (PPC_LOAD_U32(client) == 0x820807E0 || PPC_LOAD_U32(client) == 0x82081BF0) &&
+        static_cast<int32_t>(PPC_LOAD_U32(client + 8976)) < 0 &&
+        !(PPC_LOAD_U8(client + 8816) & 6) && !(PPC_LOAD_U32(client + 516) & 0x60) &&
+        !PPC_LOAD_U32(client + 7360))
+        ctx.f1.f64 = dark_controller_look_minimum(ctx.f1.f64,
+            std::bit_cast<float>(PPC_LOAD_U32(client + 424)));
     __imp__sub_823FC650(ctx, base);
     // This periodic call is independent of changed XInput packets and of the
     // original function's neutral-stick early-out. Never consume for another
