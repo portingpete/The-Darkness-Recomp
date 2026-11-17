@@ -3,6 +3,7 @@
 #include "runtime.h"
 #include "ppc_recomp_shared.h"
 #include <bit>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 
@@ -41,6 +42,19 @@ bool commandProbeEnabled() {
     }();
     return enabled;
 }
+thread_local double requestedLookMinimum = -1, effectiveLookMinimum = -1;
+struct LookMinimumScope {
+    double requested = requestedLookMinimum, effective = effectiveLookMinimum;
+    LookMinimumScope(double before, double after) { requestedLookMinimum = before; effectiveLookMinimum = after; }
+    ~LookMinimumScope() { requestedLookMinimum = requested; effectiveLookMinimum = effective; }
+};
+bool everyLookTickExperiment() {
+    static const bool enabled = [] {
+        const char* setting = std::getenv("DARK_LOOK_EVERY_TICK");
+        return setting && setting[0] == '1' && setting[1] == '\0';
+    }();
+    return enabled;
+}
 void traceLookCommand(uint32_t client, double pitch, double yaw, bool mouse) {
     if (!commandProbeEnabled() || (!pitch && !yaw) || !memory || !client ||
         uint64_t(client) + 8844 > PPC_MEMORY_SIZE) return;
@@ -51,11 +65,12 @@ void traceLookCommand(uint32_t client, double pitch, double yaw, bool mouse) {
     LARGE_INTEGER counter{}, frequency{};
     QueryPerformanceCounter(&counter); QueryPerformanceFrequency(&frequency);
     std::fprintf(stderr, "[LookCommand] qpc=%llu hz=%llu client=%08X mouse=%u pitch=%.17g yaw=%.17g "
-        "lastClock=%.17g axis=%.9g,%.9g flags=%08X\n",
+        "lastClock=%.17g axis=%.9g,%.9g flags=%08X scale=%.9g minimum=%.9g,%.9g\n",
         static_cast<unsigned long long>(counter.QuadPart), static_cast<unsigned long long>(frequency.QuadPart),
         client, unsigned(mouse), pitch, yaw, std::bit_cast<double>(PPC_LOAD_U64(client + 7064)),
         std::bit_cast<float>(PPC_LOAD_U32(client + 8820)),
-        std::bit_cast<float>(PPC_LOAD_U32(client + 8824)), PPC_LOAD_U32(client + 516));
+        std::bit_cast<float>(PPC_LOAD_U32(client + 8824)), PPC_LOAD_U32(client + 516),
+        std::bit_cast<float>(PPC_LOAD_U32(client + 424)), requestedLookMinimum, effectiveLookMinimum);
     _mm_setcsr(saved);
 }
 struct ScopedMathMode {
@@ -134,6 +149,14 @@ extern "C" PPC_FUNC(__imp__sub_823FCF68);
 PPC_FUNC(sub_823FC650) {
     DarkRecomp::Native::StallProfiler::Scope stallProfile(DarkRecomp::Native::StallProfiler::Section::Guest, __func__, 0x823FC650u, uint32_t(ctx.lr));
     const uint32_t client = ctx.r3.u32, caller = uint32_t(ctx.lr);
+    const double requestedMinimum = ctx.f1.f64;
+    if (everyLookTickExperiment() && caller == 0x823FC9A0 && memory && base == memory->base() && client &&
+        uint64_t(client) + 8844 <= PPC_MEMORY_SIZE &&
+        (PPC_LOAD_U32(client) == 0x820807E0 || PPC_LOAD_U32(client) == 0x82081BF0) &&
+        !(PPC_LOAD_U8(client + 8816) & 6) && !(PPC_LOAD_U32(client + 516) & 0x60) &&
+        !PPC_LOAD_U32(client + 7360) && std::isfinite(requestedMinimum) && requestedMinimum > 0)
+        ctx.f1.f64 = 0;
+    const LookMinimumScope minimumScope(requestedMinimum, ctx.f1.f64);
     __imp__sub_823FC650(ctx, base);
     // This periodic call is independent of changed XInput packets and of the
     // original function's neutral-stick early-out. Never consume for another
