@@ -92,8 +92,10 @@ IF IT DOESN'T START
 - Extract the whole ZIP. Keep the launchers and build_native together.
 - If the launcher lists missing files, check step 2 above.
 - If the game reports "default.xex differs from the supported AOT revision",
-  your dump uses a different revision or a modified executable. Include your
-  disc revision and the runtime.log below when reporting it. Do not post game files.
+  your dump uses a different revision or a modified executable; this alone does
+  not mean the extraction is corrupt. The diagnostic lists your file's SHA-256
+  and size, plus supported revision names and hashes. Include your disc/media ID
+  and the runtime.log below when reporting it. Do not post game files.
 - If Windows reports a missing DLL, extract the whole release again.
 - If the game closes after launch, look in build_native\run for the newest
   desktop-* folder and its runtime.log. Include that log when reporting the

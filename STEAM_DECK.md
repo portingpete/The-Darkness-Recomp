@@ -29,6 +29,12 @@ an ext4-formatted SD card.
    GE-Proton downloads, copies the release and your dump, then shows the launcher
    and setup log paths. It does not start the game or install system packages.
 
+If setup says the destination is a **Windows-backed mount**, choose a different
+installation parent on Linux storage, such as `/home/deck/Games` or an
+ext4-formatted SD card. NTFS destinations are rejected even when mounted outside
+`/mnt`. Your source game dump may stay on that drive; select it again and choose
+the Linux destination when rerunning the installer.
+
 The installation remains in the selected folder after the AppImage closes.
 Open `Play-The-Darkness.desktop` there to play in Desktop Mode. Program files,
 your copied dump, saves and settings live in its `game` subfolder; the Proton

@@ -718,9 +718,10 @@ float4 pixelMain(Fragment input) : SV_Target {
         float2 slope=float2(ddx(input.position.z),ddy(input.position.z))/eyeRay.xy;
         float3 normal=float3(slope,q-dot(slope,ray));
         float lengthSquared=dot(normal,normal)*(1.0+dot(ray,ray));
-        if(isfinite(lengthSquared) && lengthSquared>0) {
+        // Wine's built-in compiler lacks isfinite; test the IEEE exponent.
+        if((asuint(lengthSquared)&0x7f800000u)!=0x7f800000u && lengthSquared>0) {
             float facing=abs(q)*rsqrt(lengthSquared);
-            if(isfinite(facing))angleGain=smoothstep(0.5,0.75,facing);
+            if((asuint(facing)&0x7f800000u)!=0x7f800000u)angleGain=smoothstep(0.5,0.75,facing);
         }
         // Farther eye volumes retain their original glow at every angle.
         float nearDistance=eyeProjection/max(q,1e-6);

@@ -27,8 +27,8 @@ static void rejects(const std::vector<uint8_t>& bytes) {
     try { decodeXex(bytes); } catch (const std::runtime_error&) { return; }
     throw std::runtime_error("Malformed XEX was accepted");
 }
-static void rejectsRevision(const std::vector<uint8_t>& bytes, std::span<const GameRevision> revisions) {
-    try { decodeVerifiedXex(bytes, revisions); } catch (const std::runtime_error&) { return; }
+static std::string rejectsRevision(const std::vector<uint8_t>& bytes, std::span<const GameRevision> revisions) {
+    try { decodeVerifiedXex(bytes, revisions); } catch (const std::runtime_error& error) { return error.what(); }
     throw std::runtime_error("Unverified XEX revision was accepted");
 }
 static std::vector<uint8_t> basicFixture() {
@@ -66,7 +66,13 @@ int main(int argc, char** argv) {
             printf("Verified compatible revision: %s.\n", accepted.revisionName);
         }
         auto changed = original; changed.back() ^= 1;
-        rejectsRevision(changed, kGameRevisions);
+        const auto unsupported = rejectsRevision(changed, kGameRevisions);
+        check(unsupported.find("Received SHA256: " + sha256(changed) + " (" +
+                               std::to_string(changed.size()) + " bytes)") != std::string::npos,
+              "Unsupported revision diagnostic must identify the exact rejected file");
+        for (const auto& revision : kGameRevisions)
+            check(unsupported.find(std::string(revision.name) + ": " + revision.xexSha256) != std::string::npos,
+                  "Unsupported revision diagnostic must identify every accepted executable");
         rejectsRevision(original, {});
         const auto sourceHash = sha256(original);
         const GameRevision wrongPair[]{ {sourceHash.c_str(), "wrong decoded image hash", "mismatched pair"} };
