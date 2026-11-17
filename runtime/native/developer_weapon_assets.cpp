@@ -8,8 +8,10 @@
 #include <bcrypt.h>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstring>
 #include <cstdio>
+#include <cwchar>
 #include <fstream>
 #include <limits>
 #include <stdexcept>
@@ -418,8 +420,12 @@ void store(const std::filesystem::path& path, const File& file) {
         return;
     }
     std::filesystem::create_directories(path.parent_path());
-    const std::filesystem::path temporary = path.wstring() + L".tmp." +
-        std::to_wstring(GetCurrentProcessId()) + L"." + std::to_wstring(GetTickCount64());
+    // Keep the staging basename short enough to fit alongside the cache file.
+    static std::atomic<DWORD> nextTemporary{GetTickCount()};
+    wchar_t temporaryName[19]{};
+    swprintf_s(temporaryName, std::size(temporaryName), L"dw%08lX%08lX",
+        GetCurrentProcessId(), nextTemporary.fetch_add(1, std::memory_order_relaxed));
+    const auto temporary = path.parent_path() / temporaryName;
     HANDLE output = CreateFileW(temporary.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
         FILE_ATTRIBUTE_NORMAL, nullptr);
     if (output == INVALID_HANDLE_VALUE) invalid("Cannot create private developer weapon cache.");
