@@ -277,9 +277,12 @@ are not read.
 
 The game checks the supported revision automatically at launch; no manual hash
 check is needed. If it reports `default.xex differs from the supported AOT revision`,
-your dump uses a different revision or a modified executable. Include your disc
-revision and the newest `build_native/run/desktop-*/runtime.log` when reporting
-the problem. Do not post game files.
+your dump uses a different revision or a modified executable. This does not by
+itself mean your extraction is corrupt. The diagnostic lists the received file's
+SHA-256 and byte size, then the supported revision names and hashes from the
+[revision catalog](config/game_revisions.toml). Include your disc/media ID and
+the newest `build_native/run/desktop-*/runtime.log` when reporting the problem.
+Do not post game files.
 
 </details>
 
