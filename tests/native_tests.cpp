@@ -60,6 +60,7 @@ static void check(bool success, const char* message) { if (!success) throw std::
 #include "light_flicker_tests.h"
 #include "developer_tools_tests.h"
 #include "developer_invincibility_tests.h"
+#include "developer_combat_tests.h"
 #include "developer_noclip_tests.h"
 #include "developer_darkness_tests.h"
 #include "developer_weapon_assets_tests.h"
@@ -1816,6 +1817,7 @@ int main(int argc, char** argv) {
             testMovementCameraRecovery(ctx);
             testDeveloperToolsRequests();
             testDeveloperInvincibility(ctx);
+            testDeveloperCombat(ctx);
             testDeveloperNoclip(ctx);
             testDeveloperWeaponAssets(ctx);
             testDeveloperDarkness(ctx);

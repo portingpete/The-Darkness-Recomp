@@ -35,6 +35,8 @@ private:
     void selectSpeed();
     void selectInvincibility();
     void selectNoclip();
+    void selectInfiniteAmmo();
+    void selectEnemiesIgnorePlayer();
     void selectResolutionShortcut();
     void unlockDarkness();
     void maxDarkness();
@@ -45,8 +47,9 @@ private:
 
     HWND owner_{};
     NativeMouseWindow& mouse_;
-    HWND window_{}, mission_{}, load_{}, speed_{}, speedLabel_{}, invincible_{}, noclip_{}, unlock_{}, maxDarkness_{},
-         resolutionShortcut_{}, defaults_{}, status_{};
+    HWND window_{}, mission_{}, load_{}, speed_{}, speedLabel_{}, invincible_{}, noclip_{},
+         infiniteAmmo_{}, enemiesIgnorePlayer_{}, unlock_{}, maxDarkness_{}, resolutionShortcut_{},
+         defaults_{}, status_{};
     std::function<void(bool)> setResolutionShortcut_;
     bool resolutionShortcutEnabled_ = false;
     bool inputGate_ = false;

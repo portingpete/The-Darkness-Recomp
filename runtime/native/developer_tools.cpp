@@ -46,7 +46,8 @@ void publish(uint64_t request, bool canLoad, bool hasPlayer, std::string_view st
     state.hasActivePlayer = hasPlayer;
     if (playerApplied && status.empty() &&
         (state.status == "Player speed queued." || state.status == "Invincibility queued." ||
-         state.status == "Noclip queued."))
+         state.status == "Noclip queued." || state.status == "Infinite ammo queued." ||
+         state.status == "Enemies ignore player queued."))
         status = "Player settings applied.";
     const bool statusChanged = requestRevision == request && !status.empty() && state.status != status;
     if (statusChanged) state.status = status;
@@ -54,7 +55,7 @@ void publish(uint64_t request, bool canLoad, bool hasPlayer, std::string_view st
     // Returning to defaults still needs one update to clear previously applied
     // hooks. A request arriving during that update must keep its next update.
     if (playerProcessed && requestRevision == request && state.playerSpeed == 1 &&
-        !state.invincible && !state.noclip) playerToolsEnabled = false;
+        !state.invincible && !state.noclip && state.combat == DeveloperCombatCheats{}) playerToolsEnabled = false;
     refreshWorkLocked();
 }
 }
@@ -108,6 +109,20 @@ void requestDeveloperNoclip(bool enabled) {
     requested("Noclip queued.");
 }
 
+void requestDeveloperInfiniteAmmo(bool enabled) {
+    std::lock_guard lock(stateMutex);
+    state.combat.infiniteAmmo = enabled;
+    playerToolsEnabled = true;
+    requested("Infinite ammo queued.");
+}
+
+void requestDeveloperEnemiesIgnorePlayer(bool enabled) {
+    std::lock_guard lock(stateMutex);
+    state.combat.enemiesIgnorePlayer = enabled;
+    playerToolsEnabled = true;
+    requested("Enemies ignore player queued.");
+}
+
 void requestDeveloperUnlockDarkness() {
     std::lock_guard lock(stateMutex);
     pendingDarknessUnlock = true;
@@ -135,6 +150,7 @@ bool processDeveloperTools(PPCContext& ctx, uint8_t* base, uint32_t client, bool
     std::optional<std::string> mission;
     float speed;
     bool invincible, noclip, enabled, unlockDarkness, maxDarkness;
+    DeveloperCombatCheats combat;
     uint64_t request;
     {
         std::lock_guard lock(stateMutex);
@@ -143,6 +159,7 @@ bool processDeveloperTools(PPCContext& ctx, uint8_t* base, uint32_t client, bool
         speed = state.playerSpeed;
         invincible = state.invincible;
         noclip = state.noclip;
+        combat = state.combat;
         enabled = playerToolsEnabled;
         unlockDarkness = std::exchange(pendingDarknessUnlock, false);
         maxDarkness = std::exchange(pendingDarknessLevel, false);
@@ -167,7 +184,7 @@ bool processDeveloperTools(PPCContext& ctx, uint8_t* base, uint32_t client, bool
         // Even a failed engine command may have changed transition state.
         return canLoad;
     }
-    const auto player = updateDeveloperPlayer(call, base, client, speed, invincible, enabled, noclip);
+    const auto player = updateDeveloperPlayer(call, base, client, speed, invincible, enabled, noclip, combat);
     if (unlockDarkness || maxDarkness) {
         const auto handles = resolveDeveloperPlayer(call, base, client);
         const auto darkness = applyDeveloperDarkness(call, base, handles, unlockDarkness, maxDarkness, client);

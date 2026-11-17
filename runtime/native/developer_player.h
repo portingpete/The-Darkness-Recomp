@@ -1,4 +1,5 @@
 #pragma once
+#include "developer_combat.h"
 #include <cstdint>
 #include <string>
 
@@ -11,7 +12,8 @@ struct DeveloperPlayerResult {
     std::string status;
 };
 DeveloperPlayerResult updateDeveloperPlayer(PPCContext& ctx, uint8_t* base,
-    uint32_t client, float speed, bool invincible, bool enabled, bool noclip = false);
+    uint32_t client, float speed, bool invincible, bool enabled, bool noclip = false,
+    DeveloperCombatCheats combat = {});
 void resetDeveloperPlayer() noexcept;
 }
 void ApplyDeveloperHorizontalSpeedMidAsmHook(PPCRegister& actor, PPCRegister& state,

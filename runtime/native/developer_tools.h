@@ -1,4 +1,5 @@
 #pragma once
+#include "developer_combat.h"
 #include <cstdint>
 #include <span>
 #include <string>
@@ -26,6 +27,7 @@ struct DeveloperSnapshot {
     float playerSpeed = 1;
     bool invincible = false;
     bool noclip = false;
+    DeveloperCombatCheats combat;
     std::string status = "Waiting for the game.";
     uint64_t revision = 0;
 };
@@ -34,6 +36,8 @@ bool requestDeveloperMission(std::string_view id);
 bool requestDeveloperSpeed(float multiplier);
 void requestDeveloperInvincibility(bool enabled);
 void requestDeveloperNoclip(bool enabled);
+void requestDeveloperInfiniteAmmo(bool enabled);
+void requestDeveloperEnemiesIgnorePlayer(bool enabled);
 void requestDeveloperUnlockDarkness();
 void requestDeveloperMaxDarkness();
 void resetDeveloperTools();

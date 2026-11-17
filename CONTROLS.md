@@ -256,14 +256,19 @@ mode plays with sound instead of `--mute`.
 
 Press **F5** to open or close the developer panel. Select a campaign destination
 and press **Load**, choose a player speed from **0.25× to 4×**, or toggle
-**Invincible** and **Noclip**. Player controls become available once a player is active.
+**Invincible**, **Noclip**, **Infinite Ammo** and **Enemies Ignore Player**.
+Player controls become available once a player is active.
+**Infinite Ammo** keeps loaded rounds from being spent when you fire. Reload or
+switch weapons first if your gun is already empty.
+**Enemies Ignore Player** makes the player ineligible for ordinary AI targeting.
+Scripted damage and encounters can still occur.
 **Unlock all Darkness** grants all six original Darkness abilities.
 **Max Darkness level** raises progression to the original maximum, level 5;
 it preserves an existing higher heart count. These one-shot grants can be included
 in later autosaves. Back up your checkpoint before changing progression.
 **Enable F6 resolution shortcut** allows the live resolution hotkey for this session;
-it starts off. **Restore defaults** returns to 1× speed and disables invincibility,
-noclip and the F6 shortcut. It does not undo Darkness progression grants.
+it starts off. **Restore defaults** returns to 1× speed and disables all cheat
+toggles and the F6 shortcut. Darkness progression grants persist.
 **Load** closes the panel before the mission's opening sequence; press F5 to reopen it.
 
 Loading a mission restarts the current session, then loads the destination
