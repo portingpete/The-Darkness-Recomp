@@ -34,6 +34,30 @@ bool probeEnabled() {
     }();
     return enabled;
 }
+bool commandProbeEnabled() {
+    static const bool enabled = [] {
+        const char* setting = std::getenv("DARK_LOOK_COMMAND_PROBE");
+        return setting && setting[0] == '1' && setting[1] == '\0';
+    }();
+    return enabled;
+}
+void traceLookCommand(uint32_t client, double pitch, double yaw, bool mouse) {
+    if (!commandProbeEnabled() || (!pitch && !yaw) || !memory || !client ||
+        uint64_t(client) + 8844 > PPC_MEMORY_SIZE) return;
+    static std::atomic<unsigned> count{0};
+    if (count.fetch_add(1, std::memory_order_relaxed) >= 16384) return;
+    const unsigned saved = _mm_getcsr();
+    auto* base = memory->base();
+    LARGE_INTEGER counter{}, frequency{};
+    QueryPerformanceCounter(&counter); QueryPerformanceFrequency(&frequency);
+    std::fprintf(stderr, "[LookCommand] qpc=%llu hz=%llu client=%08X mouse=%u pitch=%.17g yaw=%.17g "
+        "lastClock=%.17g axis=%.9g,%.9g flags=%08X\n",
+        static_cast<unsigned long long>(counter.QuadPart), static_cast<unsigned long long>(frequency.QuadPart),
+        client, unsigned(mouse), pitch, yaw, std::bit_cast<double>(PPC_LOAD_U64(client + 7064)),
+        std::bit_cast<float>(PPC_LOAD_U32(client + 8820)),
+        std::bit_cast<float>(PPC_LOAD_U32(client + 8824)), PPC_LOAD_U32(client + 516));
+    _mm_setcsr(saved);
+}
 struct ScopedMathMode {
     unsigned saved = _mm_getcsr();
     ScopedMathMode() { _mm_setcsr(saved & ~(_MM_ROUND_MASK | _MM_FLUSH_ZERO_MASK | _MM_DENORMALS_ZERO_MASK)); }
@@ -63,13 +87,46 @@ void ApplyNativeMouseLookMidAsmHook(PPCRegister& client, PPCRegister& stack,
                                    PPCRegister& pitch, PPCRegister& yaw) {
     auto* command = activeMouseCommand;
     if (!command || command->client != client.u32 || !DarkRecomp::Native::memory ||
-        command->base != DarkRecomp::Native::memory->base()) return;
+        command->base != DarkRecomp::Native::memory->base()) {
+        traceLookCommand(client.u32, pitch.f64, yaw.f64, false);
+        return;
+    }
     auto* base = command->base;
     pitch.f64 = command->packet.pitch;
     yaw.f64 = command->packet.yaw;
     PPC_STORE_U32(stack.u32 + 92, std::bit_cast<uint32_t>(float(pitch.f64)));
     PPC_STORE_U32(stack.u32 + 96, std::bit_cast<uint32_t>(float(yaw.f64)));
     command->reached = true;
+    traceLookCommand(client.u32, pitch.f64, yaw.f64, true);
+}
+
+extern "C" PPC_FUNC(__imp__sub_821C8420);
+PPC_FUNC(sub_821C8420) {
+    const bool trace = commandProbeEnabled();
+    const uint32_t actor = ctx.r5.u32, world = ctx.r6.u32;
+    uint32_t state = 0, pitchBefore = 0, yawBefore = 0;
+    if (trace && memory && base == memory->base() && actor && uint64_t(actor) + 400 <= PPC_MEMORY_SIZE) {
+        state = PPC_LOAD_U32(actor + 396);
+        if (state && uint64_t(state) + 1052 <= PPC_MEMORY_SIZE) {
+            pitchBefore = PPC_LOAD_U32(state + 1044); yawBefore = PPC_LOAD_U32(state + 1048);
+        } else state = 0;
+    }
+    __imp__sub_821C8420(ctx, base);
+    if (!state) return;
+    const uint32_t pitchAfter = PPC_LOAD_U32(state + 1044), yawAfter = PPC_LOAD_U32(state + 1048);
+    if (pitchBefore == pitchAfter && yawBefore == yawAfter) return;
+    static std::atomic<unsigned> count{0};
+    if (count.fetch_add(1, std::memory_order_relaxed) >= 16384) return;
+    const unsigned saved = _mm_getcsr();
+    LARGE_INTEGER counter{}, frequency{};
+    QueryPerformanceCounter(&counter); QueryPerformanceFrequency(&frequency);
+    std::fprintf(stderr, "[LookApply] qpc=%llu hz=%llu world=%08X actor=%08X state=%08X tick=%u "
+        "fraction=%.9g pitch=%.9g,%.9g yaw=%.9g,%.9g\n",
+        static_cast<unsigned long long>(counter.QuadPart), static_cast<unsigned long long>(frequency.QuadPart),
+        world, actor, state, PPC_LOAD_U32(state + 32), std::bit_cast<float>(PPC_LOAD_U32(state + 40)),
+        std::bit_cast<float>(pitchBefore), std::bit_cast<float>(pitchAfter),
+        std::bit_cast<float>(yawBefore), std::bit_cast<float>(yawAfter));
+    _mm_setcsr(saved);
 }
 
 extern "C" PPC_FUNC(__imp__sub_823FC650);
