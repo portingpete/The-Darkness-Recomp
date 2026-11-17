@@ -222,6 +222,43 @@ static void testMouseLookContract(PPCContext& ctx) {
     check(commands.size() == 1 && totals() == std::array<int64_t, 2>{384, 192},
           "Unscoped controller/script look must retain original 32x sensitivity and pitch sign");
     const auto originalPhysical = commands.front();
+    // The real caller supplies a frame-sized minimum, but its clock is sampled
+    // separately. Modest frame jitter must not defer half the held-stick input.
+    const char* cadenceSetting = std::getenv("DARK_CONTROLLER_LOOK_CADENCE");
+    const bool cadenceEnabled = !(cadenceSetting && cadenceSetting[0] == '0' && !cadenceSetting[1]);
+    putFloat(client + 8836, 64); putFloat(client + 8820, 0.75f);
+    for (const unsigned fps : {30u, 60u, 90u, 120u, 144u, 240u, 360u}) {
+        commands.clear(); tickTime = 10;
+        PPC_STORE_U64(client + 7064, std::bit_cast<uint64_t>(tickTime));
+        memory->write32(client + 7348, 0);
+        for (unsigned frame = 1; frame <= fps; ++frame) {
+            tickTime = 10 + (double(frame) + (frame & 1 ? 0.04 : 0)) / fps;
+            auto call = fresh(); call.r3.u64 = client; call.lr = 0x823FC9A0; call.f1.f64 = 1.0 / fps;
+            sub_823FC650(call, base);
+        }
+        unsigned looks = 0;
+        int64_t yaw = 0;
+        for (const auto& item : commands) if (item[0] == 2) {
+            ++looks; yaw += axis(item, 2);
+            check(axis(item, 0) == 0 && axis(item, 1) == 0,
+                  "Controller cadence must not introduce roll or pitch");
+        }
+        check(cadenceEnabled ? looks == fps : looks < fps,
+              "Gameplay look must accept each jittered frame; the reversal must reproduce skipped updates");
+        if (cadenceEnabled)
+            check(std::abs(yaw - 30720) <= fps,
+                  "Held-stick turn total must retain elapsed time and sensitivity within original short truncation");
+    }
+    commands.clear(); tickTime = 10.01;
+    PPC_STORE_U64(client + 7064, std::bit_cast<uint64_t>(10.0));
+    {
+        auto call = fresh(); call.r3.u64 = client; call.lr = 0x823FC99C; call.f1.f64 = 0.05;
+        sub_823FC650(call, base);
+    }
+    check(commands.empty(), "An unrelated caller must retain the original look minimum");
+    tickTime = 1; PPC_STORE_U64(client + 7064, std::bit_cast<uint64_t>(tickTime));
+    memory->write32(client + 7348, 0);
+    putFloat(client + 8820, 0); putFloat(client + 8836, 3);
     commands.clear(); memory->write32(client + 516, 0x21);
     physicalLook();
     check(commands.empty(), "Original 824A16F8 gate must reject look before the downstream queue stub");

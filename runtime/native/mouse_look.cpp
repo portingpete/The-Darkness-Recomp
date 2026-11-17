@@ -48,10 +48,10 @@ struct LookMinimumScope {
     LookMinimumScope(double before, double after) { requestedLookMinimum = before; effectiveLookMinimum = after; }
     ~LookMinimumScope() { requestedLookMinimum = requested; effectiveLookMinimum = effective; }
 };
-bool everyLookTickExperiment() {
+bool controllerLookCadenceEnabled() {
     static const bool enabled = [] {
-        const char* setting = std::getenv("DARK_LOOK_EVERY_TICK");
-        return setting && setting[0] == '1' && setting[1] == '\0';
+        const char* setting = std::getenv("DARK_CONTROLLER_LOOK_CADENCE");
+        return !(setting && setting[0] == '0' && setting[1] == '\0');
     }();
     return enabled;
 }
@@ -146,16 +146,18 @@ PPC_FUNC(sub_821C8420) {
 
 extern "C" PPC_FUNC(__imp__sub_823FC650);
 extern "C" PPC_FUNC(__imp__sub_823FCF68);
+extern "C" double dark_controller_look_minimum(double, float);
 PPC_FUNC(sub_823FC650) {
     DarkRecomp::Native::StallProfiler::Scope stallProfile(DarkRecomp::Native::StallProfiler::Section::Guest, __func__, 0x823FC650u, uint32_t(ctx.lr));
     const uint32_t client = ctx.r3.u32, caller = uint32_t(ctx.lr);
     const double requestedMinimum = ctx.f1.f64;
-    if (everyLookTickExperiment() && caller == 0x823FC9A0 && memory && base == memory->base() && client &&
+    if (controllerLookCadenceEnabled() && caller == 0x823FC9A0 && memory && base == memory->base() && client &&
         uint64_t(client) + 8844 <= PPC_MEMORY_SIZE &&
         (PPC_LOAD_U32(client) == 0x820807E0 || PPC_LOAD_U32(client) == 0x82081BF0) &&
         !(PPC_LOAD_U8(client + 8816) & 6) && !(PPC_LOAD_U32(client + 516) & 0x60) &&
-        !PPC_LOAD_U32(client + 7360) && std::isfinite(requestedMinimum) && requestedMinimum > 0)
-        ctx.f1.f64 = 0;
+        !PPC_LOAD_U32(client + 7360))
+        ctx.f1.f64 = dark_controller_look_minimum(requestedMinimum,
+            std::bit_cast<float>(PPC_LOAD_U32(client + 424)));
     const LookMinimumScope minimumScope(requestedMinimum, ctx.f1.f64);
     __imp__sub_823FC650(ctx, base);
     // This periodic call is independent of changed XInput packets and of the
