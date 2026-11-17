@@ -201,7 +201,7 @@ std::shared_ptr<const ColorImage> previewColorImageForSubtitleFont(uint32_t text
 void previewObserveVideo(uint8_t* base, uint32_t container, uint32_t localId);
 // Adaptive prompt icon substitution, resolved at the render boundary.
 // Returns nullptr to keep the original controller artwork.
-enum class PromptRenderSource : uint8_t { KeyboardMouse = 0, Controller = 1 };
+enum class PromptRenderSource : uint8_t { KeyboardMouse = 0, Controller = 1, PlayStation = 2 };
 std::shared_ptr<const ColorImage> promptReplacementFor(uint32_t textureId,
     const std::shared_ptr<const ColorImage>& image, PromptRenderSource source, PromptRenderContext context);
 // Immediate-path variant with the draw's sampled UV bounds so atlas tiles and

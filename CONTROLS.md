@@ -34,6 +34,17 @@ mouse movement during loading is discarded. Escape and Alt-Tab release capture.
 The first controller detected by the game uses the same local profile as keyboard and mouse,
 regardless of its Windows controller slot. It stays selected until disconnected;
 start the game with only your preferred controller connected to choose it.
+
+DualSense controllers can connect directly over USB or Bluetooth. Cross confirms
+and Circle goes back; Options pauses, and Create or a touchpad click supplies the
+original Back action. Both sticks, analog triggers, shoulder buttons, stick
+clicks, the D-pad and normal rumble are supported. PlayStation button prompts
+appear after using the controller. Adaptive triggers and advanced haptics are
+outside this first pass.
+
+For direct DualSense input, use the controller without an XInput remapper such
+as DS4Windows or Steam Input. If Windows lists a paired Bluetooth controller but
+the game does not respond, wake it with the PS button or try a USB data cable.
 Run `LaunchWithSettings.cmd` to choose video options and language before the game
 opens, then play with audio. It reads and saves `DarkRecomp.settings.ini`, so
 the pre-game launcher and in-game Video Settings share your choices.
@@ -268,7 +279,8 @@ Keyboard input uses Win32 window messages. Mouse look uses foreground Raw Input
 (`WM_INPUT` / `GetRawInputData`) with relative mouse counts. These native C++
 paths feed the AOT game's existing input ABI directly. No virtual controller,
 external remapper, or runtime interpreter is installed or required. Physical
-XInput controllers remain supported.
+XInput controllers remain supported. DualSense input uses a native Rust HID
+backend on the same background input worker, with no extra runtime DLL.
 
 Relative mouse counts are kept separately from the XInput state. Reading
 controller input does not consume mouse movement or turn it into a held stick
@@ -288,8 +300,9 @@ Raw Input uses the [Microsoft Win32 interface](https://learn.microsoft.com/en-us
 
 In-game button prompts use the light keyboard and mouse artwork from
 [Xelu's free CC0 prompt pack](https://thoseawesomeguys.com/prompts/). When a physical
-controller becomes the primary active input, prompts switch to the original
-controller artwork; keyboard/mouse activity, focus loss, or controller
+controller becomes the primary active input, prompts switch to PlayStation
+symbols for a direct DualSense connection or the original Xbox artwork for
+XInput; keyboard/mouse activity, focus loss, or controller
 disconnect restores the keyboard/mouse set. Shared action icons combine their
 bindings, such as R/Esc in menus or Shift/middle mouse during gameplay.
 Gameplay prompts use their action bindings, so portal choices show R without

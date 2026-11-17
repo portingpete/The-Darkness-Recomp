@@ -4,11 +4,14 @@
 #include "runtime.h"
 #include "ppc_recomp_shared.h"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <bit>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <optional>
 
 namespace {
 using namespace DarkRecomp::Native;
@@ -20,6 +23,9 @@ std::atomic<uint32_t> activeServer{0};
 struct Velocity { float x, y; };
 struct Vertical { float jump, gravity; };
 extern "C" Velocity dark_movement_step(uint32_t, uint32_t, float, float, float, float, float, float);
+extern "C" uint32_t dark_movement_coalesce_command(uint8_t*, uint32_t, const uint8_t*);
+extern "C" uint32_t dark_movement_coalesce_relative_command(uint8_t*, uint32_t, const uint8_t*);
+extern "C" float dark_movement_camera_lag_limit(float, float, float);
 extern "C" Vertical dark_movement_vertical(uint32_t);
 extern "C" float dark_movement_gravity(uint32_t, float);
 extern "C" float dark_movement_limit_fall(uint32_t, float);
@@ -43,7 +49,119 @@ struct PredictionStep {
     uint64_t selected = 0, revision = 0;
 };
 thread_local PredictionStep prediction;
+enum class CommandPacketClock { None, TickFraction, ElapsedMilliseconds };
+thread_local CommandPacketClock packingMovementCommands = CommandPacketClock::None;
+struct MovementPackingScope {
+    CommandPacketClock previous = packingMovementCommands;
+    explicit MovementPackingScope(CommandPacketClock clock) { packingMovementCommands = clock; }
+    ~MovementPackingScope() { packingMovementCommands = previous; }
+};
 float readFloat(uint8_t* base, uint32_t address) { return std::bit_cast<float>(PPC_LOAD_U32(address)); }
+struct CameraStages {
+    uint32_t actor = 0, matrix = 0;
+    bool headSeen = false, wallSeen = false;
+    std::array<float, 3> headBefore{}, headAfter{}, wallBefore{}, wallAfter{};
+    bool ordinarySeen = false, raySeen = false, rayHit = false;
+    float previousLag = 0, limitBefore = 0, limitAfter = 0, elapsed = 0, rayFraction = 0;
+    double time = 0, lastCollision = 0;
+    std::array<float, 3> desired{}, limited{};
+};
+thread_local CameraStages* activeCameraStages = nullptr;
+thread_local MovementCameraHistoryScope* activeCameraHistory = nullptr;
+std::array<float, 3> cameraEye(uint8_t* base, uint32_t matrix) {
+    return {readFloat(base, matrix + 48), readFloat(base, matrix + 52), readFloat(base, matrix + 56)};
+}
+bool commandProbeEnabled() {
+    static const bool enabled = [] {
+        const auto* value = std::getenv("DARK_MOVEMENT_COMMAND_PROBE");
+        return value && value[0] == '1' && !value[1];
+    }();
+    return enabled;
+}
+struct CommandProbe;
+thread_local CommandProbe* activeCommandProbe = nullptr;
+// Temporary, opt-in command oracle: preserve the actual serialized commands,
+// tick clocks and before/after body state, rather than inferring input from a
+// camera query. Bounded per thread and inactive during ordinary play.
+struct CommandProbe {
+    CommandProbe* previous = activeCommandProbe;
+    uint8_t* base;
+    uint32_t actor, state, world;
+    uint64_t id = 0, begin = 0;
+    uint32_t tick = 0, clock = 0, flags = 0, options = 0;
+    float startFraction = 0;
+    unsigned shaped = 0, prepared = 0, applied = 0;
+    std::array<float, 6> before{};
+    std::array<char, 515> bytes{};
+    CommandProbe(uint8_t* b, PPCContext& ctx) : base(b), actor(ctx.r5.u32), state(ctx.r3.u32), world(ctx.r4.u32) {
+        activeCommandProbe = nullptr;
+        if (!commandProbeEnabled() || !memory || base != memory->base() || !actor || !state ||
+            !activePlayer.load(std::memory_order_acquire) ||
+            (world != activeClient.load(std::memory_order_acquire) && world != activeServer.load(std::memory_order_acquire)) ||
+            PPC_LOAD_U32(actor + 396) != state ||
+            PPC_LOAD_U16(actor + 368) != PPC_LOAD_U32(activeClient.load(std::memory_order_acquire) + 536)) return;
+        const auto savedMath = _mm_getcsr();
+        struct RestoreMath { unsigned saved; ~RestoreMath() { _mm_setcsr(saved); } } restore{savedMath};
+        thread_local ULONGLONG started = 0;
+        thread_local unsigned count = 0;
+        const auto now = GetTickCount64();
+        if (!started && (readFloat(base, actor + 224) != 0 || readFloat(base, actor + 228) != 0 ||
+            readFloat(base, state + 1016) != 0 || readFloat(base, state + 1020) != 0)) started = now;
+        if (!started || now - started > 20000 || count >= 16000) return;
+        id = (uint64_t(GetCurrentThreadId()) << 32) | ++count;
+        LARGE_INTEGER time{}; QueryPerformanceCounter(&time); begin = time.QuadPart;
+        tick = PPC_LOAD_U32(state + 32); clock = PPC_LOAD_U32(world + 408);
+        startFraction = readFloat(base, state + 40);
+        flags = PPC_LOAD_U32(actor + 420); options = ctx.r7.u32 | (ctx.r8.u32 << 8);
+        for (unsigned i = 0; i < 3; ++i) {
+            before[i] = readFloat(base, actor + 128 + i * 4);
+            before[i + 3] = readFloat(base, actor + 224 + i * 4);
+        }
+        const auto packet = ctx.r6.u32;
+        const auto readable = [&](uint32_t address, unsigned size) {
+            if (!address || uint64_t(address) + size > 0x100000000ull) return false;
+            uint64_t cursor = address, end = cursor + size;
+            while (cursor < end) {
+                MEMORY_BASIC_INFORMATION region{};
+                if (!VirtualQuery(base + cursor, &region, sizeof(region)) || region.State != MEM_COMMIT ||
+                    (region.Protect & (PAGE_GUARD | PAGE_NOACCESS))) return false;
+                const auto protection = region.Protect & 0xff;
+                if (protection != PAGE_READONLY && protection != PAGE_READWRITE && protection != PAGE_WRITECOPY &&
+                    protection != PAGE_EXECUTE_READ && protection != PAGE_EXECUTE_READWRITE && protection != PAGE_EXECUTE_WRITECOPY) return false;
+                const auto next = static_cast<uint8_t*>(region.BaseAddress) + region.RegionSize - base;
+                if (uint64_t(next) <= cursor) return false;
+                cursor = uint64_t(next);
+            }
+            return true;
+        };
+        if (readable(packet, 2)) {
+            const unsigned length = unsigned(base[packet + 1]) + 2;
+            if (readable(packet, length)) {
+                constexpr char hex[] = "0123456789abcdef";
+                for (unsigned i = 0; i < length; ++i) {
+                    bytes[i * 2] = hex[base[packet + i] >> 4];
+                    bytes[i * 2 + 1] = hex[base[packet + i] & 15];
+                }
+            }
+        }
+        activeCommandProbe = this;
+    }
+    ~CommandProbe() {
+        activeCommandProbe = previous;
+        if (!id) return;
+        const auto savedMath = _mm_getcsr();
+        struct RestoreMath { unsigned saved; ~RestoreMath() { _mm_setcsr(saved); } } restore{savedMath};
+        LARGE_INTEGER time{}; QueryPerformanceCounter(&time);
+        std::fprintf(stderr, "[MovementCommand] id=%llu qpc=%llu end=%llu actor=%08X state=%08X world=%08X auth=%08X tick=%u endTick=%u worldTick=%u dt=%.9g startFraction=%.9g fraction=%.9g flags=%08X options=%08X before=%.9g,%.9g,%.9g velocity=%.9g,%.9g,%.9g after=%.9g,%.9g,%.9g endVelocity=%.9g,%.9g,%.9g command=%.9g,%.9g shaped=%u prepared=%u applied=%u bytes=%s\n",
+            static_cast<unsigned long long>(id), static_cast<unsigned long long>(begin), static_cast<unsigned long long>(time.QuadPart),
+            actor, state, world, uint32_t(activePlayer.load(std::memory_order_acquire) >> 32), tick, PPC_LOAD_U32(state + 32), clock,
+            readFloat(base, world + 412), startFraction, readFloat(base, state + 40), flags, options,
+            before[0], before[1], before[2], before[3], before[4], before[5],
+            readFloat(base, actor + 128), readFloat(base, actor + 132), readFloat(base, actor + 136),
+            readFloat(base, actor + 224), readFloat(base, actor + 228), readFloat(base, actor + 232),
+            readFloat(base, state + 1016), readFloat(base, state + 1020), shaped, prepared, applied, bytes.data());
+    }
+};
 bool selectedPlayer(uint32_t actor, uint32_t state) {
     const auto selected = activePlayer.load(std::memory_order_acquire);
     if (!selected || !actor || !state || !memory ||
@@ -70,10 +188,29 @@ void prepareStep(float dt, float vx, float vy, bool grounded) {
     pending.deltaX = (next.x - vx) / gain; pending.deltaY = (next.y - vy) / gain;
     pending.prepared = std::isfinite(pending.deltaX) && std::isfinite(pending.deltaY);
     pending.grounded = grounded;
+    if (activeCommandProbe) {
+        ++activeCommandProbe->prepared;
+        const auto savedMath = _mm_getcsr();
+        std::fprintf(stderr, "[MovementSolve] id=%llu actor=%08X dt=%.9g interval=%.9g grounded=%u velocity=%.9g,%.9g wish=%.9g,%.9g maximum=%.9g delta=%.9g,%.9g\n",
+            static_cast<unsigned long long>(activeCommandProbe->id), pending.actor, dt, pending.fraction, unsigned(grounded),
+            vx, vy, wx, wy, maximum, pending.deltaX, pending.deltaY);
+        _mm_setcsr(savedMath);
+    }
     if (movementProbeEnabled() && pending.prepared) ++probeCounts.prepared;
 }
 }
 namespace DarkRecomp::Native {
+MovementCameraHistoryScope::MovementCameraHistoryScope(uint8_t* b, uint32_t c, uint32_t a) noexcept
+    : previous(activeCameraHistory) {
+    activeCameraHistory = this;
+    if (!memory || b != memory->base() || !c || !a) return;
+    auto* base = b;
+    const auto s = PPC_LOAD_U32(a + 396);
+    if (!s || !PPC_LOAD_U32(c + 536) || PPC_LOAD_U16(a + 368) != PPC_LOAD_U32(c + 536) ||
+        PPC_LOAD_U32(s + 16) != a || PPC_LOAD_U32(s + 56) != c) return;
+    this->base = b; client = c; actor = a;
+}
+MovementCameraHistoryScope::~MovementCameraHistoryScope() { activeCameraHistory = previous; }
 MovementPredictionScope::MovementPredictionScope(uint8_t* base, uint32_t client,
     uint32_t actor, uint32_t state) noexcept
     : actor_(prediction.actor), state_(prediction.state), world_(prediction.world),
@@ -198,6 +335,7 @@ void ShapeAlternativeMovementWishMidAsmHook(PPCRegister& actor, PPCRegister& sta
     x.f64 = wx * dt; y.f64 = wy * dt;
     pending = {base, actor.u32, state.u32, stack.u32, movementStyleRevision(), style, wx, wy, cap};
     pending.fraction = fraction;
+    if (activeCommandProbe) ++activeCommandProbe->shaped;
     if (movementProbeEnabled()) ++probeCounts.shaped;
 }
 
@@ -229,6 +367,7 @@ void ApplyAlternativeMovementMidAsmHook(PPCRegister& actor, PPCRegister& state, 
         prepareStep(dt, readFloat(base, actor.u32 + 224) / dt, readFloat(base, actor.u32 + 228) / dt, false);
     }
     if (!pending.prepared) return;
+    if (activeCommandProbe) ++activeCommandProbe->applied;
     PPC_STORE_U32(stack.u32 + 144, std::bit_cast<uint32_t>(pending.deltaX));
     PPC_STORE_U32(stack.u32 + 148, std::bit_cast<uint32_t>(pending.deltaY));
     if (movementProbeEnabled()) { ++probeCounts.applied; if (!pending.grounded) ++probeCounts.air; }
@@ -239,11 +378,54 @@ void ApplyAlternativeMovementMidAsmHook(PPCRegister& actor, PPCRegister& state, 
     pending = {};
 }
 
+// Only the retail tick-packet builder may compact commands. Staging packets,
+// look deltas, button edges and records at different times retain their order.
+extern "C" PPC_FUNC(__imp__sub_82432F90);
+PPC_FUNC(sub_82432F90) {
+    MovementPackingScope scope(CommandPacketClock::TickFraction);
+    __imp__sub_82432F90(ctx, base);
+}
+// Local prediction has a separate queue cursor and a sequence cutoff. Let the
+// original builder retain both; compact only its completed same-time vectors.
+extern "C" PPC_FUNC(__imp__sub_82433450);
+PPC_FUNC(sub_82433450) {
+    MovementPackingScope scope(CommandPacketClock::TickFraction);
+    __imp__sub_82433450(ctx, base);
+}
+// Network transport uses relative millisecond times, before the two tick
+// builders convert them. A replacement must retain its predecessor's delay.
+extern "C" PPC_FUNC(__imp__sub_82433380);
+PPC_FUNC(sub_82433380) {
+    MovementPackingScope scope(CommandPacketClock::ElapsedMilliseconds);
+    __imp__sub_82433380(ctx, base);
+}
+extern "C" PPC_FUNC(__imp__sub_82433810);
+PPC_FUNC(sub_82433810) {
+    static const bool coalesce = [] {
+        const auto* value = std::getenv("DARK_MOVEMENT_COMMAND_COALESCE");
+        return !value || value[0] != '0' || value[1];
+    }();
+    const auto packet = ctx.r3.u32, command = ctx.r4.u32;
+    if (coalesce && packingMovementCommands != CommandPacketClock::None && packet && command &&
+        base[command] == 3 && base[command + 1] == 6) {
+        const unsigned used = base[packet + 1];
+        const auto merge = packingMovementCommands == CommandPacketClock::ElapsedMilliseconds
+            ? dark_movement_coalesce_relative_command : dark_movement_coalesce_command;
+        if (used >= 10 && used <= 254 && merge(base + packet, used + 2, base + command)) {
+            ctx.r3.u64 = 1;
+            return;
+        }
+    }
+    __imp__sub_82433810(ctx, base);
+}
+
 // The live player-state vtable's +32 callback runs both server input and local
 // prediction. A scoped clone must use the same wish/jump/gravity/fall rules;
 // otherwise the rendered player falls ahead of the capped authoritative body.
 extern "C" PPC_FUNC(__imp__sub_821C9100);
 PPC_FUNC(sub_821C9100) {
+    std::optional<CommandProbe> commandTrace;
+    if (commandProbeEnabled()) commandTrace.emplace(base, ctx);
     const auto state = ctx.r3.u32, world = ctx.r4.u32, actor = ctx.r5.u32;
     MovementPredictionScope scope(base, world, actor, state);
     if (movementProbeEnabled() && prediction.actor) {
@@ -324,17 +506,122 @@ PPC_FUNC(sub_821369E0) {
 // the sparse post-head hook: the client can render a different actor instance
 // from the authoritative motor. QPC shares FrameTimeline's clock domain.
 extern "C" PPC_FUNC(__imp__sub_821DC078);
+void CaptureMovementCameraHistoryMidAsmHook(PPCRegister& history) {
+    auto* scope = activeCameraHistory;
+    if (!scope || !scope->base || !history.u32 || scope->history) return;
+    const auto savedMath = _mm_getcsr();
+    struct RestoreMath { unsigned saved; ~RestoreMath() { _mm_setcsr(saved); } } restore{savedMath};
+    scope->history = history.u32;
+    const auto x = readFloat(scope->base, history.u32 + 1876);
+    const auto y = readFloat(scope->base, history.u32 + 1880);
+    scope->previousLag = std::hypot(x, y);
+    if (auto* capture = activeCameraStages) {
+        capture->previousLag = scope->previousLag;
+    }
+}
+bool RecoverMovementCameraLagMidAsmHook(PPCRegister& client, PPCRegister& actor,
+    PPCRegister& state, PPCRegister& history, PPCRegister& reset,
+    PPCRegister& limit, PPCRegister& distance, PPCRegister& elapsed, PPCRegister& time, PPCRegister& grace) {
+    auto* scope = activeCameraHistory;
+    if (!scope || !scope->base || scope->history != history.u32 || !history.u32 ||
+        scope->client != client.u32 || scope->actor != actor.u32 || !state.u32) return false;
+    auto* base = scope->base;
+    const auto savedMath = _mm_getcsr();
+    struct RestoreMath { unsigned saved; ~RestoreMath() { _mm_setcsr(saved); } } restore{savedMath};
+    const auto original = float(limit.f64);
+    const auto lastCollision = std::bit_cast<double>(PPC_LOAD_U64(history.u32 + 1896));
+    if (auto* capture = activeCameraStages) capture->limitBefore = capture->limitAfter = original;
+    static const bool enabled = [] {
+        const auto* value = std::getenv("DARK_MOVEMENT_CAMERA_RECOVERY");
+        return !(value && value[0] == '0' && !value[1]);
+    }();
+    // A forced transform, scripted pose or camera cut must retain its immediate
+    // reset. This runs inside the existing limiter, before its original ray.
+    const auto tick = PPC_LOAD_U32(history.u32 + 32), poseTick = PPC_LOAD_U32(state.u32 + 32);
+    const auto flags = PPC_LOAD_U32(actor.u32 + 420);
+    bool recovered = false;
+    if (enabled && !(reset.u32 & 0xff) && ((flags >> 8) & 15) == 0 && ((flags >> 12) & 15) <= 2 &&
+        !(PPC_LOAD_U32(actor.u32 + 364) & 0x24100000) &&
+        PPC_LOAD_U32(actor.u32 + 396) == state.u32 &&
+        !(PPC_LOAD_U32(state.u32 + 10240) & 0x00C00000) && !PPC_LOAD_U16(state.u32 + 8300) &&
+        !(PPC_LOAD_U8(state.u32 + 10300) & 26) && !(PPC_LOAD_U32(state.u32 + 392) & 0x100000) &&
+        tick >= 3 && poseTick >= 3 && PPC_LOAD_U32(history.u32 + 9752) < tick - 3 &&
+        PPC_LOAD_U32(state.u32 + 9752) < poseTick - 3 &&
+        std::isfinite(distance.f64) && distance.f64 > original &&
+        std::isfinite(elapsed.f64) && elapsed.f64 > 0 && elapsed.f64 <= 0.1 &&
+        std::isfinite(time.f64) && std::isfinite(lastCollision) && lastCollision > 0 && grace.f64 == 0.5 &&
+        time.f64 >= lastCollision && time.f64 - lastCollision <= grace.f64) {
+        // Retail scales the offset to this radius unconditionally. Never let a
+        // relaxed radius lengthen an offset that already contracted naturally.
+        limit.f64 = double(std::min(float(distance.f64),
+            dark_movement_camera_lag_limit(scope->previousLag, original, float(elapsed.f64))));
+        recovered = true;
+    }
+    if (auto* capture = activeCameraStages) capture->limitAfter = float(limit.f64);
+    return recovered;
+}
+void TraceMovementCameraLagMidAsmHook(PPCRegister& stack, PPCRegister& history, PPCRegister& limitedX, PPCRegister& limitedY,
+    PPCRegister& desiredX, PPCRegister& desiredY, PPCRegister& desiredZ,
+    PPCRegister& elapsed, PPCRegister& time) {
+    auto* capture = activeCameraStages;
+    auto* scope = activeCameraHistory;
+    if (!capture || !scope || !scope->base || history.u32 != scope->history) return;
+    auto* base = scope->base;
+    capture->ordinarySeen = true;
+    capture->desired = {float(desiredX.f64), float(desiredY.f64), float(desiredZ.f64)};
+    capture->limited = {std::bit_cast<float>(limitedX.u32), std::bit_cast<float>(limitedY.u32),
+        readFloat(scope->base, stack.u32 + 152)};
+    capture->elapsed = float(elapsed.f64); capture->time = time.f64;
+    capture->lastCollision = std::bit_cast<double>(PPC_LOAD_U64(history.u32 + 1896));
+}
+void TraceMovementCameraRayMidAsmHook(PPCRegister& stack, PPCRegister& hit) {
+    auto* capture = activeCameraStages;
+    auto* scope = activeCameraHistory;
+    if (!capture || !scope || !scope->base) return;
+    capture->raySeen = true;
+    auto* base = scope->base;
+    capture->rayHit = (hit.u32 & 0xff) && (PPC_LOAD_U32(stack.u32 + 656) & 0x40000000);
+    capture->rayFraction = readFloat(base, stack.u32 + 664);
+}
+extern "C" PPC_FUNC(__imp__sub_821DB018);
+PPC_FUNC(sub_821DB018) {
+    auto* capture = activeCameraStages;
+    const bool matches = capture && ctx.r4.u32 == capture->matrix &&
+        ctx.r5.u32 == PPC_LOAD_U32(capture->actor + 396);
+    if (matches) capture->headBefore = cameraEye(base, capture->matrix);
+    __imp__sub_821DB018(ctx, base);
+    if (matches) { capture->headSeen = true; capture->headAfter = cameraEye(base, capture->matrix); }
+}
+extern "C" PPC_FUNC(__imp__sub_821DB560);
+PPC_FUNC(sub_821DB560) {
+    auto* capture = activeCameraStages;
+    const bool matches = capture && ctx.r3.u32 == capture->actor && ctx.r5.u32 == capture->matrix;
+    if (matches) capture->wallBefore = cameraEye(base, capture->matrix);
+    __imp__sub_821DB560(ctx, base);
+    if (matches) { capture->wallSeen = true; capture->wallAfter = cameraEye(base, capture->matrix); }
+}
 PPC_FUNC(sub_821DC078) {
     const auto client = ctx.r3.u32, matrix = ctx.r4.u32, actor = ctx.r5.u32;
     const double cameraTime = ctx.f1.f64;
-    __imp__sub_821DC078(ctx, base);
     static const bool enabled = [] {
         const auto* value = std::getenv("DARK_MOVEMENT_CAMERA_PROBE");
         return value && value[0] == '1' && !value[1];
     }();
-    if (!enabled || !client || !actor || !matrix ||
-        client != activeClient.load(std::memory_order_acquire) ||
-        PPC_LOAD_U16(actor + 368) != PPC_LOAD_U32(client + 536)) return;
+    const bool capture = enabled && client && actor && matrix &&
+        client == activeClient.load(std::memory_order_acquire) &&
+        PPC_LOAD_U16(actor + 368) == PPC_LOAD_U32(client + 536);
+    std::optional<CameraStages> stages;
+    if (capture) { stages.emplace(); stages->actor = actor; stages->matrix = matrix; }
+    auto* previous = activeCameraStages;
+    struct RestoreCameraStages {
+        CameraStages* previous;
+        ~RestoreCameraStages() { activeCameraStages = previous; }
+    } restoreStages{previous};
+    activeCameraStages = stages ? &*stages : nullptr;
+    MovementCameraHistoryScope history(base, client, actor);
+    __imp__sub_821DC078(ctx, base);
+    activeCameraStages = previous;
+    if (!capture) return;
     thread_local unsigned samples = 0;
     if (samples++ >= 12000) return;
     const auto savedMath = _mm_getcsr();
@@ -352,14 +639,28 @@ PPC_FUNC(sub_821DC078) {
         "[MovementView] qpc=%llu hz=%llu style=%u client=%08X actor=%08X state=%08X auth=%08X "
         "posture=%u mode=%u cameraTime=%.9g dt=%.9g root=%.9g,%.9g,%.9g "
         "velocity=%.9g,%.9g,%.9g authRoot=%.9g,%.9g,%.9g authVelocity=%.9g,%.9g,%.9g "
-        "eye=%.9g,%.9g,%.9g forward=%.9g,%.9g,%.9g right=%.9g,%.9g,%.9g\n",
+        "eye=%.9g,%.9g,%.9g forward=%.9g,%.9g,%.9g right=%.9g,%.9g,%.9g "
+        "headSeen=%u wallSeen=%u headBefore=%.9g,%.9g,%.9g headAfter=%.9g,%.9g,%.9g "
+        "wallBefore=%.9g,%.9g,%.9g wallAfter=%.9g,%.9g,%.9g headTicks=%u headStart=%u "
+        "ordinarySeen=%u previousLag=%.9g limitBefore=%.9g limitAfter=%.9g cameraDelta=%.9g "
+        "cameraClock=%.17g lastCollision=%.17g desired=%.9g,%.9g,%.9g limited=%.9g,%.9g,%.9g "
+        "raySeen=%u rayHit=%u rayFraction=%.9g\n",
         static_cast<unsigned long long>(now.QuadPart), static_cast<unsigned long long>(frequency.QuadPart),
         unsigned(movementStyle()), client, actor, state, authoritative, (flags >> 8) & 15, (flags >> 12) & 15,
         cameraTime, at(server, 412), at(actor, 128), at(actor, 132), at(actor, 136),
         at(actor, 224), at(actor, 228), at(actor, 232), at(authoritative, 128), at(authoritative, 132),
         at(authoritative, 136), at(authoritative, 224), at(authoritative, 228), at(authoritative, 232),
         at(matrix, 48), at(matrix, 52), at(matrix, 56), at(matrix, 32), at(matrix, 36), at(matrix, 40),
-        at(matrix, 0), at(matrix, 4), at(matrix, 8));
+        at(matrix, 0), at(matrix, 4), at(matrix, 8), unsigned(stages->headSeen), unsigned(stages->wallSeen),
+        stages->headBefore[0], stages->headBefore[1], stages->headBefore[2],
+        stages->headAfter[0], stages->headAfter[1], stages->headAfter[2],
+        stages->wallBefore[0], stages->wallBefore[1], stages->wallBefore[2],
+        stages->wallAfter[0], stages->wallAfter[1], stages->wallAfter[2],
+        state ? PPC_LOAD_U32(state + 8388) : 0, state ? PPC_LOAD_U32(state + 8392) : 0,
+        unsigned(stages->ordinarySeen), stages->previousLag, stages->limitBefore, stages->limitAfter, stages->elapsed,
+        stages->time, stages->lastCollision, stages->desired[0], stages->desired[1], stages->desired[2],
+        stages->limited[0], stages->limited[1], stages->limited[2],
+        unsigned(stages->raySeen), unsigned(stages->rayHit), stages->rayFraction);
 }
 
 // Keep the complete head/eye pose and camera collision calculation. Level only

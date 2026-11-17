@@ -37,6 +37,8 @@ the expected folder layout and help with startup problems.
 
 - Full gameplay with keyboard, mouse, and controller input, XMA audio, saves,
   and persistent achievement tracking.
+- Native DualSense input over USB/Bluetooth, normal rumble and PlayStation
+  button prompts. See [CONTROLS.md](CONTROLS.md) for connection details.
 - Resolution, FOV, original Xbox gamma calibration and color profiles, bloom,
   frame cap, VSync, FXAA/SMAA/MSAA antialiasing, 16x texture filtering, and a
   draw distance for props in large open views (Near by default; Original restores

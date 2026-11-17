@@ -403,7 +403,38 @@ static void testTextureBudgetTransitions() {
     std::puts("TextureBudgetTransitions: growth retains and readmits images, shrink trims LRU immediately, consumer ownership and over-cap prompt generations survive.");
 }
 
+static void testPlayStationPrompts() {
+    using namespace DarkRecomp::Prompts;
+    clearPromptRegistry();
+    auto image=std::make_shared<const DarkRecomp::ColorImage>(promptTestImage(17,31,45,32,32,uint8_t(Origin::A)));
+    const auto original=image->pixels;
+    const auto keyboard=replacementFor(77,image,Source::KeyboardMouse,Context::Menu);
+    const auto sony=replacementFor(77,image,Source::PlayStation,Context::Menu);
+    require(keyboard && sony && keyboard!=sony && keyboard->pixels!=sony->pixels,"Sony shared a keyboard prompt cache entry");
+    requirePromptMipChain(*sony);
+    require(!replacementFor(77,image,Source::Controller,Context::Menu),"Xbox artwork was replaced by Sony glyphs");
+    require(replacementFor(77,image,Source::KeyboardMouse,Context::Menu)==keyboard &&
+            replacementFor(77,image,Source::PlayStation,Context::Menu)==sony,"Source switching lost the matching cached icon");
+    const auto cross=makePlayStationIcon(Button::A),circle=makePlayStationIcon(Button::B);
+    const auto square=makePlayStationIcon(Button::X),triangle=makePlayStationIcon(Button::Y);
+    require(promptChannel(cross,32,32,0)>200 && promptChannel(circle,32,32,0)<60,"Cross/Circle face mapping is reversed");
+    require(cross.pixels!=square.pixels && cross.pixels!=triangle.pixels && circle.pixels!=square.pixels &&
+            circle.pixels!=triangle.pixels && square.pixels!=triangle.pixels,"PlayStation face glyphs are not distinct");
+    auto wide=std::make_shared<const DarkRecomp::ColorImage>(promptTestImage(17,31,45,64,32,uint8_t(Origin::A)));
+    const auto tile=replacementForUv(77,wide,Source::PlayStation,Context::Menu,.5f,0,1,1);
+    require(tile && tile->valid(),"Sony atlas tile did not resolve");
+    for(unsigned y=0;y<tile->height;++y)for(unsigned x=0;x<tile->width/2;++x)
+        require(promptChannel(*tile,x,y,3)==0,"Sony atlas tile leaked into its neighbor");
+    auto unknown=std::make_shared<const DarkRecomp::ColorImage>(promptTestImage(17,31,45));
+    require(!replacementFor(77,unknown,Source::PlayStation,Context::Menu),"Sony replaced an unclassified image");
+    require(image->pixels==original,"Sony replacement mutated original artwork");
+    auto kbKey=Registry::iconKey(Button::A,Context::Menu,32,32,{0,0,32,32,true});
+    auto psKey=Registry::iconKey(Button::A,Context::Menu,32,32,{0,0,32,32,true},Source::PlayStation);
+    kbKey.label.clear();psKey.label.clear();require(!(kbKey==psKey),"Prompt cache source depends only on keyboard labels");
+    clearPromptRegistry();
+}
 static void testPromptIcons() {
+    testPlayStationPrompts();
     using namespace DarkRecomp::Prompts;
     testPromptRenderContext();
     testQueuedPromptContexts();

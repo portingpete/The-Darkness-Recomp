@@ -18,7 +18,12 @@ struct ControllerApi {
     decltype(&XInputGetCapabilities) capabilities = &XInputGetCapabilities;
     decltype(&XInputSetState) vibration = &XInputSetState;
     decltype(&GetTickCount64) ticks = &GetTickCount64;
+    // Four Sony HID slots followed by four XInput slots in production.
+    // Injected legacy APIs retain their original four-slot contract.
+    uint32_t hostCount = XUSER_MAX_COUNT;
+    bool (*playStation)(uint32_t) = nullptr; // Pure identity lookup, no I/O.
 };
+inline constexpr uint32_t kMaxHostControllers = 8;
 
 struct InputCounters {
     uint64_t polls = 0;
@@ -31,7 +36,7 @@ struct InputCounters {
 // Last meaningful physical input source, for adaptive button prompts.
 // Defaults to keyboard/mouse; a real controller steals it only on new
 // over-deadzone activity, and any meaningful keyboard/mouse use wins back.
-enum class PromptInputSource : uint8_t { KeyboardMouse = 0, Controller = 1 };
+enum class PromptInputSource : uint8_t { KeyboardMouse = 0, Controller = 1, PlayStation = 2 };
 
 // Relative device counts, never a stick position or a velocity. Positive Y
 // follows Win32 (down). Only the gameplay look boundary consumes this batch.
@@ -59,6 +64,9 @@ public:
     // production backend. The native singleton uses the background backend.
     explicit NativeInput(ControllerApi api = {}, bool backgroundController = false);
     ~NativeInput();
+    // Normal native shutdown bypasses static destructors. Join the worker
+    // explicitly so motor stops and HID handle cleanup finish before exit.
+    void shutdownControllers();
     NativeInput(const NativeInput&) = delete;
     NativeInput& operator=(const NativeInput&) = delete;
     void attachWindow(HWND window);
@@ -114,7 +122,8 @@ private:
     void resetPromptLocked();
     void noteKeyboardActivityLocked(bool active);
     static bool controllerEdgeLocked(const XINPUT_GAMEPAD& current, const XINPUT_GAMEPAD& previous, bool haveBaseline);
-    void updatePromptSourceLocked(uint32_t user, const XINPUT_GAMEPAD& physical, bool connected, bool keyboardMouseActive);
+    void updatePromptSourceLocked(uint32_t user, const XINPUT_GAMEPAD& physical, bool connected, bool keyboardMouseActive,
+                                  bool playStation = false);
     void controllerWorker();
     void stopControllerWorker();
     DWORD physicalState(uint32_t user, XINPUT_STATE& state, uint64_t& generation);
@@ -135,7 +144,7 @@ private:
     bool backgroundController_ = false;
     std::mutex controllerMutex_;
     std::condition_variable controllerChanged_;
-    std::array<PhysicalSlot, XUSER_MAX_COUNT> physicalSlots_{};
+    std::array<PhysicalSlot, kMaxHostControllers> physicalSlots_{};
     bool controllerStop_ = false, controllerCommand_ = false;
     std::thread controllerThread_;
     std::mutex mutex_;
@@ -143,8 +152,8 @@ private:
     bool focused_ = false;
     bool settingsOpen_ = false;
     bool captureWasBlocked_ = false;
-    std::array<bool, XUSER_MAX_COUNT> waitForControllerRelease_{};
-    std::array<uint64_t, XUSER_MAX_COUNT> controllerFreshAfter_{};
+    std::array<bool, kMaxHostControllers> waitForControllerRelease_{};
+    std::array<uint64_t, kMaxHostControllers> controllerFreshAfter_{};
     bool mouseLook_ = false, escapePauses_ = false, guestMenuActive_ = false;
     bool dialogueChoicesActive_ = false;
     bool gameplayCapturePrepared_ = false, gameplayCaptureRequested_ = false, loadingCapture_ = false;
@@ -166,7 +175,7 @@ private:
     uint64_t menuMovement_ = 0, menuPresses_ = 0, menuEpoch_ = 0;
     std::array<Slot, XUSER_MAX_COUNT> slots_{};
     int primaryController_ = -1;
-    std::array<bool, XUSER_MAX_COUNT> hostRumbling_{};
+    std::array<bool, kMaxHostControllers> hostRumbling_{};
     InputCounters counters_{};
     std::atomic<PromptInputSource> promptSource_{PromptInputSource::KeyboardMouse};
     std::atomic<uint8_t> movementModifiers_{0};

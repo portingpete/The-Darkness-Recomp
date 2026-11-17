@@ -1353,6 +1353,7 @@ int wmain(int argc, wchar_t** argv) {
         endKeyboardMenu();
         mouse.release();
         nativeInput().attachWindow(nullptr);
+        nativeInput().shutdownControllers();
         printAudioHealth();
         closeFrameTimeline();
         // The original game workers still own the address space. Closing the

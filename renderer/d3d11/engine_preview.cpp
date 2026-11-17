@@ -389,9 +389,10 @@ void EnginePreviewD3D11::render(const std::vector<SimpleMesh>& meshes,Native::Pr
     // Prompt source is read once per frame: no per-mesh input locks, and all
     // prompt meshes in the frame agree. Each owned draw carries its original
     // HUD/menu context; the same input source feeds the world renderer.
-    framePromptSource_ = Native::nativeInput().promptSource() == Native::PromptInputSource::Controller ?
-        Native::PromptRenderSource::Controller : Native::PromptRenderSource::KeyboardMouse;
-    world_->setPromptSource(framePromptSource_ == Native::PromptRenderSource::KeyboardMouse);
+    const auto inputSource=Native::nativeInput().promptSource();
+    framePromptSource_ = inputSource==Native::PromptInputSource::KeyboardMouse ? Native::PromptRenderSource::KeyboardMouse :
+        inputSource==Native::PromptInputSource::PlayStation ? Native::PromptRenderSource::PlayStation : Native::PromptRenderSource::Controller;
+    world_->setPromptSource(framePromptSource_);
     if (framePromptSource_ == Native::PromptRenderSource::KeyboardMouse) {
         static std::atomic<unsigned> sourceLogs{0};
         if (sourceLogs.load() < 4) {
@@ -515,7 +516,7 @@ void EnginePreviewD3D11::render(const std::vector<SimpleMesh>& meshes,Native::Pr
             // canvases and atlas tiles keep exact sample behavior instead of
             // stretching or cropping the replacement (look tutorial 64x32).
             std::shared_ptr<const ColorImage> promptIcon;
-            if (!subtitleImage && promptSource == Native::PromptRenderSource::KeyboardMouse && mesh.colorTexture &&
+            if (!subtitleImage && promptSource != Native::PromptRenderSource::Controller && mesh.colorTexture &&
                 DarkRecomp::Prompts::buttonFromOriginByte(mesh.colorTexture->promptOrigin) !=
                 DarkRecomp::Prompts::Button::Unknown && !mesh.vertices.empty()) {
                 float u0 = mesh.vertices[0].uv[0], v0 = mesh.vertices[0].uv[1];
@@ -531,7 +532,7 @@ void EnginePreviewD3D11::render(const std::vector<SimpleMesh>& meshes,Native::Pr
                 promptIcon = Native::promptReplacementFor(mesh.textureId, mesh.colorTexture, promptSource, promptContext);
             }
             const auto& effective = subtitleImage?subtitleImage:(promptIcon ? promptIcon : mesh.colorTexture);
-            if (promptIcon && mesh.vertices.size() == 4 && mesh.indices.size() == 6) {
+            if (promptIcon && promptSource==Native::PromptRenderSource::KeyboardMouse && mesh.vertices.size() == 4 && mesh.indices.size() == 6) {
                 std::array<std::array<float,4>,4> clip{};
                 for (unsigned vertex = 0; vertex < 4; ++vertex)
                     for (unsigned column = 0; column < 4; ++column) {

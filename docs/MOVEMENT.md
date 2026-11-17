@@ -19,6 +19,63 @@ baseline (converted to horizontal 16:9) for its unzoomed Original endpoint.
 
 ## Response and integration
 
+The retail tick packet has a 254-byte payload limit. At high frame rates,
+controller axis updates can emit several absolute movement vectors at the same
+timestamp while clearing and restoring individual bindings. Those intermediate
+vectors can fill the packet and leave input queued for later ticks.
+
+The server and local prediction tick-packet builders now keep the final adjacent
+absolute movement vector at each timestamp, including its sequence identifier
+for acknowledgement. The transport builder also combines zero-duration
+successors while retaining the elapsed milliseconds leading into each group.
+Relative look, button events, other intervening commands and distinct times
+retain their order. Analog direction, strength and movement speeds are unchanged.
+Direct staging appends retain retail behavior. `DARK_MOVEMENT_COMMAND_COALESCE=0`
+disables this compaction for diagnostic comparisons.
+
+The regression runs all three original translated queue-to-packet builders and
+the vector decoder: without compaction, each packs 25 of 36 updates in 250 bytes
+and leaves input queued; with it, all 36 updates fit as nine final vectors in 90
+bytes. It also checks sequence wrap, retained queue identifiers, prediction's
+sequence cutoff, transport timing and staging-scope restoration. The initial
+server-only candidate still skipped in the user's live test; its capture showed
+that prediction packets still contained the intermediate axis states.
+The user confirmed that the candidate covering all three builders resolved the
+diagonal analog skip. A subsequent manual test also confirmed resolution of
+the separate wall/corner camera snap and stutter in build14.
+
+The wall/corner report affects keyboard and controller input. Its capture shows
+large horizontal eye adjustments while the player root moves less than one
+unit. The ordinary camera (`821DD7F8`) permits extra horizontal lag for half a
+second after its ray hits, then reinstates its distance cap in one step. An
+isolated test of the translated limiter reproduces a 31-to-4-unit transition at
+that boundary; this establishes the mechanism under supplied history, not its
+activation in every recorded snap.
+
+The wall recovery contracts the previous excess offset exponentially
+at 12/second during that collision grace, before the ordinary cap returns. It
+never enlarges an already smaller offset or extends the original grace period.
+The original ray, vertical constraint, forced transforms and scripted resets
+still run. It applies to the local ordinary camera in either movement style;
+`DARK_MOVEMENT_CAMERA_RECOVERY=0` restores the retail limit for comparisons.
+Its native checks cover both styles, reset exceptions, nested camera isolation
+and unchanged guest memory; Rust checks cover recovery at 30 through 360 FPS.
+The snapshot belongs to the complete outer camera invocation: both that routine
+and its inner ordinary-camera helper clear the guest correction. Capturing
+inside the inner helper reads zero and causes a hard cap instead of recovery.
+The native fixture reproduces both clears and verifies that the captured offset
+survives them.
+
+In the user's successful build14 recording, 11,991 complete camera-query rows
+include 585 ray hits and 22 sampled hit-to-miss transitions. The largest eye step
+at those transitions was 1.661 units, compared with 9.366 in the previous failed
+capture. The previous offset was populated and the recovery changed the limit
+in 1,928 rows. These were different manual routes, not a matched benchmark;
+camera queries are not necessarily displayed frames. The user reported that
+the fix worked. The game and recorder exited normally, and the real saves and
+settings were unchanged. This live confirmation covers the tested Alternate
+Movement configuration; both movement styles also pass the native fixtures.
+
 The Rust solver moves velocity toward the requested vector with ground
 acceleration of 30 times maximum speed per second, neutral braking of 40 times
 maximum speed per second, and air steering of 8 times maximum speed per second.

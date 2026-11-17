@@ -93,6 +93,17 @@ static void worldPromptRenderPass(WorldRendererD3D11& renderer, unsigned scale) 
     require(std::abs(controllerCenter[0] - 200. / 255) < .002 &&
             std::abs(controllerCenter[1] - 40. / 255) < .002,
             "Controller source did not retain original prompt pixels");
+    renderer.setPromptSource(PromptRenderSource::PlayStation);
+    const auto sony=render(draw);
+    unchangedOutside(sony,background,16,48);
+    const auto sonyCenter=pixel(sony,32,32);
+    require(sony!=controller && sony!=gameplay && sonyCenter[0]<.3 && sonyCenter[1]<.3,
+            "PlayStation Circle was not selected at the real draw boundary");
+    require(renderer.readSurface(depthTarget,true)==depth,"PlayStation prompt changed depth/stencil");
+    renderer.setPromptSource(false);
+    require(render(draw)==controller,"Xbox original was not restored after PlayStation source");
+    renderer.setPromptSource(PromptRenderSource::PlayStation);
+    require(render(draw)==sony,"PlayStation cache was not restored after Xbox source");
     renderer.setPromptSource(true);
     require(render(draw) == gameplay, "Keyboard prompt was not restored after controller source");
     auto unknownImage = std::make_shared<ColorImage>(*original); unknownImage->promptOrigin = 0;

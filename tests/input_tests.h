@@ -45,6 +45,7 @@ LRESULT CALLBACK inputTestWindowProc(HWND window, UINT message, WPARAM key, LPAR
 }
 
 #include "input_backend_tests.h"
+#include "dualsense_input_tests.h"
 
 static void testSinglePlayerInputRouting(PPCContext& ctx) {
     const uint32_t fixture = memory->allocate(4096), output = fixture + 1;
@@ -142,6 +143,7 @@ static void testSinglePlayerInputRouting(PPCContext& ctx) {
 }
 
 static void testInputContract(PPCContext& ctx) {
+    testDualSenseInputRouting();
     testBackgroundInputContract();
     testSinglePlayerInputRouting(ctx);
     inputStatus.fill(ERROR_DEVICE_NOT_CONNECTED);

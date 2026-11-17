@@ -1857,11 +1857,12 @@ static void worldRendererDebugContract(ID3D11Device* device) {
 int main(int argc,char** argv) {
     ComPtr<ID3D11Device> device;
     try {
-        bool eyeGlowOnly=false;
+        bool eyeGlowOnly=false,promptOnly=false;
         bool warp=false,cpuOnly=false,colorGradeOnly=false,guiFadeOnly=false,resolutionSwitchOnly=false,frontbufferOnly=false,clipPlanesOnly=false,bloomOnly=false,postCopyOnly=false,finalCaptureOnly=false,armBloomOnly=false,textureBudgetOnly=false,subtitleFontOnly=false,screenFogCompilerOnly=false;
         for(int i=1;i<argc;++i) {
             if(std::strcmp(argv[i],"--warp")==0)warp=true;
             else if(std::strcmp(argv[i],"--eye-glow-only")==0)eyeGlowOnly=true;
+            else if(std::strcmp(argv[i],"--prompt-only")==0)promptOnly=true;
             else if(std::strcmp(argv[i],"--cpu-only")==0)cpuOnly=true;
             else if(std::strcmp(argv[i],"--color-grade-only")==0)colorGradeOnly=true;
             else if(std::strcmp(argv[i],"--gui-fade-only")==0)guiFadeOnly=true;
@@ -1877,12 +1878,12 @@ int main(int argc,char** argv) {
             else if(std::strcmp(argv[i],"--screen-fog-compiler-only")==0)screenFogCompilerOnly=true;
             else throw std::runtime_error("Unknown argument; expected --warp, --cpu-only, --color-grade-only, --gui-fade-only, --resolution-switch-only, --frontbuffer-only, --clip-planes-only, --bloom-only, --post-copy-only, --final-capture-only, --arm-bloom-only, --texture-budget-only, --subtitle-font-only or --screen-fog-compiler-only");
         }
-        require(unsigned(eyeGlowOnly)+unsigned(cpuOnly)+unsigned(colorGradeOnly)+unsigned(guiFadeOnly)+unsigned(resolutionSwitchOnly)+unsigned(frontbufferOnly)+unsigned(clipPlanesOnly)+unsigned(bloomOnly)+unsigned(postCopyOnly)+unsigned(finalCaptureOnly)+unsigned(armBloomOnly)+unsigned(textureBudgetOnly)+unsigned(subtitleFontOnly)+unsigned(screenFogCompilerOnly)<=1,
+        require(unsigned(promptOnly)+unsigned(eyeGlowOnly)+unsigned(cpuOnly)+unsigned(colorGradeOnly)+unsigned(guiFadeOnly)+unsigned(resolutionSwitchOnly)+unsigned(frontbufferOnly)+unsigned(clipPlanesOnly)+unsigned(bloomOnly)+unsigned(postCopyOnly)+unsigned(finalCaptureOnly)+unsigned(armBloomOnly)+unsigned(textureBudgetOnly)+unsigned(subtitleFontOnly)+unsigned(screenFogCompilerOnly)<=1,
             "Focused contract modes are mutually exclusive");
         if(screenFogCompilerOnly) {
             WorldRendererD3D11::validateScreenFogShaderCompiler();return 0;
         }
-        if(!eyeGlowOnly && !colorGradeOnly && !guiFadeOnly && !resolutionSwitchOnly && !frontbufferOnly && !clipPlanesOnly && !bloomOnly && !postCopyOnly && !finalCaptureOnly && !armBloomOnly && !textureBudgetOnly && !subtitleFontOnly) {
+        if(!promptOnly && !eyeGlowOnly && !colorGradeOnly && !guiFadeOnly && !resolutionSwitchOnly && !frontbufferOnly && !clipPlanesOnly && !bloomOnly && !postCopyOnly && !finalCaptureOnly && !armBloomOnly && !textureBudgetOnly && !subtitleFontOnly) {
             constantCopyContract();lightingValidationContract();promptWorldContract();
             formats();paletteUsageContract();paletteArithmeticContract();worldPositionUsageContract();worldWaterUsageContract();worldShadowInputContract();
             worldVertexValidationContract();immediateIndexOwnershipContract();
@@ -1894,6 +1895,14 @@ int main(int argc,char** argv) {
         ComPtr<ID3D11DeviceContext> context;const D3D_FEATURE_LEVEL level=D3D_FEATURE_LEVEL_11_0;
         const auto deviceFlags=GetEnvironmentVariableA("DARK_D3D_DEBUG",nullptr,0)?D3D11_CREATE_DEVICE_DEBUG:0;
         check(D3D11CreateDevice(nullptr,warp?D3D_DRIVER_TYPE_WARP:D3D_DRIVER_TYPE_HARDWARE,nullptr,deviceFlags,&level,1,D3D11_SDK_VERSION,&device,nullptr,&context),"D3D device");
+        if(promptOnly) {
+            for(unsigned scale:{1u,2u,3u}) {
+                WorldRendererD3D11 renderer(device.Get(),context.Get(),scale);
+                worldPromptRenderPass(renderer,scale);
+            }
+            worldRendererDebugContract(device.Get());context->ClearState();
+            std::printf("WorldPromptContract passed: %s.\n",warp?"WARP":"hardware");return 0;
+        }
         if(eyeGlowOnly) {
             eyeGlowContract(device.Get(),context.Get());
             worldRendererDebugContract(device.Get());context->ClearState();

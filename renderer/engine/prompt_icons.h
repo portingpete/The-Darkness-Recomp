@@ -6,6 +6,7 @@
 #include <atomic>
 #include <algorithm>
 #include <cstdint>
+#include <cmath>
 #include <cstdio>
 #include <memory>
 #include <mutex>
@@ -21,7 +22,7 @@
 // pixels untouched. No per-frame guest scanning, sampled hashes, or volatile
 // pointer/ID classification caches.
 namespace DarkRecomp::Prompts {
-enum class Source : uint8_t { KeyboardMouse = 0, Controller = 1 };
+enum class Source : uint8_t { KeyboardMouse = 0, Controller = 1, PlayStation = 2 };
 enum class Context : uint8_t { Menu = 0, Gameplay = 1 };
 enum class Button : uint8_t {
     A, B, X, Y, LB, RB, LT, RT, LS, RS, Start, Back,
@@ -189,7 +190,45 @@ inline ColorImage makeMouseIcon(MouseIcon icon) {
     }
     return {};
 }
-inline std::shared_ptr<const ColorImage> iconFor(Button button, Context context, const char* configuredLabel = nullptr) {
+// Code-native monochrome face glyphs; no original game or third-party console
+// artwork is embedded. Generic D-pad/stick pictures retain their original art.
+inline ColorImage makePlayStationIcon(Button button) {
+    const char* label=nullptr;
+    switch(button) {
+    case Button::LB:label="L1";break;case Button::RB:label="R1";break;
+    case Button::LT:label="L2";break;case Button::RT:label="R2";break;
+    case Button::LS:label="L3";break;case Button::RS:label="R3";break;
+    case Button::Start:label="Opt";break;case Button::Back:label="Create";break;
+    default:break;
+    }
+    if(label)return makeKeycap(label);
+    if(button>Button::Y)return {};
+    ColorImage image;image.width=image.height=64;image.pixels.resize(64*64*4);
+    const auto line=[](float x,float y,float ax,float ay,float bx,float by) {
+        const float dx=bx-ax,dy=by-ay,t=std::clamp(((x-ax)*dx+(y-ay)*dy)/(dx*dx+dy*dy),0.f,1.f);
+        const float px=x-ax-t*dx,py=y-ay-t*dy;return std::sqrt(px*px+py*py);
+    };
+    for(unsigned y=0;y<64;++y)for(unsigned x=0;x<64;++x) {
+        const float px=float(x)+.5f,py=float(y)+.5f,dx=px-32,dy=py-32,r=std::sqrt(dx*dx+dy*dy);
+        float distance=100;
+        if(button==Button::A)distance=std::min(line(px,py,23,23,41,41),line(px,py,41,23,23,41));
+        if(button==Button::B)distance=std::abs(r-12);
+        if(button==Button::X)distance=std::min({line(px,py,22,22,42,22),line(px,py,42,22,42,42),
+            line(px,py,42,42,22,42),line(px,py,22,42,22,22)});
+        if(button==Button::Y)distance=std::min({line(px,py,32,20,44,42),line(px,py,44,42,20,42),line(px,py,20,42,32,20)});
+        const float white=std::max(std::clamp(2.f-distance,0.f,1.f),std::clamp(2.f-std::abs(r-25),0.f,1.f));
+        const float alpha=std::max(std::clamp(27-r,0.f,1.f)*.86f,white);
+        auto* pixel=image.pixels.data()+(size_t(y)*64+x)*4;
+        pixel[0]=pixel[1]=pixel[2]=uint8_t(20+215*white);pixel[3]=uint8_t(255*alpha);
+    }
+    return image;
+}
+inline std::shared_ptr<const ColorImage> iconFor(Button button, Context context, const char* configuredLabel = nullptr,
+                                               Source source = Source::KeyboardMouse) {
+    if(source==Source::PlayStation) {
+        auto image=makePlayStationIcon(button);
+        return image.valid()?std::make_shared<const ColorImage>(std::move(image)):nullptr;
+    }
     const char* label = configuredLabel ? configuredLabel : keyboardLabel(button, context);
     if (!label) return nullptr;
     auto image = makeKeycap(label);
@@ -261,7 +300,7 @@ inline void makePromptMips(ColorImage& image) {
     }
 }
 inline ColorImage composePromptIcon(const ColorImage& base, Button button, Context context, TileRect tile,
-                                   const char* configuredLabel = nullptr) {
+                                   const char* configuredLabel = nullptr, Source source = Source::KeyboardMouse) {
     ColorImage canvas;
     const uint32_t resolution = base.width <= 1024 && base.height <= 1024 ? XeluLight::kSize / 32 : 1;
     canvas.width = base.width * resolution; canvas.height = base.height * resolution;
@@ -278,8 +317,8 @@ inline ColorImage composePromptIcon(const ColorImage& base, Button button, Conte
         return canvas;
     tile.x *= resolution; tile.y *= resolution; tile.w *= resolution; tile.h *= resolution;
     canvas.pixels.assign(size_t(canvas.width) * canvas.height * 4, 0);
-    const auto icon = iconFor(button, context, configuredLabel);
-    if (!icon || !icon->valid()) return canvas;
+    const auto icon = iconFor(button, context, configuredLabel, source);
+    if (!icon || !icon->valid()) return {};
     float scale = float(tile.w < tile.h ? tile.w : tile.h) / float(icon->width);
     if (!(scale > 0)) return canvas;
     const float dw = icon->width * scale, dh = icon->height * scale;
@@ -306,17 +345,18 @@ inline ColorImage composePromptIcon(const ColorImage& base, Button button, Conte
 // exactly: hashing may combine, but equality never truncates, so distinct
 // sizes or rects cannot return each other's image.
 struct IconKey {
-    uint8_t button = 0, context = 0;
+    uint8_t button = 0, context = 0, source = 0;
     uint32_t w = 0, h = 0, tx = 0, ty = 0, tw = 0, th = 0;
     std::string label;
     bool operator==(const IconKey& other) const {
-        return button == other.button && context == other.context && w == other.w && h == other.h &&
+        return button == other.button && context == other.context && source == other.source && w == other.w && h == other.h &&
             tx == other.tx && ty == other.ty && tw == other.tw && th == other.th && label == other.label;
     }
 };
 struct IconKeyHash {
     size_t operator()(const IconKey& key) const noexcept {
         size_t h = key.button;
+        h ^= size_t(key.source) + 0x9e3779b9 + (h << 6) + (h >> 2);
         h ^= size_t(key.context) + 0x9e3779b9 + (h << 6) + (h >> 2);
         h ^= size_t(key.w) + 0x9e3779b9 + (h << 6) + (h >> 2);
         h ^= size_t(key.h) + 0x9e3779b9 + (h << 6) + (h >> 2);
@@ -335,13 +375,15 @@ struct Registry {
         static Registry registry;
         return registry;
     }
-    static IconKey iconKey(Button button, Context context, uint32_t w, uint32_t h, TileRect tile) {
+    static IconKey iconKey(Button button, Context context, uint32_t w, uint32_t h, TileRect tile,
+                           Source source = Source::KeyboardMouse) {
         IconKey key;
         key.button = uint8_t(button);
         key.context = uint8_t(context);
+        key.source = uint8_t(source);
         key.w = w; key.h = h;
         key.tx = tile.x; key.ty = tile.y; key.tw = tile.w; key.th = tile.h;
-        if (const char* label = keyboardLabel(button, context)) key.label = label;
+        if(source==Source::KeyboardMouse)if (const char* label = keyboardLabel(button, context)) key.label = label;
         return key;
     }
 };
@@ -363,18 +405,19 @@ inline std::shared_ptr<const ColorImage> replacementForUv(uint32_t textureId,
         const std::shared_ptr<const ColorImage>& image, Source source, Context context,
         float u0, float v0, float u1, float v1) {
     (void)textureId;
-    if (source != Source::KeyboardMouse || !image || !image->valid() || image->faces != 1) return nullptr;
+    if ((source != Source::KeyboardMouse && source != Source::PlayStation) || !image || !image->valid() || image->faces != 1) return nullptr;
     const Button button = buttonFromOriginByte(image->promptOrigin);
     if (button == Button::Unknown) return nullptr;
+    if(source==Source::PlayStation && button>Button::Back)return nullptr;
     const TileRect tile = promptTileRect(u0, v0, u1, v1, image->width, image->height);
     if (!tile.valid) return nullptr;
     const bool full = promptFullBleed(u0, v0, u1, v1);
     auto& registry = Registry::instance();
     std::lock_guard lock(registry.mutex);
-    const IconKey key = Registry::iconKey(button, context, image->width, image->height, tile);
+    const IconKey key = Registry::iconKey(button, context, image->width, image->height, tile, source);
     if (auto it = registry.icons.find(key); it != registry.icons.end()) return it->second;
     if (registry.icons.size() >= 128) registry.icons.clear();
-    auto icon = std::make_shared<const ColorImage>(composePromptIcon(*image, button, context, tile, key.label.c_str()));
+    auto icon = std::make_shared<const ColorImage>(composePromptIcon(*image, button, context, tile, key.label.c_str(), source));
     if (!icon || !icon->valid()) return nullptr;
     registry.icons[key] = icon;
     if (!full) {

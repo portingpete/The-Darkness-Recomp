@@ -249,6 +249,31 @@ name = "StabilizeAlternativeMovementCameraMidAsmHook"
 address = 0x821DC2D0
 registers = ["r27", "r29", "r30", "r31"]
 
+# Preserve the previous camera offset before the OUTER camera clears it; the
+# inner ordinary helper clears it again. Only
+# the excess horizontal lag contracts during collision grace;
+# the original raycast, scripted resets and vertical constraint still execute.
+[[midasm_hook]]
+name = "CaptureMovementCameraHistoryMidAsmHook"
+address = 0x821DC110
+registers = ["r28"]
+
+[[midasm_hook]]
+name = "RecoverMovementCameraLagMidAsmHook"
+address = 0x821DE4BC
+registers = ["r23", "r16", "r15", "r18", "r7", "f9", "f0", "f19", "f14", "f22"]
+jump_address_on_true = 0x821DE4E0
+
+[[midasm_hook]]
+name = "TraceMovementCameraLagMidAsmHook"
+address = 0x821DE550
+registers = ["r1", "r18", "r11", "r10", "f20", "f21", "f26", "f19", "f14"]
+
+[[midasm_hook]]
+name = "TraceMovementCameraRayMidAsmHook"
+address = 0x821DE6EC
+registers = ["r1", "r3"]
+
 # Scale horizontal movement registers without changing state or elapsed time.
 [[midasm_hook]]
 name = "ApplyDeveloperHorizontalSpeedMidAsmHook"

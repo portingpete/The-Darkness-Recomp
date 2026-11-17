@@ -352,7 +352,7 @@ private:
     ID3D11SamplerState* sampler(const Native::WorldSampler&);
     void transfer(ID3D11ShaderResourceView*,ID3D11RenderTargetView*,const std::array<uint32_t,4>& source,
                   const std::array<uint32_t,2>& offset,float scale);
-    bool promptKeyboardMouse_ = true;
+    Native::PromptRenderSource promptSource_ = Native::PromptRenderSource::KeyboardMouse;
     bool bloom_ = true;
     bool motionBlur_ = false;
 public:
@@ -373,7 +373,8 @@ public:
     void inspectNextFrame();
     void endFrame();
     void setDiagnostics(bool enabled) {diagnostics_=enabled;}
-    void setPromptSource(bool keyboardMouse) {promptKeyboardMouse_ = keyboardMouse;}
+    void setPromptSource(Native::PromptRenderSource source) {promptSource_=source;}
+    void setPromptSource(bool keyboardMouse) {setPromptSource(keyboardMouse?Native::PromptRenderSource::KeyboardMouse:Native::PromptRenderSource::Controller);}
     void printPerformance();
     void beginFrame();
     // Required after external code changes the shared immediate context.

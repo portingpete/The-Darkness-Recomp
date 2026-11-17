@@ -1,6 +1,7 @@
 //! Per-thread wake channels; guest predicates and memory stay in C++.
 //! Capture before the predicate, arm before waiting, finish before rechecking.
-#![cfg_attr(not(test), no_std)]
+// Share std's panic=abort runtime with the other native Rust libraries. A
+// private no_std panic handler conflicts once HID I/O pulls in std's handler.
 use core::{ffi::c_void, sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering::SeqCst}};
 const SLOTS: usize = 64;
 const INVALID: u32 = u32::MAX;
@@ -63,16 +64,6 @@ pub extern "C" fn dark_resource_wait_notify() {
         let event = EVENTS[slot].load(SeqCst);
         if event != 0 { unsafe { SetEvent(event as *mut c_void); } }
         mask &= mask - 1;
-    }
-}
-#[cfg(not(test))]
-mod panic_runtime {
-    // Keep this in its own codegen unit so another Rust static library can
-    // supply the same abort handler without pulling a duplicate definition.
-    #[panic_handler]
-    fn panic(_: &core::panic::PanicInfo) -> ! {
-        unsafe extern "C" { fn abort() -> !; }
-        unsafe { abort() }
     }
 }
 #[cfg(test)]

@@ -1,0 +1,17 @@
+[package]
+name = "dark-dualsense"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[target.'cfg(windows)'.dependencies]
+hidapi = { version = "=2.6.7", default-features = false, features = ["windows-native"] }
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Threading", "Win32_System_Pipes"] }
+
+[profile.release]
+panic = "abort"
+opt-level = 3
+codegen-units = 2

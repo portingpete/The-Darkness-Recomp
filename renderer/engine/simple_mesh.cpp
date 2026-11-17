@@ -1041,8 +1041,8 @@ PreviewTexturePreloadCounters previewTexturePreloadCounters() {
 }
 std::shared_ptr<const ColorImage> promptReplacementFor(uint32_t textureId,
     const std::shared_ptr<const ColorImage>& image, PromptRenderSource source, PromptRenderContext context) {
-    const auto nativeSource = source == PromptRenderSource::Controller ?
-        Prompts::Source::Controller : Prompts::Source::KeyboardMouse;
+    const auto nativeSource = source == PromptRenderSource::KeyboardMouse ? Prompts::Source::KeyboardMouse :
+        source == PromptRenderSource::PlayStation ? Prompts::Source::PlayStation : Prompts::Source::Controller;
     const auto nativeContext = context == PromptRenderContext::Gameplay ?
         Prompts::Context::Gameplay : Prompts::Context::Menu;
     return Prompts::replacementFor(textureId, image, nativeSource, nativeContext);
@@ -1050,8 +1050,8 @@ std::shared_ptr<const ColorImage> promptReplacementFor(uint32_t textureId,
 std::shared_ptr<const ColorImage> promptReplacementForUv(uint32_t textureId,
     const std::shared_ptr<const ColorImage>& image, PromptRenderSource source, PromptRenderContext context,
     float u0, float v0, float u1, float v1) {
-    const auto nativeSource = source == PromptRenderSource::Controller ?
-        Prompts::Source::Controller : Prompts::Source::KeyboardMouse;
+    const auto nativeSource = source == PromptRenderSource::KeyboardMouse ? Prompts::Source::KeyboardMouse :
+        source == PromptRenderSource::PlayStation ? Prompts::Source::PlayStation : Prompts::Source::Controller;
     const auto nativeContext = context == PromptRenderContext::Gameplay ?
         Prompts::Context::Gameplay : Prompts::Context::Menu;
     return Prompts::replacementForUv(textureId, image, nativeSource, nativeContext, u0, v0, u1, v1);

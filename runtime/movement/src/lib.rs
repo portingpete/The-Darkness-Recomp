@@ -2,6 +2,9 @@
 //! The C++ bridge converts The Darkness's displacement-per-tick representation
 //! and solves at each motor interval while cancelling the downstream control gain.
 
+mod camera;
+mod commands;
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Velocity {
