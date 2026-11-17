@@ -1,4 +1,5 @@
 #include "input.h"
+#include "dualsense_controller.h"
 #include "keyboard_menu.h"
 #include "movement_settings.h"
 #include "runtime.h"
@@ -131,7 +132,8 @@ void NativeInput::resetPromptLocked() {
 void NativeInput::noteKeyboardActivityLocked(bool active) {
     if (active) promptSource_.store(PromptInputSource::KeyboardMouse, std::memory_order_release);
 }
-void NativeInput::updatePromptSourceLocked(uint32_t user, const XINPUT_GAMEPAD& physical, bool connected, bool keyboardMouseActive) {
+void NativeInput::updatePromptSourceLocked(uint32_t user, const XINPUT_GAMEPAD& physical, bool connected, bool keyboardMouseActive,
+                                           bool playStation) {
     // Primary-only classification: only slot 0 feeds the title's prompt
     // choice. Secondary slots never steal nor clear, so idle/disconnected
     // polls from another device cannot undo the primary decision.
@@ -221,18 +223,19 @@ void NativeInput::updatePromptSourceLocked(uint32_t user, const XINPUT_GAMEPAD& 
         selectingSlot_ = -1;
         setAnchor();
     } else if (edge) {
-        promptSource_.store(PromptInputSource::Controller, std::memory_order_release);
+        promptSource_.store(playStation ? PromptInputSource::PlayStation : PromptInputSource::Controller, std::memory_order_release);
         selectingSlot_ = 0;
         setAnchor();
     }
 }
 
 NativeInput& nativeInput() {
-    static NativeInput input({}, true);
+    static NativeInput input(productionControllerApi(), true);
     return input;
 }
 NativeInput::NativeInput(ControllerApi api, bool backgroundController)
     : api_(api), backgroundController_(backgroundController) {
+    api_.hostCount=std::clamp(api_.hostCount,1u,kMaxHostControllers);
     if (backgroundController_) {
         try { controllerThread_ = std::thread(&NativeInput::controllerWorker, this); }
         catch (...) {
@@ -241,6 +244,9 @@ NativeInput::NativeInput(ControllerApi api, bool backgroundController)
     }
 }
 NativeInput::~NativeInput() {
+    shutdownControllers();
+}
+void NativeInput::shutdownControllers() {
     {
         std::lock_guard lock(mutex_);
         stopVibrationLocked();
@@ -277,7 +283,7 @@ DWORD NativeInput::primaryStateLocked(XINPUT_STATE& state, uint64_t& generation,
         resetPromptLocked();
     }
     DWORD fallback = ERROR_DEVICE_NOT_CONNECTED;
-    for (uint32_t host = 0; host < XUSER_MAX_COUNT; ++host) {
+    for (uint32_t host = 0; host < api_.hostCount; ++host) {
         XINPUT_STATE candidate{};
         uint64_t candidateGeneration = 0;
         const DWORD status = physicalState(host, candidate, candidateGeneration);
@@ -332,18 +338,18 @@ void NativeInput::controllerWorker() {
     using Clock = std::chrono::steady_clock;
     constexpr auto connectedInterval = std::chrono::milliseconds(2);
     constexpr auto discoveryInterval = std::chrono::milliseconds(500);
-    std::array<uint64_t, XUSER_MAX_COUNT> sent{};
-    std::array<XINPUT_VIBRATION, XUSER_MAX_COUNT> lastSent{};
-    std::array<Clock::time_point, XUSER_MAX_COUNT> nextCaps{};
+    std::array<uint64_t, kMaxHostControllers> sent{};
+    std::array<XINPUT_VIBRATION, kMaxHostControllers> lastSent{};
+    std::array<Clock::time_point, kMaxHostControllers> nextCaps{};
     auto nextDiscovery = Clock::time_point{};
     uint32_t discoverySlot = 0;
     const auto stopped = [&] {
         std::lock_guard lock(controllerMutex_);
         return controllerStop_;
     };
-    std::array<DWORD, XUSER_MAX_COUNT> motorErrors{};
+    std::array<DWORD, kMaxHostControllers> motorErrors{};
     const auto drainMotors = [&] {
-        for (uint32_t user = 0; user < XUSER_MAX_COUNT && !stopped(); ++user) {
+        for (uint32_t user = 0; user < api_.hostCount && !stopped(); ++user) {
             // A newer zero that arrived inside SetState is delivered directly
             // afterward, before any other potentially blocking device probe.
             for (unsigned attempt = 0; attempt < 2; ++attempt) {
@@ -359,7 +365,8 @@ void NativeInput::controllerWorker() {
                 }
                 DWORD result;
                 {
-                    StallProfiler::Scope profile(StallProfiler::Section::Other, "XInputSetState(background)",
+                    StallProfiler::Scope profile(StallProfiler::Section::Other,
+                        api_.playStation && api_.playStation(user) ? "DualSenseSetState(background)" : "XInputSetState(background)",
                         0, 0, user, "controller-user");
                     result = api_.vibration(user, &vibration);
                 }
@@ -381,7 +388,8 @@ void NativeInput::controllerWorker() {
             generation = ++physicalSlots_[user].startedGeneration;
         }
         {
-            StallProfiler::Scope profile(StallProfiler::Section::Other, "XInputGetState(background)",
+            StallProfiler::Scope profile(StallProfiler::Section::Other,
+                api_.playStation && api_.playStation(user) ? "DualSenseGetState(background)" : "XInputGetState(background)",
                 0, 0, user, "controller-user");
             status = api_.state(user, &state);
         }
@@ -409,7 +417,8 @@ void NativeInput::controllerWorker() {
             XINPUT_CAPABILITIES caps{};
             DWORD capsStatus;
             {
-                StallProfiler::Scope profile(StallProfiler::Section::Other, "XInputGetCapabilities(background)",
+                StallProfiler::Scope profile(StallProfiler::Section::Other,
+                    api_.playStation && api_.playStation(user) ? "DualSenseGetCapabilities(background)" : "XInputGetCapabilities(background)",
                     0, 0, user, "controller-user");
                 capsStatus = api_.capabilities(user, 0, &caps);
             }
@@ -421,7 +430,7 @@ void NativeInput::controllerWorker() {
         drainMotors();
     };
     while (!stopped()) {
-        std::array<bool, XUSER_MAX_COUNT> connected{};
+        std::array<bool, kMaxHostControllers> connected{};
         {
             std::lock_guard lock(controllerMutex_);
             controllerCommand_ = false;
@@ -434,8 +443,8 @@ void NativeInput::controllerWorker() {
         for (uint32_t user = 0; user < connected.size(); ++user)
             if (connected[user]) refresh(user);
         if (Clock::now() >= nextDiscovery) {
-            for (uint32_t count = 0; count < connected.size(); ++count) {
-                const uint32_t user = discoverySlot++ % XUSER_MAX_COUNT;
+            for (uint32_t count = 0; count < api_.hostCount; ++count) {
+                const uint32_t user = discoverySlot++ % api_.hostCount;
                 if (!connected[user]) { refresh(user); break; }
             }
             nextDiscovery = Clock::now() + discoveryInterval;
@@ -444,10 +453,11 @@ void NativeInput::controllerWorker() {
         std::unique_lock lock(controllerMutex_);
         controllerChanged_.wait_for(lock, connectedInterval, [&] { return controllerStop_ || controllerCommand_; });
     }
-    for (uint32_t user = 0; user < XUSER_MAX_COUNT; ++user)
+    for (uint32_t user = 0; user < api_.hostCount; ++user)
         if (lastSent[user].wLeftMotorSpeed || lastSent[user].wRightMotorSpeed) {
             XINPUT_VIBRATION stop{};
-            StallProfiler::Scope profile(StallProfiler::Section::Other, "XInputSetState(shutdown)",
+            StallProfiler::Scope profile(StallProfiler::Section::Other,
+                api_.playStation && api_.playStation(user) ? "DualSenseSetState(shutdown)" : "XInputSetState(shutdown)",
                 0, 0, user, "controller-user");
             api_.vibration(user, &stop);
         }
@@ -580,7 +590,7 @@ void NativeInput::suppressMenuActivationKeysLocked() {
     if (backgroundController_) {
         captureWasBlocked_ = true;
         std::lock_guard physicalLock(controllerMutex_);
-        for (uint32_t user = 0; user < XUSER_MAX_COUNT; ++user)
+        for (uint32_t user = 0; user < api_.hostCount; ++user)
             controllerFreshAfter_[user] = physicalSlots_[user].startedGeneration + 1;
     }
     if (held) ++menuEpoch_;
@@ -742,7 +752,7 @@ void NativeInput::setSettingsOpen(bool open) {
     waitForControllerRelease_.fill(true);
     if (backgroundController_) {
         std::lock_guard physicalLock(controllerMutex_);
-        for (uint32_t user = 0; user < XUSER_MAX_COUNT; ++user)
+        for (uint32_t user = 0; user < api_.hostCount; ++user)
             controllerFreshAfter_[user] = physicalSlots_[user].startedGeneration + 1;
     }
 }
@@ -759,12 +769,12 @@ bool NativeInput::windowMessage(HWND window, UINT message, WPARAM key, LPARAM de
             resetPromptLocked();
             if (backgroundController_) {
                 std::lock_guard physicalLock(controllerMutex_);
-                for (uint32_t user = 0; user < XUSER_MAX_COUNT; ++user)
+                for (uint32_t user = 0; user < api_.hostCount; ++user)
                     controllerFreshAfter_[user] = physicalSlots_[user].startedGeneration + 1;
             }
         } else if (!wasFocused && backgroundController_) {
             std::lock_guard physicalLock(controllerMutex_);
-            for (uint32_t user = 0; user < XUSER_MAX_COUNT; ++user)
+            for (uint32_t user = 0; user < api_.hostCount; ++user)
                 controllerFreshAfter_[user] = physicalSlots_[user].startedGeneration + 1;
         }
     } else if (message == WM_NCDESTROY) {
@@ -982,7 +992,7 @@ DWORD NativeInput::getState(Memory& owner, uint32_t user, uint32_t flags, uint32
         // A neutral poll started during capture cannot release suppression
         // afterward. Require a poll started after this ownership transition.
         std::lock_guard physicalLock(controllerMutex_);
-        for (uint32_t slot = 0; slot < XUSER_MAX_COUNT; ++slot)
+        for (uint32_t slot = 0; slot < api_.hostCount; ++slot)
             controllerFreshAfter_[slot] = physicalSlots_[slot].startedGeneration + 1;
     }
     XINPUT_STATE state{};
@@ -1027,7 +1037,8 @@ DWORD NativeInput::getState(Memory& owner, uint32_t user, uint32_t flags, uint32
             keyboardMouseActive = heldKeys_ != 0 || keyboardMouseEvent_ || mousePending_ || wheelPending_ != 0 ||
                 wheelKey_ != 0 || wheelRemainder_ != 0;
         }
-        updatePromptSourceLocked(user, state.Gamepad, status == ERROR_SUCCESS, keyboardMouseActive);
+        updatePromptSourceLocked(user, state.Gamepad, status == ERROR_SUCCESS, keyboardMouseActive,
+            api_.playStation && api_.playStation(hostUser));
         if (user == 0) keyboardMouseEvent_ = false;
     }
     if (keyboard) mergeKeyboard(state.Gamepad, keyboardLocked());
@@ -1040,7 +1051,8 @@ DWORD NativeInput::getState(Memory& owner, uint32_t user, uint32_t flags, uint32
     if (changed) { ++slot.packet; ++counters_.changes; }
     if (!slot.connected)
         fprintf(stderr, "[Input] user=%u connected source=%s\n", user,
-                status == ERROR_SUCCESS ? (keyboard ? "XInput+keyboard" : "XInput") : "keyboard");
+                status == ERROR_SUCCESS ? (api_.playStation && api_.playStation(hostUser) ?
+                    (keyboard ? "DualSense+keyboard" : "DualSense") : (keyboard ? "XInput+keyboard" : "XInput")) : "keyboard");
     slot.connected = true;
     slot.previous = state.Gamepad;
     ++counters_.connected;

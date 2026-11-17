@@ -15,10 +15,22 @@ def update(root: Path, output: Path) -> bool:
     sources = {'CMakeLists.txt': root / 'CMakeLists.txt',
                '@stamp-tool': tool,
                '@stamp-module': tool.parent.parent / 'cmake/NativeCompilationStamp.cmake'}
+    sources['runtime/movement/src/lib.rs'] = root / 'runtime/movement/src/lib.rs'
+    sources['runtime/movement/src/commands.rs'] = root / 'runtime/movement/src/commands.rs'
+    sources['runtime/movement/src/camera.rs'] = root / 'runtime/movement/src/camera.rs'
+    sources['@movement-build-module'] = tool.parent.parent / 'cmake/RustMovement.cmake'
     for directory in ('app', 'renderer', 'runtime/native', 'tests'):
         for path in (root / directory).rglob('*'):
             if path.is_file() and path.suffix.lower() in EXTENSIONS:
                 sources[path.relative_to(root).as_posix()] = path
+    crate = root / 'runtime/dualsense'
+    if (crate / 'Cargo.toml').is_file():
+        for path in [crate / 'Cargo.toml', crate / 'Cargo.lock', *sorted((crate / 'src').rglob('*.rs'))]:
+            sources[path.relative_to(root).as_posix()] = path
+        sources['@dualsense-build-tool'] = tool.parent / 'build_dualsense.py'
+        sources['@dualsense-build-module'] = tool.parent.parent / 'cmake/RustDualSense.cmake'
+        sources['@resource-wait-build-module'] = tool.parent.parent / 'cmake/RustResourceWait.cmake'
+        sources['renderer/rust_resource_wait/src/lib.rs'] = root / 'renderer/rust_resource_wait/src/lib.rs'
     hashes = {name: hashlib.sha256(path.read_bytes()).hexdigest()
               for name, path in sorted(sources.items())}
     fingerprint = hashlib.sha256(json.dumps(hashes, sort_keys=True).encode()).hexdigest()

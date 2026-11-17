@@ -65,6 +65,8 @@ static void check(bool success, const char* message) { if (!success) throw std::
 #include "developer_weapon_assets_tests.h"
 #include "developer_player_lookup_tests.h"
 #include "developer_player_tests.h"
+#include "movement_command_tests.h"
+#include "movement_camera_tests.h"
 #include "developer_missions_tests.h"
 #include "developer_update_tests.h"
 #include "screen_fade_tests.h"
@@ -1810,6 +1812,8 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 3 && strcmp(argv[2], "--developer-tools") == 0) {
+            testMovementCommandPacking(ctx);
+            testMovementCameraRecovery(ctx);
             testDeveloperToolsRequests();
             testDeveloperInvincibility(ctx);
             testDeveloperNoclip(ctx);

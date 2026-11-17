@@ -2538,9 +2538,9 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw,const Native::WorldG
                     }
                 }
             }
-            if (!subtitleSubstituted && promptKeyboardMouse_ && (*effectiveImage) && (*effectiveImage)->faces == 1 && !cube && (*effectiveImage)->promptOrigin) {
+            if (!subtitleSubstituted && promptSource_!=Native::PromptRenderSource::Controller && (*effectiveImage) && (*effectiveImage)->faces == 1 && !cube && (*effectiveImage)->promptOrigin) {
                 if (auto icon = Prompts::replacementFor(draw.textureIds[slot], (*effectiveImage),
-                        Prompts::Source::KeyboardMouse, draw.promptContext == Native::PromptRenderContext::Gameplay ?
+                        promptSource_==Native::PromptRenderSource::PlayStation?Prompts::Source::PlayStation:Prompts::Source::KeyboardMouse, draw.promptContext == Native::PromptRenderContext::Gameplay ?
                             Prompts::Context::Gameplay : Prompts::Context::Menu)) {
                     substitute = std::move(icon);
                     effectiveImage = &substitute;
@@ -2837,7 +2837,7 @@ bool WorldRendererD3D11::draw(const Native::WorldDraw& draw,const Native::WorldG
     std::array<Native::EngineVector,2> viewportValues{draw.depthRange,Native::EngineVector{1,0,0,0}};
     // Enlarge only owned, flat UI rectangles. The original constants and
     // immutable geometry remain shared with any subsequent draw unchanged.
-    if(promptSlots && draw.material==Native::WorldMaterial::fixed && !(flags&6) &&
+    if(promptSlots && promptSource_==Native::PromptRenderSource::KeyboardMouse && draw.material==Native::WorldMaterial::fixed && !(flags&6) &&
        !options.weights && !options.positionConversion && options.modes[0]!=7 &&
        g.vertices->vertexCount==4 && count==6) {
         std::vector<Native::WorldVertex> vertices;
