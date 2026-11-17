@@ -604,7 +604,7 @@ fn run(options: Options, gui: Option<&Dialog>) -> Result<()> {
         .map_err(|e| format!("Cannot start setup: {e}\nLog: {}", log.display()))?;
     drop(progress);
     if !status.success() {
-        return Err(format!("Installation failed ({}).\n\n{}\n\nFull log: {}\nRerun the installer with the same folders after resolving the error.", status, log_tail(&log), log.display()));
+        return Err(format!("Installation failed ({}).\n\n{}\n\nFull log: {}\nResolve the error above before rerunning the installer. If the destination was rejected, choose a folder on a Linux filesystem.", status, log_tail(&log), log.display()));
     }
     if !regular(&install.join("play-linux.sh")) {
         return Err(format!(
