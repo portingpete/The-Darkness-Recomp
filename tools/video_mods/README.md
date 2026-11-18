@@ -5,8 +5,12 @@ WMV3 or Theora video. The optional native loader selects the new file at the
 original guest pathname. The game's decoder and playback clock remain in use;
 external XWC audio banks are unchanged.
 
-Build with Rust 1.74 or newer. The `create` command also requires `ffprobe` from
-FFmpeg on PATH, or the executable path in `DARK_FFPROBE`.
+The original clips come from your own game dump. To build a pack, supply
+locally authored replacement clips. Players can use a compatible pack shared
+by its creator.
+
+Build with Rust 1.74 or newer. The `create` and `create-batch` commands require
+`ffprobe` from FFmpeg on PATH, or the executable path in `DARK_FFPROBE`.
 
 ```powershell
 cargo build --release --locked --manifest-path tools/video_mods/Cargo.toml
@@ -20,6 +24,25 @@ original video paths to payload files; it does not replace whole directories.
 Payloads are pinned against writes and deletion until their final runtime
 owner closes. Build a new pack for an edit and select it on the next launch.
 
+For several clips, save a UTF-8 mapping file with one target and replacement
+path per line. Use a literal tab between the paths. Replacement paths can be
+absolute or relative to the mapping file, and can contain spaces.
+
+```text
+Content/Videos/Theora/IngameMisc/PaulieConSite.ogg	Paulie HD.ogg
+Content/Videos/Theora/IngameMisc/Paulie_idle.ogg	Paulie idle HD.ogg
+```
+
+```powershell
+tools/video_mods/target/release/darkrecomp-video-pack.exe create-batch K:/Games/Darkness C:/Art/clips.tsv C:/Packs/PaulieHD
+$env:DARK_VIDEO_MOD_DIR = 'C:/Packs/PaulieHD'
+```
+
+Every clip is validated before the new pack directory is created. Duplicate
+targets are rejected, including case and separator variations. Each pack can
+contain up to 128 clips. The combined `media.txt` records the probe results
+for each target.
+
 The importer checks the original and replacement with bounded `ffprobe` calls.
 They must retain the same codec, frame rate, audio stream layout and timeline
 (duration and start within one original frame). Video must be 8-bit YUV 4:2:0
@@ -30,8 +53,10 @@ in control, so aspect changes can distort the image on that screen.
 
 The game directory, replacement and output parent must be ordinary paths.
 Reparse points, symlinks, parent traversal and existing output directories are
-rejected. Inputs are opened read-only. A failure preserves any incomplete new
-output; the complete `videos.tsv` is published only after the payload is synced.
+rejected. Inputs are opened read-only. If writing fails, the importer preserves
+the incomplete directory for inspection. It publishes `videos.tsv` atomically
+after the payloads and report have been synced. On Unix, pack output requires
+a filesystem that supports hard links.
 No game media is included in this repository or redistributed by the tool.
 
 The native loader validates the complete bounded manifest, original container,
@@ -57,5 +82,4 @@ content/videos/theora/ingamemisc/fultontv.ogg	video.ogg	123456
 
 There are at most 128 entries and 64 KiB of manifest data. Payloads are plain
 basenames of the matching container, at most 2 GiB each. `check MANIFEST`
-validates manifest syntax only. Multiple entries can be authored in one pack;
-`create` currently produces one entry plus a `media.txt` probe report.
+validates manifest syntax only.
