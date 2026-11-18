@@ -489,8 +489,11 @@ DeveloperDarknessResult grantDeveloperArsenal(PPCContext& ctx, uint8_t* base,
         owned += 2;
     } else std::fprintf(stderr, "[DeveloperArsenal] Ancient weapons unavailable. %s\n", failure.c_str());
     const auto total = kCampaignFirearms.size() + kAncientNames.size();
-    return {owned == total, std::to_string(owned) + " of " + std::to_string(total) +
-        " campaign weapons available. Grants may be autosaved."};
+    const bool complete = owned == total;
+    auto status = std::to_string(owned) + " of " + std::to_string(total) + " campaign weapons available.";
+    if (!complete) status += " Try in a combat area such as Pier 19.";
+    status += " Grants may be autosaved.";
+    return {complete, std::move(status)};
 }
 
 DeveloperDarknessResult applyDeveloperDarkness(PPCContext& ctx, uint8_t* base,
