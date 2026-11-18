@@ -143,6 +143,19 @@ name = "ApplyDeveloperInvincibilityMidAsmHook"
 address = 0x82189B08
 registers = ["r30", "r15", "r11"]
 
+# Keep the selected player's loaded rounds at the original shot's ammo store.
+[[midasm_hook]]
+name = "PreserveDeveloperAmmoMidAsmHook"
+address = 0x82325D1C
+registers = ["r31", "r29", "r11"]
+
+# Use the AI target-eligibility check's existing rejection for the player.
+[[midasm_hook]]
+name = "IgnoreDeveloperPlayerTargetMidAsmHook"
+address = 0x82507754
+registers = ["r3", "r4"]
+jump_address_on_true = 0x825077D4
+
 # Use the original player-only mode 4 movement and commit paths for noclip.
 # Override consumed mode registers; serialized movement flags stay untouched.
 [[midasm_hook]]

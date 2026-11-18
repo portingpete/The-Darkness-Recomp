@@ -67,6 +67,10 @@ bool requestDeveloperSpeed(float speed) {
 }
 void requestDeveloperInvincibility(bool enabled) { snapshot.invincible = enabled; }
 void requestDeveloperNoclip(bool enabled) { snapshot.noclip = enabled; }
+void requestDeveloperInfiniteAmmo(bool enabled) { snapshot.combat.infiniteAmmo = enabled; }
+void requestDeveloperEnemiesIgnorePlayer(bool enabled) { snapshot.combat.enemiesIgnorePlayer = enabled; }
+void requestDeveloperAutoBreakLights(bool enabled) { snapshot.autoBreakLights = enabled; }
+void requestDeveloperUnlockWeapons() { snapshot.status = "Campaign weapon grant queued."; }
 void requestDeveloperUnlockDarkness() {}
 void requestDeveloperMaxDarkness() {}
 }
@@ -154,8 +158,16 @@ int main() {
                 "Slider diagnostics still require the retired dropdown presets");
         require(!fixture.panel.handleTestCommand("dev speed nan") && !fixture.panel.handleTestCommand("dev speed 5"),
                 "Invalid slider input was accepted");
-        require(fixture.panel.handleTestCommand("dev defaults") && snapshot.playerSpeed == 1 && fixture.selected() == 300,
-                "Defaults did not restore the marked center");
+        require(fixture.panel.handleTestCommand("dev ammo on") && fixture.panel.handleTestCommand("dev ignore on") &&
+                snapshot.combat == DeveloperCombatCheats{true, true}, "Combat controls did not apply their toggles");
+        require(fixture.panel.handleTestCommand("dev lights on") && snapshot.autoBreakLights &&
+                fixture.panel.handleTestCommand("dev weapons unlock") &&
+                snapshot.status == "Campaign weapon grant queued.", "New F5 controls did not queue their requests");
+        require(!fixture.panel.handleTestCommand("dev ammo yes") && !fixture.panel.handleTestCommand("dev ignore 1"),
+                "Invalid combat toggle input was accepted");
+        require(fixture.panel.handleTestCommand("dev defaults") && snapshot.playerSpeed == 1 && fixture.selected() == 300 &&
+                snapshot.combat == DeveloperCombatCheats{} && !snapshot.autoBreakLights,
+                "Defaults did not restore speed and clear combat cheats");
         snapshot.hasActivePlayer = false; fixture.refresh(); before = speedRequests;
         require(!IsWindowEnabled(fixture.speed()), "Speed slider enabled without an active player");
         fixture.panel.handleTestCommand("dev speed 2");

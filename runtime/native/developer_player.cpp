@@ -42,10 +42,11 @@ void resetDeveloperPlayer() noexcept {
     configureMovementPlayer(nullptr, 0, 0);
     configureDeveloperInvincibility(nullptr, 0, 0, false, false);
     configureDeveloperNoclip(nullptr, 0, 0, false, false);
+    configureDeveloperCombat(nullptr, {}, {});
 }
 
 DeveloperPlayerResult updateDeveloperPlayer(PPCContext& ctx, uint8_t* base, uint32_t client,
-    float speed, bool invincible, bool enabled, bool noclip) {
+    float speed, bool invincible, bool enabled, bool noclip, DeveloperCombatCheats combat) {
     const auto player = resolveDeveloperPlayer(ctx, base, client);
     const bool available = player.actor && player.state;
     const bool validSpeed = std::isfinite(speed) && speed >= 0.25f && speed <= 4;
@@ -53,6 +54,7 @@ DeveloperPlayerResult updateDeveloperPlayer(PPCContext& ctx, uint8_t* base, uint
     configureMovementPlayer(base, player.actor, player.state, apply ? speed : 1, apply && noclip, client, player.server);
     configureDeveloperInvincibility(base, player.actor, player.state, invincible, apply);
     configureDeveloperNoclip(base, player.actor, player.state, noclip, apply);
+    configureDeveloperCombat(base, player, apply ? combat : DeveloperCombatCheats{});
     activePlayer.store(0, std::memory_order_release);
     if (apply && speed != 1) {
         activeBase.store(base, std::memory_order_release);
@@ -65,18 +67,21 @@ DeveloperPlayerResult updateDeveloperPlayer(PPCContext& ctx, uint8_t* base, uint
         uint32_t actor = ~0u, component = 0;
         float speed = 0;
         bool invincible = false, noclip = false, enabled = false;
+        DeveloperCombatCheats combat;
         unsigned probes = 0;
     };
     thread_local Previous previous;
     DeveloperPlayerResult result{available, apply, {}};
     if (previous.base != base || previous.actor != player.actor || previous.component != player.state ||
-        previous.speed != speed || previous.invincible != invincible || previous.noclip != noclip || previous.enabled != enabled) {
+        previous.speed != speed || previous.invincible != invincible || previous.noclip != noclip ||
+        previous.enabled != enabled || previous.combat != combat) {
         char status[160];
         if (!available) std::snprintf(status, sizeof(status), "Waiting for an active player.");
         else if (!validSpeed) std::snprintf(status, sizeof(status), "Player speed must be between 0.25x and 4x.");
         else if (!enabled) std::snprintf(status, sizeof(status), "Player controls ready.");
-        else std::snprintf(status, sizeof(status), "Player speed %.2gx; invincibility %s; noclip %s.",
-                           speed, invincible ? "on" : "off", noclip ? "on" : "off");
+        else std::snprintf(status, sizeof(status), "Speed %.2gx. Invincibility %s. Noclip %s. Infinite ammo %s. Enemies ignore player %s.",
+                           speed, invincible ? "on" : "off", noclip ? "on" : "off",
+                           combat.infiniteAmmo ? "on" : "off", combat.enemiesIgnorePlayer ? "on" : "off");
         result.status = status;
         if (probeEnabled() && previous.probes++ < 40) {
             const auto forward = available ? std::bit_cast<float>(PPC_LOAD_U32(player.state + 10024)) : 0;
@@ -88,6 +93,7 @@ DeveloperPlayerResult updateDeveloperPlayer(PPCContext& ctx, uint8_t* base, uint
         }
         previous.base = base; previous.actor = player.actor; previous.component = player.state;
         previous.speed = speed; previous.invincible = invincible; previous.enabled = enabled;
+        previous.combat = combat;
         previous.noclip = noclip;
     }
     return result;

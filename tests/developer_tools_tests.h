@@ -39,10 +39,21 @@ static void testDeveloperToolsRequests() {
     check(developerSnapshot().noclip, "Noclip request must be visible to UI");
     requestDeveloperNoclip(false);
     check(!developerSnapshot().noclip, "Noclip must have a reversible requested state");
+    requestDeveloperInfiniteAmmo(true);
+    requestDeveloperEnemiesIgnorePlayer(true);
+    check(developerSnapshot().combat == DeveloperCombatCheats{true, true},
+          "Both combat cheats must be visible to UI");
+    requestDeveloperInfiniteAmmo(false);
+    check(developerSnapshot().combat == DeveloperCombatCheats{false, true},
+          "Disabling infinite ammo must preserve the independent target override");
     requestDeveloperUnlockDarkness();
     check(developerSnapshot().status == "Darkness ability unlock queued.", "Ability grant must enter the engine queue");
     requestDeveloperMaxDarkness();
     check(developerSnapshot().status == "Maximum Darkness level queued.", "Level grant must enter the engine queue");
+    requestDeveloperAutoBreakLights(true);
+    check(developerSnapshot().autoBreakLights, "Automatic light breaking must be visible to UI");
+    requestDeveloperUnlockWeapons();
+    check(developerSnapshot().status == "Campaign weapon grant queued.", "Arsenal grant must enter the engine queue");
     const auto missions = developerMissions();
     check(!missions.empty(), "Developer mission catalog must contain shipped campaign destinations");
     std::set<std::string_view> unique;
@@ -52,7 +63,8 @@ static void testDeveloperToolsRequests() {
         check(requestDeveloperMission(mission.id), "Every displayed mission must be accepted by request validation");
     }
     resetDeveloperTools();
-    check(!developerSnapshot().noclip && !developerSnapshot().invincible && developerSnapshot().playerSpeed == 1,
+    check(!developerSnapshot().noclip && !developerSnapshot().invincible && developerSnapshot().playerSpeed == 1 &&
+          developerSnapshot().combat == DeveloperCombatCheats{} && !developerSnapshot().autoBreakLights,
           "Reset must clear requested session cheats");
     check(!developerToolsNeedsUpdate(), "Reset must disarm closed tools after clearing overrides and queued requests");
     check(requestDeveloperMission(missions.front().id), "Closed-panel mission request failed");

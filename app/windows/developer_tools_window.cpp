@@ -23,6 +23,8 @@ constexpr wchar_t kWindowClass[] = L"DarkRecompDeveloperToolsWindow";
 constexpr UINT_PTR kRefreshTimer = 1;
 constexpr int kMission = 1001, kLoad = 1002, kSpeed = 1003, kInvincible = 1004, kDefaults = 1005;
 constexpr int kNoclip = 1006, kUnlock = 1007, kMaxDarkness = 1008, kResolutionShortcut = 1009;
+constexpr int kInfiniteAmmo = 1010, kEnemiesIgnorePlayer = 1011;
+constexpr int kAutoBreakLights = 1012, kUnlockWeapons = 1013;
 constexpr int kSpeedMinimum = 0, kSpeedDefault = 300, kSpeedMaximum = 600;
 float sliderSpeed(int position) {
     position = std::clamp(position, kSpeedMinimum, kSpeedMaximum);
@@ -110,7 +112,7 @@ bool DeveloperToolsWindow::open() {
     }
     constexpr DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
     constexpr DWORD extended = WS_EX_CONTROLPARENT | WS_EX_TOOLWINDOW;
-    RECT size{0, 0, 450, 452};
+    RECT size{0, 0, 450, 518};
     AdjustWindowRectEx(&size, style, FALSE, extended);
     RECT ownerRect{};
     GetWindowRect(owner_, &ownerRect);
@@ -172,17 +174,23 @@ void DeveloperToolsWindow::createControls() {
     SendMessageW(speed_, TBM_SETTIC, 0, kSpeedDefault); // Persistent default line at the physical center.
     SendMessageW(speed_, TBM_SETPOS, TRUE, kSpeedDefault);
     invincible_ = control(window_, L"BUTTON", L"INVINCIBLE", BS_AUTOCHECKBOX | WS_TABSTOP, 220, 106, 210, 26, kInvincible);
-    noclip_ = control(window_, L"BUTTON", L"NOCLIP", BS_AUTOCHECKBOX | WS_TABSTOP, 16, 140, 416, 26, kNoclip);
-    unlock_ = control(window_, L"BUTTON", L"UNLOCK ALL DARKNESS", BS_PUSHBUTTON | WS_TABSTOP, 16, 181, 203, 27, kUnlock);
-    maxDarkness_ = control(window_, L"BUTTON", L"MAX DARKNESS LEVEL", BS_PUSHBUTTON | WS_TABSTOP, 229, 181, 203, 27, kMaxDarkness);
+    noclip_ = control(window_, L"BUTTON", L"NOCLIP", BS_AUTOCHECKBOX | WS_TABSTOP, 16, 140, 180, 26, kNoclip);
+    infiniteAmmo_ = control(window_, L"BUTTON", L"INFINITE AMMO", BS_AUTOCHECKBOX | WS_TABSTOP, 220, 140, 210, 26, kInfiniteAmmo);
+    enemiesIgnorePlayer_ = control(window_, L"BUTTON", L"ENEMIES IGNORE PLAYER", BS_AUTOCHECKBOX | WS_TABSTOP,
+                                   16, 172, 200, 26, kEnemiesIgnorePlayer);
+    autoBreakLights_ = control(window_, L"BUTTON", L"AUTO-BREAK NEARBY LIGHTS", BS_AUTOCHECKBOX | WS_TABSTOP,
+                               220, 172, 213, 26, kAutoBreakLights);
+    unlock_ = control(window_, L"BUTTON", L"UNLOCK ALL DARKNESS", BS_PUSHBUTTON | WS_TABSTOP, 16, 213, 203, 27, kUnlock);
+    maxDarkness_ = control(window_, L"BUTTON", L"MAX DARKNESS LEVEL", BS_PUSHBUTTON | WS_TABSTOP, 229, 213, 203, 27, kMaxDarkness);
+    weapons_ = control(window_, L"BUTTON", L"UNLOCK ALL WEAPONS", BS_PUSHBUTTON | WS_TABSTOP, 16, 249, 203, 27, kUnlockWeapons);
     resolutionShortcut_ = control(window_, L"BUTTON", L"ENABLE F6 RESOLUTION SHORTCUT", BS_AUTOCHECKBOX | WS_TABSTOP,
-                                  16, 223, 416, 26, kResolutionShortcut);
-    control(window_, L"STATIC", L"STATUS", 0, 16, 265, 400, 18);
-    status_ = control(window_, L"STATIC", L"", SS_LEFT, 16, 287, 416, 61);
-    control(window_, L"STATIC", L"SPEED, INVINCIBILITY, NOCLIP AND THE F6 SHORTCUT ARE SESSION ONLY. MISSION LOADS AND DARKNESS GRANTS MAY AUTOSAVE.",
-            0, 16, 357, 416, 42);
-    defaults_ = control(window_, L"BUTTON", L"RESTORE DEFAULTS", BS_PUSHBUTTON | WS_TABSTOP, 16, 412, 150, 27, kDefaults);
-    control(window_, L"BUTTON", L"CLOSE", BS_PUSHBUTTON | WS_TABSTOP, 355, 412, 78, 27, IDCANCEL);
+                                  16, 289, 416, 26, kResolutionShortcut);
+    control(window_, L"STATIC", L"STATUS", 0, 16, 331, 400, 18);
+    status_ = control(window_, L"STATIC", L"", SS_LEFT, 16, 353, 416, 61);
+    control(window_, L"STATIC", L"SPEED, CHEAT TOGGLES AND THE F6 SHORTCUT APPLY TO THIS SESSION. BROKEN LIGHTS, MISSION LOADS AND GRANTS MAY AUTOSAVE.",
+            0, 16, 423, 416, 42);
+    defaults_ = control(window_, L"BUTTON", L"RESTORE DEFAULTS", BS_PUSHBUTTON | WS_TABSTOP, 16, 478, 150, 27, kDefaults);
+    control(window_, L"BUTTON", L"CLOSE", BS_PUSHBUTTON | WS_TABSTOP, 355, 478, 78, 27, IDCANCEL);
 }
 
 void DeveloperToolsWindow::refresh() {
@@ -193,6 +201,10 @@ void DeveloperToolsWindow::refresh() {
     EnableWindow(speed_, snapshot.hasActivePlayer);
     EnableWindow(invincible_, snapshot.hasActivePlayer);
     EnableWindow(noclip_, snapshot.hasActivePlayer);
+    EnableWindow(infiniteAmmo_, snapshot.hasActivePlayer);
+    EnableWindow(enemiesIgnorePlayer_, snapshot.hasActivePlayer);
+    EnableWindow(autoBreakLights_, snapshot.hasActivePlayer);
+    EnableWindow(weapons_, snapshot.hasActivePlayer);
     EnableWindow(unlock_, snapshot.hasActivePlayer);
     EnableWindow(maxDarkness_, snapshot.hasActivePlayer);
     EnableWindow(resolutionShortcut_, bool(setResolutionShortcut_));
@@ -202,6 +214,9 @@ void DeveloperToolsWindow::refresh() {
     SetWindowTextW(speedLabel_, speedText);
     SendMessageW(invincible_, BM_SETCHECK, snapshot.invincible ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(noclip_, BM_SETCHECK, snapshot.noclip ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(infiniteAmmo_, BM_SETCHECK, snapshot.combat.infiniteAmmo ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(enemiesIgnorePlayer_, BM_SETCHECK, snapshot.combat.enemiesIgnorePlayer ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(autoBreakLights_, BM_SETCHECK, snapshot.autoBreakLights ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(resolutionShortcut_, BM_SETCHECK, resolutionShortcutEnabled_ ? BST_CHECKED : BST_UNCHECKED, 0);
     std::wstring status = upperWide(snapshot.status);
     if (!snapshot.hasActivePlayer) status += L"\nPLAYER CONTROLS BECOME AVAILABLE WHEN A PLAYER IS ACTIVE.";
@@ -243,6 +258,29 @@ void DeveloperToolsWindow::selectNoclip() {
     refresh();
 }
 
+void DeveloperToolsWindow::selectInfiniteAmmo() {
+    if (!developerSnapshot().hasActivePlayer) { refresh(); return; }
+    requestDeveloperInfiniteAmmo(SendMessageW(infiniteAmmo_, BM_GETCHECK, 0, 0) == BST_CHECKED);
+    refresh();
+}
+
+void DeveloperToolsWindow::selectEnemiesIgnorePlayer() {
+    if (!developerSnapshot().hasActivePlayer) { refresh(); return; }
+    requestDeveloperEnemiesIgnorePlayer(SendMessageW(enemiesIgnorePlayer_, BM_GETCHECK, 0, 0) == BST_CHECKED);
+    refresh();
+}
+
+void DeveloperToolsWindow::selectAutoBreakLights() {
+    if (!developerSnapshot().hasActivePlayer) { refresh(); return; }
+    requestDeveloperAutoBreakLights(SendMessageW(autoBreakLights_, BM_GETCHECK, 0, 0) == BST_CHECKED);
+    refresh();
+}
+
+void DeveloperToolsWindow::unlockWeapons() {
+    if (developerSnapshot().hasActivePlayer) requestDeveloperUnlockWeapons();
+    refresh();
+}
+
 void DeveloperToolsWindow::selectResolutionShortcut() {
     if (!setResolutionShortcut_) return;
     resolutionShortcutEnabled_ = SendMessageW(resolutionShortcut_, BM_GETCHECK, 0, 0) == BST_CHECKED;
@@ -264,6 +302,9 @@ void DeveloperToolsWindow::restoreDefaults() {
     requestDeveloperSpeed(1.f);
     requestDeveloperInvincibility(false);
     requestDeveloperNoclip(false);
+    requestDeveloperInfiniteAmmo(false);
+    requestDeveloperEnemiesIgnorePlayer(false);
+    requestDeveloperAutoBreakLights(false);
     resolutionShortcutEnabled_ = false;
     if (setResolutionShortcut_) setResolutionShortcut_(false);
     refresh();
@@ -300,6 +341,10 @@ LRESULT DeveloperToolsWindow::message(UINT message, WPARAM key, LPARAM detail) {
         else if (id == kLoad && notification == BN_CLICKED) loadMission();
         else if (id == kInvincible && notification == BN_CLICKED) selectInvincibility();
         else if (id == kNoclip && notification == BN_CLICKED) selectNoclip();
+        else if (id == kInfiniteAmmo && notification == BN_CLICKED) selectInfiniteAmmo();
+        else if (id == kEnemiesIgnorePlayer && notification == BN_CLICKED) selectEnemiesIgnorePlayer();
+        else if (id == kAutoBreakLights && notification == BN_CLICKED) selectAutoBreakLights();
+        else if (id == kUnlockWeapons && notification == BN_CLICKED) unlockWeapons();
         else if (id == kUnlock && notification == BN_CLICKED) unlockDarkness();
         else if (id == kMaxDarkness && notification == BN_CLICKED) maxDarkness();
         else if (id == kResolutionShortcut && notification == BN_CLICKED) selectResolutionShortcut();
@@ -315,7 +360,8 @@ LRESULT DeveloperToolsWindow::message(UINT message, WPARAM key, LPARAM detail) {
         const bool restoreFocus = foreground == closed || foreground == owner_;
         KillTimer(closed, kRefreshTimer);
         SetWindowLongPtrW(closed, GWLP_USERDATA, 0);
-        window_ = mission_ = load_ = speed_ = speedLabel_ = invincible_ = noclip_ = unlock_ = maxDarkness_ =
+        window_ = mission_ = load_ = speed_ = speedLabel_ = invincible_ = noclip_ = infiniteAmmo_ =
+                  enemiesIgnorePlayer_ = autoBreakLights_ = weapons_ = unlock_ = maxDarkness_ =
                   resolutionShortcut_ = defaults_ = status_ = nullptr;
         displayedStatus_.clear();
         speedDragging_ = false;
@@ -329,10 +375,12 @@ LRESULT DeveloperToolsWindow::message(UINT message, WPARAM key, LPARAM detail) {
 
 void DeveloperToolsWindow::printStatus(std::string_view action) const {
     const auto snapshot = developerSnapshot();
-    std::printf("[DeveloperTest] action=%.*s open=%u canLoadMission=%u hasActivePlayer=%u speed=%.2f invincible=%u noclip=%u resolutionShortcut=%u revision=%llu status=%s\n",
+    std::printf("[DeveloperTest] action=%.*s open=%u canLoadMission=%u hasActivePlayer=%u speed=%.2f invincible=%u noclip=%u resolutionShortcut=%u infiniteAmmo=%u enemiesIgnorePlayer=%u autoBreakLights=%u revision=%llu status=%s\n",
         int(action.size()), action.data(), unsigned(isOpen()), unsigned(snapshot.canLoadMission),
         unsigned(snapshot.hasActivePlayer), snapshot.playerSpeed, unsigned(snapshot.invincible), unsigned(snapshot.noclip),
         unsigned(resolutionShortcutEnabled_),
+        unsigned(snapshot.combat.infiniteAmmo), unsigned(snapshot.combat.enemiesIgnorePlayer),
+        unsigned(snapshot.autoBreakLights),
         static_cast<unsigned long long>(snapshot.revision), snapshot.status.c_str());
 }
 
@@ -417,8 +465,11 @@ bool DeveloperToolsWindow::handleTestCommand(std::string_view command) {
         const float multiplier = std::strtof(value.c_str(), &end);
         if (end == value.c_str() || *end || !std::isfinite(multiplier) || multiplier < .25f || multiplier > 4.f) return false;
         selected = size_t(speedPosition(multiplier));
-    } else if (action == "invincible" || action == "noclip" || action == "resolution") {
+    } else if (action == "invincible" || action == "noclip" || action == "ammo" || action == "ignore" ||
+               action == "lights" || action == "resolution") {
         if (value != "on" && value != "off") return false;
+    } else if (action == "weapons") {
+        if (value != "unlock") return false;
     } else if (action == "darkness") {
         if (value != "unlock" && value != "max") return false;
     } else return false;
@@ -439,6 +490,17 @@ bool DeveloperToolsWindow::handleTestCommand(std::string_view command) {
         } else if (action == "noclip" && IsWindowEnabled(noclip_)) {
             SendMessageW(noclip_, BM_SETCHECK, value == "on" ? BST_CHECKED : BST_UNCHECKED, 0);
             SendMessageW(window_, WM_COMMAND, MAKEWPARAM(kNoclip, BN_CLICKED), LPARAM(noclip_));
+        } else if (action == "ammo" && IsWindowEnabled(infiniteAmmo_)) {
+            SendMessageW(infiniteAmmo_, BM_SETCHECK, value == "on" ? BST_CHECKED : BST_UNCHECKED, 0);
+            SendMessageW(window_, WM_COMMAND, MAKEWPARAM(kInfiniteAmmo, BN_CLICKED), LPARAM(infiniteAmmo_));
+        } else if (action == "ignore" && IsWindowEnabled(enemiesIgnorePlayer_)) {
+            SendMessageW(enemiesIgnorePlayer_, BM_SETCHECK, value == "on" ? BST_CHECKED : BST_UNCHECKED, 0);
+            SendMessageW(window_, WM_COMMAND, MAKEWPARAM(kEnemiesIgnorePlayer, BN_CLICKED), LPARAM(enemiesIgnorePlayer_));
+        } else if (action == "lights" && IsWindowEnabled(autoBreakLights_)) {
+            SendMessageW(autoBreakLights_, BM_SETCHECK, value == "on" ? BST_CHECKED : BST_UNCHECKED, 0);
+            SendMessageW(window_, WM_COMMAND, MAKEWPARAM(kAutoBreakLights, BN_CLICKED), LPARAM(autoBreakLights_));
+        } else if (action == "weapons" && IsWindowEnabled(weapons_)) {
+            SendMessageW(window_, WM_COMMAND, MAKEWPARAM(kUnlockWeapons, BN_CLICKED), LPARAM(weapons_));
         } else if (action == "resolution" && IsWindowEnabled(resolutionShortcut_)) {
             SendMessageW(resolutionShortcut_, BM_SETCHECK, value == "on" ? BST_CHECKED : BST_UNCHECKED, 0);
             SendMessageW(window_, WM_COMMAND, MAKEWPARAM(kResolutionShortcut, BN_CLICKED), LPARAM(resolutionShortcut_));

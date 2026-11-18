@@ -79,6 +79,7 @@ target_sources(DarkRuntime PRIVATE runtime/native/developer_tools.cpp
     runtime/native/developer_player.cpp runtime/native/developer_missions.cpp
     runtime/native/developer_invincibility.cpp runtime/native/developer_player_lookup.cpp
     runtime/native/developer_update.cpp runtime/native/developer_noclip.cpp
+    runtime/native/developer_combat.cpp
     runtime/native/developer_darkness.cpp
     runtime/native/developer_weapon_assets.cpp)
 target_include_directories(DarkRuntime PUBLIC "${CMAKE_SOURCE_DIR}")
