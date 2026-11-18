@@ -50,6 +50,10 @@ static void testDeveloperToolsRequests() {
     check(developerSnapshot().status == "Darkness ability unlock queued.", "Ability grant must enter the engine queue");
     requestDeveloperMaxDarkness();
     check(developerSnapshot().status == "Maximum Darkness level queued.", "Level grant must enter the engine queue");
+    requestDeveloperAutoBreakLights(true);
+    check(developerSnapshot().autoBreakLights, "Automatic light breaking must be visible to UI");
+    requestDeveloperUnlockWeapons();
+    check(developerSnapshot().status == "Campaign weapon grant queued.", "Arsenal grant must enter the engine queue");
     const auto missions = developerMissions();
     check(!missions.empty(), "Developer mission catalog must contain shipped campaign destinations");
     std::set<std::string_view> unique;
@@ -60,7 +64,7 @@ static void testDeveloperToolsRequests() {
     }
     resetDeveloperTools();
     check(!developerSnapshot().noclip && !developerSnapshot().invincible && developerSnapshot().playerSpeed == 1 &&
-          developerSnapshot().combat == DeveloperCombatCheats{},
+          developerSnapshot().combat == DeveloperCombatCheats{} && !developerSnapshot().autoBreakLights,
           "Reset must clear requested session cheats");
     check(!developerToolsNeedsUpdate(), "Reset must disarm closed tools after clearing overrides and queued requests");
     check(requestDeveloperMission(missions.front().id), "Closed-panel mission request failed");

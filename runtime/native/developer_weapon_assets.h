@@ -26,7 +26,7 @@ using DeveloperWeaponAssets = std::map<std::string, std::shared_ptr<const Cached
 // before every read. Keys are lowercase
 // Content-relative paths, including "content\\". Throws on invalid sources.
 DeveloperWeaponAssets prepareDeveloperWeaponAssets(PPCContext& ctx, uint8_t* base,
-    const std::filesystem::path& gameDirectory, const std::filesystem::path& cacheDirectory = {});
+    const std::filesystem::path& gameDirectory, const std::filesystem::path& cacheDirectory = {}, bool arsenal = false);
 
 namespace DeveloperWeaponAssetDetail {
 struct Segment { uint32_t offset = 0; std::vector<uint8_t> bytes; };
@@ -38,7 +38,7 @@ struct File {
 // Pure format/range helpers shared by production preparation and its tests.
 // The payload must be the archive's complete, verified decompressed stream.
 std::vector<File> parseArchive(std::span<const uint8_t> archive,
-                              std::span<const uint8_t> payload);
+                              std::span<const uint8_t> payload, bool arsenal = false);
 void mergeFile(File& destination, const File& source);
 // Validate the physical streaming file's LE image-index/offset table and the
 // selected record's bounds, including the next physical record.

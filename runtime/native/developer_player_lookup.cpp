@@ -1,6 +1,8 @@
 #include "developer_player_lookup.h"
 #include "runtime.h"
 #include "ppc_recomp_shared.h"
+#include <array>
+#include <bit>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
@@ -194,5 +196,79 @@ bool developerMissionTransitionPending(PPCContext& ctx, uint8_t* base) {
     GameContextReference context(ctx, base);
     context.query();
     return context.get() && PPC_LOAD_U8(context.get() + 4908) != 0;
+}
+
+void breakDeveloperLights(PPCContext& ctx, uint8_t* base, const DeveloperPlayerHandles& player) {
+    if (!player.actor || !player.server) return;
+    thread_local uint32_t lastServer = 0, lastActor = 0;
+    thread_local uint64_t nextScan = 0;
+    const auto now = GetTickCount64();
+    if (player.server == lastServer && player.actor == lastActor && now < nextScan) return;
+    lastServer = player.server;
+    lastActor = player.actor;
+    nextScan = now + 250;
+
+    constexpr uint32_t frameSize = 192;
+    if (ctx.r1.u32 < frameSize + 0x4000 ||
+        !mapped(base, ctx.r1.u32 - frameSize - 0x4000, frameSize + 0x4000, true)) return;
+    const auto objects = PPC_LOAD_U32(player.server + 1460);
+    if (!object(base, objects, 28)) return;
+    const auto count = PPC_LOAD_U32(objects + 4);
+    const auto entries = PPC_LOAD_U32(objects + 24);
+    if (count > INT16_MAX + 1u || !object(base, entries, count * 4)) return;
+    const auto coordinate = [&](uint32_t address) { return std::bit_cast<float>(PPC_LOAD_U32(address)); };
+    const auto x = coordinate(player.actor + 128);
+    const auto y = coordinate(player.actor + 132);
+    const auto z = coordinate(player.actor + 136);
+    constexpr float radius = 384.0f;
+    struct Light { uint16_t id; uint32_t address, handler, opcode; };
+    std::array<Light, 24> selected{};
+    size_t selectedCount = 0;
+    for (uint32_t i = 1; i < count && selectedCount < selected.size(); ++i) {
+        const auto light = PPC_LOAD_U32(entries + i * 4);
+        if (!object(base, light, 4)) continue;
+        const auto table = PPC_LOAD_U32(light);
+        const bool lamp = table == 0x82094480;
+        // The four retail light classes share the same burnout message handler.
+        if (!lamp && table != 0x8206DD88 && table != 0x8206DE10 &&
+            table != 0x8206DE98 && table != 0x8206DF20) continue;
+        if (!object(base, light, lamp ? 1104 : 688, true) ||
+            PPC_LOAD_U16(light + 368) != i || PPC_LOAD_U32(light + 636) != player.server) continue;
+        if (lamp && (PPC_LOAD_U32(light + 832) & 4)) continue;
+        const auto flags = PPC_LOAD_U32(light + (lamp ? 412 : 408));
+        if ((flags & 3) != 1) continue;
+        const auto dx = coordinate(light + 128) - x;
+        const auto dy = coordinate(light + 132) - y;
+        const auto dz = coordinate(light + 136) - z;
+        if (dx * dx + dy * dy + dz * dz <= radius * radius)
+            selected[selectedCount++] = {uint16_t(i), light, lamp ? 0x826F0880u : 0x822FF2B0u, lamp ? 274u : 272u};
+    }
+
+    auto frame = ctx;
+    frame.r1.u32 -= frameSize;
+    PPC_STORE_U32(frame.r1.u32, ctx.r1.u32);
+    const auto message = frame.r1.u32 + 80;
+    for (size_t i = 0; i < selectedCount; ++i) {
+        const auto& light = selected[i];
+        auto call = frame;
+        call.r3.u64 = player.server;
+        call.r4.u64 = light.id;
+        sub_82448928(call, base);
+        // A lamp can send authored messages that remove another selected object.
+        if (call.r3.u32 != light.address || method(base, light.address, 84) != light.handler) continue;
+        std::memset(base + message, 0, 48);
+        PPC_STORE_U32(message, light.opcode);
+        PPC_STORE_U32(message + 4, 3); // Retail break command with the burnout effect.
+        PPC_STORE_U16(message + 12, 0xffff);
+        call = frame;
+        call.r3.u64 = light.address;
+        call.r4.u64 = message;
+        PPCSafeIndirect(call, base, light.handler);
+        if (lookupProbeEnabled()) {
+            static thread_local unsigned reported = 0;
+            if (reported++ < 48) std::fprintf(stderr, "[DeveloperLights] player=%08x light=%u opcode=%u\n",
+                player.actor, light.id, light.opcode);
+        }
+    }
 }
 }

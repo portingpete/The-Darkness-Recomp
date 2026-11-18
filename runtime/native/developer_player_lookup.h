@@ -11,6 +11,7 @@ struct DeveloperPlayerHandles {
 // Engine thread only. Uses the current client's local-player ID, never the
 // camera ID; returned addresses are valid only at this update boundary.
 DeveloperPlayerHandles resolveDeveloperPlayer(PPCContext& ctx, uint8_t* base, uint32_t client);
+void breakDeveloperLights(PPCContext& ctx, uint8_t* base, const DeveloperPlayerHandles& player);
 // The retail preloading flag is separate from the client's transition flags.
 bool developerMissionTransitionPending(PPCContext& ctx, uint8_t* base);
 }

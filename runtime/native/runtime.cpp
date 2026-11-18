@@ -451,13 +451,14 @@ uint32_t Memory::headerField(uint32_t key) const {
     }
     return 0;
 }
-void Memory::enableDeveloperWeaponAssets(PPCContext& ctx, uint8_t* base) {
+void Memory::enableDeveloperWeaponAssets(PPCContext& ctx, uint8_t* base, bool arsenal) {
     if (base != base_) throw std::runtime_error("invalid weapon resource memory");
-    if (developerWeaponAssets_.load(std::memory_order_acquire)) return;
+    if (developerWeaponAssets_.load(std::memory_order_acquire) && (!arsenal || developerArsenalAssetsReady_)) return;
     auto assets = std::make_shared<const DeveloperWeaponAssets>(
         prepareDeveloperWeaponAssets(ctx, base, gameDir_,
-            userDataPaths_.isolated ? userDataPaths_.developerCache : std::filesystem::path{}));
+            userDataPaths_.isolated ? userDataPaths_.developerCache : std::filesystem::path{}, arsenal));
     developerWeaponAssets_.store(std::move(assets), std::memory_order_release);
+    developerArsenalAssetsReady_ = arsenal;
 }
 std::shared_ptr<const CachedWeaponFile> Memory::developerWeaponFile(const std::filesystem::path& path) const {
     const auto assets = developerWeaponAssets_.load(std::memory_order_acquire);

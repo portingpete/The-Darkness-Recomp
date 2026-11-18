@@ -28,6 +28,7 @@ struct DeveloperSnapshot {
     bool invincible = false;
     bool noclip = false;
     DeveloperCombatCheats combat;
+    bool autoBreakLights = false;
     std::string status = "Waiting for the game.";
     uint64_t revision = 0;
 };
@@ -38,6 +39,8 @@ void requestDeveloperInvincibility(bool enabled);
 void requestDeveloperNoclip(bool enabled);
 void requestDeveloperInfiniteAmmo(bool enabled);
 void requestDeveloperEnemiesIgnorePlayer(bool enabled);
+void requestDeveloperAutoBreakLights(bool enabled);
+void requestDeveloperUnlockWeapons();
 void requestDeveloperUnlockDarkness();
 void requestDeveloperMaxDarkness();
 void resetDeveloperTools();

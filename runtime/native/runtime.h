@@ -36,7 +36,7 @@ public:
     std::shared_ptr<const VideoModFile> videoModFile(const std::filesystem::path& original) const {
         return videoMods_ ? videoMods_->find(original) : nullptr;
     }
-    void enableDeveloperWeaponAssets(PPCContext& ctx, uint8_t* base);
+    void enableDeveloperWeaponAssets(PPCContext& ctx, uint8_t* base, bool arsenal = false);
     std::shared_ptr<const CachedWeaponFile> developerWeaponFile(const std::filesystem::path& path) const;
     bool commit(uint32_t address, uint32_t size);
     uint32_t allocate(uint32_t size, uint32_t alignment = 4096,
@@ -95,6 +95,7 @@ private:
     NativeMenuAssets nativeMenuAssets_;
     std::shared_ptr<const VideoModPack> videoMods_;
     std::atomic<std::shared_ptr<const DeveloperWeaponAssets>> developerWeaponAssets_;
+    bool developerArsenalAssetsReady_ = false;
     uint32_t headerSize_ = 0;
     std::vector<uint8_t> tlsInitial_;
     std::map<uint32_t, uint32_t> allocations_;

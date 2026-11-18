@@ -33,6 +33,7 @@ constexpr std::array<std::string_view, 6> requiredNames{
     "models\\weapons\\gun_darkness_01.xmd", "models\\weapons\\gun_darkness_02.xmd"};
 constexpr std::array<std::string_view, 3> donors{
     "GameContext_Create.XDF", "NY1_Chinatown_Common.XDF", "NY1_Chinatown_Precache.XDF"};
+constexpr std::array<std::string_view, 2> arsenalDonors{"OW1_Trench_Common.XDF", "OW1_Trench_Precache.XDF"};
 // The original XTC image directories identify these Ancient material/effect
 // images. Import only their recorded header/lower-mip reads, plus the global
 // container header, directory and footer. Missing resident mip payloads are
@@ -115,6 +116,51 @@ constexpr std::array<StreamedMip, 28> streamedMips{{
     {"gun_darkness_02_s", true, false, 652, 139024532, 139112372, 97729180}
 }};
 
+// Retail weapon material intervals, matched to physical streamed mip headers.
+// The weapon's animation, mesh and resident texture reads come from the owned
+// campaign archives. Power-specific preparation retains its smaller cache.
+constexpr std::array<StreamedMip, 39> arsenalMips{{
+    {"ass_tactical_d", true, false, 621, 137269244, 137444500, 87043128},
+    {"ass_tactical_n", true, false, 622, 137444500, 137794372, 74195440},
+    {"ass_tactical_s", true, false, 623, 137794372, 137882212, 98909620},
+    {"gun_1911_shell_n", true, true, 633, 138377260, 138377788, 5903736},
+    {"gun_1911_shell_d", true, true, 634, 138377788, 138378212, 5904760},
+    {"gun_1911_shell_s", true, true, 635, 138378212, 138378820, 5902836},
+    {"gun_50cal_n", true, false, 636, 138378820, 138466516, 103565288},
+    {"gun_50cal_d", true, true, 637, 138466516, 138510652, 757488},
+    {"gun_50cal_s", true, false, 638, 138510652, 138598492, 97270120},
+    {"gun_50cal_shell_n", true, true, 639, 138598492, 138600076, 5893264},
+    {"gun_50cal_shell_d", true, true, 640, 138600076, 138601060, 5899200},
+    {"gun_50cal_shell_s", true, true, 641, 138601060, 138602740, 5891128},
+    {"gun_mauser_01_d", true, true, 661, 139295628, 139339764, 1348104},
+    {"gun_mauser_01_s", true, true, 662, 139339764, 139383900, 1380916},
+    {"gun_mauser_01_n", true, false, 663, 139383900, 139471596, 103630852},
+    {"gun_revolver_d", true, true, 667, 139625684, 139669820, 1184044},
+    {"gun_revolver_s", true, true, 668, 139669820, 139692076, 4582108},
+    {"gun_revolver_n", true, false, 669, 139692076, 139779772, 101795060},
+    {"gun_so2_n", true, false, 670, 139779772, 139867468, 101729496},
+    {"gun_so2_d", true, true, 671, 139867468, 139911604, 1512164},
+    {"gun_so2_s", true, true, 672, 139911604, 139933860, 4664248},
+    {"shg_combat_s", true, false, 717, 141986228, 142074068, 100811440},
+    {"shg_combat_d", true, false, 718, 142074068, 142249324, 87305360},
+    {"shg_combat_n", true, false, 719, 142249324, 142599196, 75768472},
+    {"shg_riot_n", true, false, 723, 143212164, 143562036, 73671096},
+    {"shg_riot_d", true, false, 724, 143562036, 143737292, 86518664},
+    {"shg_riot_s", true, false, 725, 143737292, 144087324, 63445924},
+    {"smg_n", true, false, 729, 144241428, 144329124, 101598368},
+    {"smg_d", true, true, 730, 144329124, 144373260, 2693396},
+    {"smg_s", true, false, 731, 144373260, 144461100, 99631000},
+    {"smg_s_d", true, true, 733, 144483396, 144489260, 5762168},
+    {"smg_s_n", true, true, 734, 144489260, 144533276, 3185560},
+    {"smg_s_s", true, true, 735, 144533276, 144544620, 5346056},
+    {"smg_shell_d", true, true, 736, 144544620, 144545044, 5904932},
+    {"smg_shell_n", true, true, 737, 144545044, 144545572, 5904304},
+    {"smg_shell_s", true, true, 738, 144545572, 144546180, 5902536},
+    {"ww1_rifle_01_d", true, false, 746, 146755284, 146930540, 86780896},
+    {"ww1_rifle_01_s", true, false, 747, 146930540, 147105796, 86649780},
+    {"ww1_rifle_01_n", true, false, 748, 147105796, 147455668, 74457612},
+}};
+
 [[noreturn]] void invalid(const char* message) { throw std::runtime_error(message); }
 uint32_t word(std::span<const uint8_t> bytes, size_t at) {
     if (at > bytes.size() || bytes.size() - at < 4) invalid("Truncated developer weapon cache.");
@@ -161,19 +207,30 @@ std::string normalized(std::string_view input) {
     }
     invalid("Invalid developer weapon cache filename.");
 }
-bool wanted(std::string_view name) {
-    return std::find(requiredNames.begin(), requiredNames.end(), name) != requiredNames.end() ||
-        name == texture0 || name == texture1;
+bool wanted(std::string_view name, bool arsenal) {
+    if (std::find(requiredNames.begin(), requiredNames.end(), name) != requiredNames.end() ||
+        name == texture0 || name == texture1) return true;
+    if (!arsenal) return false;
+    for (const auto prefix : {"anim\\animgraphs\\weapons\\ag2weapon_", "anim\\main\\gun_",
+                              "anim\\main\\ass_", "anim\\main\\shg_", "anim\\main\\smg",
+                              "anim\\main\\ww1_", "models\\weapons\\"}) {
+        if (name.starts_with(prefix)) return true;
+    }
+    return false;
 }
 std::span<const std::pair<uint32_t, uint32_t>> textureRanges(std::string_view name) {
     if (name == texture0) return texture0Ranges;
     if (name == texture1) return texture1Ranges;
     return {};
 }
-bool wantedRange(std::string_view name, uint32_t offset, uint32_t length) {
-    if (name != texture0 && name != texture1) return wanted(name);
+bool wantedRange(std::string_view name, uint32_t offset, uint32_t length, bool arsenal) {
+    if (name != texture0 && name != texture1) return wanted(name, arsenal);
     for (const auto [first, count] : textureRanges(name))
         if (offset >= first && uint64_t(offset) + length <= uint64_t(first) + count) return true;
+    if (arsenal)
+        for (const auto& mip : arsenalMips)
+            if (name == (mip.textureOne ? texture1 : texture0) && offset >= mip.imageStart &&
+                uint64_t(offset) + length <= mip.imageEnd) return true;
     return false;
 }
 struct Header {
@@ -284,9 +341,9 @@ public:
     }
 };
 void materializeStreamedMips(std::map<std::string, File>& files,
-    const std::filesystem::path& gameDirectory, SourceHash& sourceHash) {
+    const std::filesystem::path& gameDirectory, SourceHash& sourceHash, std::span<const StreamedMip> images) {
     std::map<std::string, StreamedFile> sources;
-    for (const auto& mip : streamedMips) {
+    for (const auto& mip : images) {
         const auto container = mip.textureOne ? texture1 : texture0;
         const auto filename = std::string(container) + (mip.xtOne ? ".xt1" : ".xt0");
         auto [source, inserted] = sources.try_emplace(filename, gameDirectory / L"Content" / filename);
@@ -619,7 +676,7 @@ void mergeStreamedMip(File& destination, uint32_t imageStart, uint32_t imageEnd,
         Bytes(serializedMip.begin() + mipMetadataSize, serializedMip.end())}}};
     mergeFile(destination, addition);
 }
-std::vector<File> parseArchive(std::span<const uint8_t> archive, std::span<const uint8_t> payload) {
+std::vector<File> parseArchive(std::span<const uint8_t> archive, std::span<const uint8_t> payload, bool arsenal) {
     const auto info = header(archive);
     if (payload.size() != info.payloadSize) invalid("Invalid developer weapon cache payload length.");
     std::vector<bool> seen(info.blockCount, false);
@@ -650,7 +707,7 @@ std::vector<File> parseArchive(std::span<const uint8_t> archive, std::span<const
             const auto stream = word(archive, at + 16);
             if (owner != index || offset > file.size || length > file.size - offset)
                 invalid("Invalid developer weapon cache read range.");
-            if (wantedRange(name, offset, length)) {
+            if (wantedRange(name, offset, length, arsenal)) {
                 File addition{name, file.size, {{offset, Bytes(payload.begin() + stream,
                     payload.begin() + stream + length)}}};
                 mergeFile(file, addition);
@@ -661,7 +718,7 @@ std::vector<File> parseArchive(std::span<const uint8_t> archive, std::span<const
             }
             block = next;
         }
-        if (wanted(name) && !file.segments.empty()) result.push_back(std::move(file));
+        if (wanted(name, arsenal) && !file.segments.empty()) result.push_back(std::move(file));
     }
     if (std::find(seen.begin(), seen.end(), false) != seen.end())
         invalid("Unowned developer weapon cache read records.");
@@ -670,11 +727,12 @@ std::vector<File> parseArchive(std::span<const uint8_t> archive, std::span<const
 }
 
 DeveloperWeaponAssets prepareDeveloperWeaponAssets(PPCContext& ctx, uint8_t* base,
-    const std::filesystem::path& gameDirectory, const std::filesystem::path& cacheDirectory) {
+    const std::filesystem::path& gameDirectory, const std::filesystem::path& cacheDirectory, bool arsenal) {
     const auto cacheRoot = userDataCacheDirectory(gameDirectory, cacheDirectory, L"build_native/run/developer-weapons");
     std::map<std::string, File> files;
     SourceHash sourceHash;
     sourceHash.add("DarkRecomp developer weapon cached reads and matched streamed mips v2\n");
+    if (arsenal) sourceHash.add("Campaign arsenal\n");
     for (const auto name : requiredNames) { sourceHash.add(name); sourceHash.add("\n"); }
     for (const auto name : {texture0, texture1}) {
         sourceHash.add(name); sourceHash.add("\n");
@@ -683,16 +741,18 @@ DeveloperWeaponAssets prepareDeveloperWeaponAssets(PPCContext& ctx, uint8_t* bas
             sourceHash.add(std::to_string(count)); sourceHash.add("\n");
         }
     }
-    for (const auto donor : donors) {
+    const auto collect = [&](std::string_view donor) {
         const auto archive = read(gameDirectory / L"Content/Xdf" / std::string(donor));
         const auto info = header(archive);
         sourceHash.add(donor); sourceHash.add("\n"); sourceHash.add(archive);
         const auto payload = inflate(ctx, base, std::span(archive).subspan(info.stream), uint32_t(info.payloadSize));
-        for (const auto& file : DeveloperWeaponAssetDetail::parseArchive(archive, payload)) {
+        for (const auto& file : DeveloperWeaponAssetDetail::parseArchive(archive, payload, arsenal)) {
             auto [where, inserted] = files.try_emplace(file.name, File{file.name, file.size, {}});
             DeveloperWeaponAssetDetail::mergeFile(where->second, file);
         }
-    }
+    };
+    for (const auto donor : donors) collect(donor);
+    if (arsenal) for (const auto donor : arsenalDonors) collect(donor);
     for (const auto name : requiredNames) if (!files.contains(std::string(name)))
         invalid("Developer weapon resources are missing from the donor archives.");
     for (const auto name : {texture0, texture1}) {
@@ -705,7 +765,8 @@ DeveloperWeaponAssets prepareDeveloperWeaponAssets(PPCContext& ctx, uint8_t* bas
         for (const auto [first, count] : textureRanges(name)) if (!coverage.covers(first, count))
             invalid("Developer weapon texture reads are missing from the donor archives.");
     }
-    materializeStreamedMips(files, gameDirectory, sourceHash);
+    materializeStreamedMips(files, gameDirectory, sourceHash, streamedMips);
+    if (arsenal) materializeStreamedMips(files, gameDirectory, sourceHash, arsenalMips);
     const auto directory = cacheRoot / sourceHash.finish();
     DeveloperWeaponAssets result;
     for (const auto& [name, file] : files) {
