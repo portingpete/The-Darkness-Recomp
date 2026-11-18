@@ -93,6 +93,9 @@ struct Clip {
 
 fn read_batch(mapping: &Path) -> Result<Vec<Clip>> {
     ordinary(mapping)?;
+    if !fs::symlink_metadata(mapping)?.is_file() {
+        return Err("batch mapping must be an ordinary file".into());
+    }
     let file = File::open(mapping)?;
     if !file.metadata()?.is_file() {
         return Err("batch mapping must be an ordinary file".into());
@@ -120,9 +123,18 @@ fn read_batch(mapping: &Path) -> Result<Vec<Clip>> {
         if !seen.insert(key) {
             return Err(format!("batch line {row}: duplicate video target").into());
         }
+        let replacement = Path::new(replacement);
+        if replacement.components().any(|part| part == Component::ParentDir) {
+            return Err(format!("batch line {row}: parent path segments are unsupported").into());
+        }
+        if !replacement.is_absolute()
+            && (replacement.has_root() || matches!(replacement.components().next(), Some(Component::Prefix(_))))
+        {
+            return Err(format!("batch line {row}: replacement path must be absolute or relative to the mapping").into());
+        }
         clips.push(Clip {
             relative: relative.into(),
-            replacement: absolute(&parent.join(replacement))?,
+            replacement: parent.join(replacement),
         });
     }
     if clips.is_empty() {
@@ -133,7 +145,11 @@ fn read_batch(mapping: &Path) -> Result<Vec<Clip>> {
 
 struct PreparedClip {
     entry: Entry,
+    // Keep the stock clip's read lock through publication on Windows.
+    _original: File,
     replacement: File,
+    #[cfg(not(windows))]
+    kind: Container,
     stock: media::Video,
     authored: media::Video,
     stock_probe: String,
@@ -167,12 +183,44 @@ fn prepare_clip(
     };
     Ok(PreparedClip {
         entry,
+        _original: original_lock,
         replacement,
+        #[cfg(not(windows))]
+        kind,
         stock,
         authored,
         stock_probe,
         authored_probe,
     })
+}
+
+#[cfg(windows)]
+fn publish_manifest(staged: &Path, published: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn MoveFileW(existing: *const u16, new: *const u16) -> i32;
+    }
+    // Canonicalization supplies the Windows verbatim prefix for long paths.
+    let staged = staged.canonicalize()?;
+    let published = staged.with_file_name(published.file_name().ok_or(std::io::ErrorKind::InvalidInput)?);
+    let wide = |path: &Path| path.as_os_str().encode_wide().chain(Some(0)).collect::<Vec<_>>();
+    let (staged, published) = (wide(&staged), wide(&published));
+    // Both NUL-terminated buffers are valid for the duration of the call.
+    // MoveFileW fails if the target exists.
+    if unsafe { MoveFileW(staged.as_ptr(), published.as_ptr()) } == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn publish_manifest(staged: &Path, published: &Path) -> std::io::Result<()> {
+    fs::hard_link(staged, published)?;
+    if let Err(error) = fs::remove_file(staged) {
+        eprintln!("Video pack: manifest published, but temporary link could not be removed: {error}");
+    }
+    Ok(())
 }
 
 fn create(args: &[std::ffi::OsString], batch: bool) -> Result<()> {
@@ -223,16 +271,29 @@ fn create(args: &[std::ffi::OsString], batch: bool) -> Result<()> {
         .create_new(true)
         .open(output.join("media.txt"))?;
     for clip in &mut prepared {
+        let payload_path = output.join(&clip.entry.payload);
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(output.join(&clip.entry.payload))?;
+            .open(&payload_path)?;
         clip.replacement.seek(SeekFrom::Start(0))?;
         let mut payload = (&clip.replacement).take(clip.entry.bytes + 1);
         if std::io::copy(&mut payload, &mut file)? != clip.entry.bytes {
             return Err(format!("{} changed during import; incomplete pack retained", clip.entry.target).into());
         }
         file.sync_all()?;
+        drop(file);
+        #[cfg(not(windows))]
+        {
+            // The held source handle does not prevent in-place edits on Unix.
+            // Probe the exact copy that will be referenced by the manifest.
+            container(&File::open(&payload_path)?, clip.kind)?;
+            let (authored, authored_probe) = probe(&payload_path)?;
+            media::compatible(&clip.stock, &authored, allow_aspect_change)
+                .map_err(|error| format!("{} changed during import: {error}", clip.entry.target))?;
+            clip.authored = authored;
+            clip.authored_probe = authored_probe;
+        }
         if batch {
             writeln!(report, "{}\nPayload: {}", clip.entry.target, clip.entry.payload)?;
         }
@@ -251,7 +312,7 @@ fn create(args: &[std::ffi::OsString], batch: bool) -> Result<()> {
     file.write_all(&manifest)?;
     file.sync_all()?;
     drop(file);
-    fs::rename(staged_manifest, output.join("videos.tsv"))?;
+    publish_manifest(&staged_manifest, &output.join("videos.tsv"))?;
     if batch {
         println!(
             "Created a {}-video pack. Set DARK_VIDEO_MOD_DIR to {} before launch.",
@@ -282,4 +343,31 @@ fn main() {
         _ => Err(USAGE.into()),
     };
     if let Err(error) = result { eprintln!("Video pack: {error}"); std::process::exit(1); }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn publication_preserves_existing_manifest() {
+        let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let directory = std::env::temp_dir().join(format!("darkrecomp-video-{}-{unique}", std::process::id()));
+        fs::create_dir(&directory).unwrap();
+        let staged = directory.join("videos.tsv.tmp");
+        let published = directory.join("videos.tsv");
+        fs::write(&staged, b"staged").unwrap();
+        fs::write(&published, b"existing").unwrap();
+
+        assert!(publish_manifest(&staged, &published).is_err());
+        assert_eq!(fs::read(&published).unwrap(), b"existing");
+        assert_eq!(fs::read(&staged).unwrap(), b"staged");
+
+        fs::remove_file(&published).unwrap();
+        publish_manifest(&staged, &published).unwrap();
+        assert_eq!(fs::read(&published).unwrap(), b"staged");
+        assert!(!staged.exists());
+        fs::remove_file(published).unwrap();
+        fs::remove_dir(directory).unwrap();
+    }
 }

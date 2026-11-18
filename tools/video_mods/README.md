@@ -5,6 +5,10 @@ WMV3 or Theora video. The optional native loader selects the new file at the
 original guest pathname. The game's decoder and playback clock remain in use;
 external XWC audio banks are unchanged.
 
+The original clips come from your own game dump. To build a pack, supply
+locally authored replacement clips. Players can use a compatible pack shared
+by its creator.
+
 Build with Rust 1.74 or newer. The `create` and `create-batch` commands require
 `ffprobe` from FFmpeg on PATH, or the executable path in `DARK_FFPROBE`.
 
@@ -51,7 +55,8 @@ The game directory, replacement and output parent must be ordinary paths.
 Reparse points, symlinks, parent traversal and existing output directories are
 rejected. Inputs are opened read-only. If writing fails, the importer preserves
 the incomplete directory for inspection. It publishes `videos.tsv` atomically
-after the payloads and report have been synced.
+after the payloads and report have been synced. On Unix, pack output requires
+a filesystem that supports hard links.
 No game media is included in this repository or redistributed by the tool.
 
 The native loader validates the complete bounded manifest, original container,
